@@ -1,14 +1,22 @@
 import random
 import datetime
 import openpyxl
+import os
+import sys
 
-def generate_orders():
-    file_path = 'input/吹膜机排程数据.xlsx'
-    wb = openpyxl.load_workbook(file_path)
-    sheet = wb.worksheets[1]  # 订单表
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from src.data_ingestion import BlownFilmDataIngestionPipeline
+from src.config import INPUT_EXCEL_PATH
+
+def generate_safe_orders():
+    pipeline = BlownFilmDataIngestionPipeline()
+    machines, orders, recipes_map, setup_mgr = pipeline.load_from_excel(INPUT_EXCEL_PATH)
     
-    # 彻底清理之前追加的订单 (假设原版只有32个订单，大概到第34行)
-    # 找到第一个新生成的订单号 ORD-033
+    file_path = INPUT_EXCEL_PATH
+    wb = openpyxl.load_workbook(file_path)
+    sheet = wb.worksheets[1]
+    
+    # 彻底清理之前追加的订单
     start_del_row = None
     for row in range(2, sheet.max_row + 1):
         val = sheet.cell(row=row, column=1).value
@@ -20,35 +28,51 @@ def generate_orders():
         sheet.delete_rows(start_del_row, sheet.max_row - start_del_row + 1)
         
     start_id = 33
-    
-    product_types = [
-        '医用多层输液袋膜', '医药袋高洁净内衬膜', '医药袋常规内衬膜', 
-        '医疗器械顶盖透气膜', '医疗器械吸塑包装膜', '医用大宗防潮外包装膜', '临床试验加急样品膜'
-    ]
-    
-    cleanrooms = ['Class_10K', 'Class_100K', 'NO']
-    customer_classes = ['VIP', 'STANDARD']
-    
     base_date = datetime.datetime(2026, 5, 17, 8, 0)
+    
+    product_types = list(recipes_map.keys())
     
     for i in range(200):
         o_id = f"ORD-{start_id + i:03d}"
         
-        is_extreme = random.random() < 0.15
+        # 为了绝对安全，先随机挑一台机器，然后再生成符合它能力的订单
+        m = random.choice(machines)
         
-        ptype = random.choice(product_types)
+        # 挑选该机器能做的层数的产品
+        valid_products = []
+        for pt, mats in recipes_map.items():
+            if len(mats) <= m.layer_structure:
+                valid_products.append(pt)
+                
+        if not valid_products:
+            valid_products = ['医药袋常规内衬膜'] # fallback
+            
+        ptype = random.choice(valid_products)
         
-        # 为了保证不超物力边界，控制在合理区间
-        width = random.randint(800, 1500)
-        thickness = random.randint(50, 100)
+        # 宽度在机器能力范围内，偶尔给一些贴近极限的值
+        if random.random() < 0.1:
+            width = m.max_width  # 极宽挑战
+        else:
+            width = random.randint(m.min_width, m.max_width)
+            
+        # 厚度在机器能力范围内
+        thickness = random.randint(m.min_thickness, m.max_thickness)
         
-        if is_extreme:
-            qty = random.choice([500, 60000, 100000]) # 极少或极大
+        # 极大订单或极小订单
+        if random.random() < 0.1:
+            qty = random.choice([500, m.hourly_output_kg * 48]) # 跑2天的大单
         else:
             qty = random.randint(2000, 15000)
             
-        cleanroom = 'Class_10K' if ptype in ['医用多层输液袋膜', '医药袋高洁净内衬膜'] else random.choice(cleanrooms)
-        
+        # 洁净室
+        # 不能超出机器的洁净能力
+        # Class_100K 比较脏，不能做 Class_10K 的单
+        # 所以机器是 Class_100K，单子必须是 Class_100K 或 NO
+        if m.cleanroom_level == 'Class_100K':
+            cleanroom = random.choice(['Class_100K', 'NO'])
+        else:
+            cleanroom = random.choice(['Class_10K', 'Class_100K', 'NO'])
+            
         if ptype == '临床试验加急样品膜':
             oclass = 'SAMPLE'
         else:
@@ -58,9 +82,8 @@ def generate_orders():
         
         order_date = base_date - datetime.timedelta(days=random.randint(1, 5), hours=random.randint(0, 23))
         
-        # 极端交期：紧急插单
-        if is_extreme and oclass == 'URGENT':
-            due_date = base_date + datetime.timedelta(hours=random.randint(24, 48))
+        if oclass == 'URGENT':
+            due_date = base_date + datetime.timedelta(hours=random.randint(24, 72))
         else:
             due_date = base_date + datetime.timedelta(days=random.randint(3, 20), hours=random.randint(0, 23))
             
@@ -68,9 +91,8 @@ def generate_orders():
         core = random.choice([3, 6])
         
         mat_avail = 0
-        if random.random() < 0.2:
-            # 极端等料：要等1-3天才到货
-            mat_avail = random.randint(1440, 4320)
+        if random.random() < 0.1:
+            mat_avail = random.randint(1440, 2880)
             
         row_data = [
             o_id, ptype, width, thickness, qty, cleanroom, 
@@ -82,7 +104,7 @@ def generate_orders():
         sheet.append(row_data)
         
     wb.save(file_path)
-    print(f"成功清理并重新生成追加 200 个订单到 {file_path}")
+    print(f"成功清理并重新生成追加 200 个绝不逾越物理边界的订单到 {file_path}")
 
 if __name__ == '__main__':
-    generate_orders()
+    generate_safe_orders()

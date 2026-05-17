@@ -26,44 +26,59 @@ function DashboardGanttChart({ tasks }) {
     if (!ref.current || !tasks?.length) return;
     const chart = echarts.init(ref.current, 'dark');
     
-    // Group machines
     const machines = [...new Set(tasks.map(t => t.machine_id))].sort();
     
     const colors = {
-      'MEDICAL_HIGH': '#10b981', // green
-      'MEDICAL_STD': '#3b82f6',  // blue
-      'PACKAGING': '#f59e0b',    // yellow
-      'SPECIAL': '#8b5cf6',      // purple
-      'URGENT': '#ef4444'        // red
+      'MEDICAL_HIGH': '#10b981',
+      'MEDICAL_STD': '#3b82f6',
+      'PACKAGING': '#f59e0b',
+      'SPECIAL': '#8b5cf6',
+      'URGENT': '#ef4444'
     };
+
+    const patternCanvas = document.createElement('canvas');
+    patternCanvas.width = 10;
+    patternCanvas.height = 10;
+    const ctx = patternCanvas.getContext('2d');
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(0, 0, 10, 10);
+    ctx.strokeStyle = '#334155';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, 10);
+    ctx.lineTo(10, 0);
+    ctx.stroke();
+    const hatchPattern = { image: patternCanvas, repeat: 'repeat' };
 
     const renderItem = (params, api) => {
       const categoryIndex = api.value(0);
       const start = api.coord([api.value(1), categoryIndex]);
       const end = api.coord([api.value(2), categoryIndex]);
       const height = api.size([0, 1])[1] * 0.6;
+      const width = Math.max(end[0] - start[0], 2);
+      
+      const d = api.value(3);
+      const style = api.style();
+      
+      if (!d.is_setup && width > 40) {
+         style.text = d.order_id;
+         style.textFill = '#ffffff';
+         style.fontSize = 10;
+         style.overflow = 'truncate';
+      }
+
       const rectShape = echarts.graphic.clipRectByRect({
-        x: start[0],
-        y: start[1] - height / 2,
-        width: end[0] - start[0],
-        height: height
+        x: start[0], y: start[1] - height / 2, width: width, height: height
       }, {
-        x: params.coordSys.x,
-        y: params.coordSys.y,
-        width: params.coordSys.width,
-        height: params.coordSys.height
+        x: params.coordSys.x, y: params.coordSys.y,
+        width: params.coordSys.width, height: params.coordSys.height
       });
+
       return rectShape && {
         type: 'rect',
         transition: ['shape'],
-        shape: {
-          x: rectShape.x,
-          y: rectShape.y,
-          width: Math.max(rectShape.width, 4), // min width
-          height: rectShape.height,
-          r: 4 // border radius
-        },
-        style: api.style()
+        shape: { ...rectShape, r: 3 },
+        style: style
       };
     };
 
@@ -73,20 +88,18 @@ function DashboardGanttChart({ tasks }) {
       const startTime = new Date(t.start).getTime();
       const endTime = new Date(t.end).getTime();
       
-      // If there's a setup/changeover time, render it as a gray block
       if (t.setup_mins > 0 && t.setup_start) {
         const setupStartTime = new Date(t.setup_start).getTime();
         data.push({
           name: t.order_id + ' (换产)',
-          value: [machineIndex, setupStartTime, startTime, t.setup_mins],
-          itemStyle: { color: 'rgba(255, 255, 255, 0.1)', borderColor: '#64748b', borderWidth: 1, borderType: 'dashed' }
+          value: [machineIndex, setupStartTime, startTime, { ...t, is_setup: true }],
+          itemStyle: { color: hatchPattern, borderColor: '#475569', borderWidth: 1 }
         });
       }
 
-      // Main production block
       data.push({
         name: t.order_id,
-        value: [machineIndex, startTime, endTime, t.duration_mins],
+        value: [machineIndex, startTime, endTime, t],
         itemStyle: { color: colors[t.order_class] || colors['MEDICAL_STD'] }
       });
     });
@@ -95,25 +108,35 @@ function DashboardGanttChart({ tasks }) {
       backgroundColor: 'transparent',
       tooltip: {
         formatter: function (params) {
-          return params.marker + params.name + ': ' + params.value[3] + ' mins';
+          const d = params.value[3];
+          if (d.is_setup) {
+            return `${params.marker} <b>${d.order_id} (换产准备)</b>: ${d.setup_mins} 分钟`;
+          }
+          return `${params.marker} <b>${d.order_id}</b>: ${d.duration_mins} 分钟`;
         }
       },
-      grid: { top: 50, right: 30, bottom: 30, left: 100 },
+      grid: { top: 30, right: 40, bottom: 40, left: 80 },
       xAxis: {
         type: 'time',
-        splitLine: { show: true, lineStyle: { color: 'rgba(255,255,255,0.05)' } },
-        axisLabel: { color: '#94a3b8' }
+        splitLine: { show: true, lineStyle: { color: '#334155', type: 'dashed', opacity: 0.5 } },
+        axisLabel: { color: '#94a3b8', fontSize: 11 }
       },
       yAxis: {
         type: 'category',
         data: machines,
-        splitLine: { show: true, lineStyle: { color: 'rgba(255,255,255,0.05)' } },
-        axisLabel: { color: '#94a3b8' }
+        inverse: true,
+        splitLine: { show: true, lineStyle: { color: '#334155', opacity: 0.3 } },
+        axisLabel: { color: '#f1f5f9', fontWeight: 600, fontSize: 11 }
       },
+      dataZoom: [
+        { type: 'slider', xAxisIndex: 0, bottom: 0, height: 16, borderColor: '#334155', backgroundColor: '#1e293b', fillerColor: 'rgba(59,130,246,0.15)', textStyle: { color: '#94a3b8' }, showDetail: false },
+        { type: 'inside', xAxisIndex: 0 },
+        { type: 'slider', yAxisIndex: 0, right: 0, width: 16, borderColor: '#334155', backgroundColor: '#1e293b', fillerColor: 'rgba(59,130,246,0.15)', showDetail: false },
+        { type: 'inside', yAxisIndex: 0 }
+      ],
       series: [{
         type: 'custom',
         renderItem: renderItem,
-        itemStyle: { opacity: 0.9 },
         encode: { x: [1, 2], y: 0 },
         data: data
       }]
@@ -124,7 +147,7 @@ function DashboardGanttChart({ tasks }) {
     return () => { window.removeEventListener('resize', resize); chart.dispose(); };
   }, [tasks]);
   
-  return <div ref={ref} style={{ width: '100%', height: 400 }} />;
+  return <div ref={ref} style={{ width: '100%', height: Math.max(400, [...new Set(tasks?.map(t => t.machine_id))].length * 40) }} />;
 }
 
 function MachineUtilizationChart({ tasks }) {

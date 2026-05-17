@@ -222,6 +222,9 @@ class DatabaseManager:
             vip_late = [t for t in late
                         if t.order.customer_class == "VIP" or t.order.order_class == "URGENT"]
 
+            phase1_score = min(result.phase1_score, 2000000000)
+            phase2_score = min(result.phase2_score, 2000000000)
+
             cur.execute("""
                 INSERT INTO schedule_runs
                     (baseline_time, status, total_orders, total_machines_used,
@@ -232,7 +235,7 @@ class DatabaseManager:
                 RETURNING run_id
             """, (base, result.status, len(result.tasks),
                   len(result.machine_sequences),
-                  result.phase1_score, result.phase2_score,
+                  phase1_score, phase2_score,
                   total_setup, total_scrap,
                   len(late), len(vip_late)))
             run_id = cur.fetchone()[0]

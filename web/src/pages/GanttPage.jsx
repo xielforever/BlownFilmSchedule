@@ -24,8 +24,25 @@ export default function GanttPage() {
     const machines = [...new Set(data.tasks.map(t => t.machine_id))].sort();
     const chart = echarts.init(chartRef.current, 'dark');
 
-    // Build Gantt bars as custom series
-    const seriesData = [];
+    // Create Canvas Pattern for Setup & Maintenance
+    const patternCanvas = document.createElement('canvas');
+    patternCanvas.width = 10;
+    patternCanvas.height = 10;
+    const ctx = patternCanvas.getContext('2d');
+    ctx.fillStyle = '#1e293b'; // match card background
+    ctx.fillRect(0, 0, 10, 10);
+    ctx.strokeStyle = '#334155';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, 10);
+    ctx.lineTo(10, 0);
+    ctx.stroke();
+    const hatchPattern = { image: patternCanvas, repeat: 'repeat' };
+
+    // Group tasks by product type for native ECharts Legend
+    const seriesByProduct = {};
+    const setupData = [];
+    
     data.tasks.forEach(t => {
       const start = new Date(t.start).getTime();
       const end = new Date(t.end).getTime();
@@ -34,25 +51,25 @@ export default function GanttPage() {
       
       if (t.setup_mins > 0 && t.setup_start) {
         const setupStart = new Date(t.setup_start).getTime();
-        seriesData.push({
+        setupData.push({
           value: [yIdx, setupStart, start, { ...t, is_setup: true }],
-          itemStyle: { color: 'rgba(255, 255, 255, 0.1)', borderColor: '#64748b', borderWidth: 1, borderType: 'dashed' },
+          itemStyle: { color: hatchPattern, borderColor: '#475569', borderWidth: 1 },
         });
       }
 
-      seriesData.push({
+      if (!seriesByProduct[t.product_type]) seriesByProduct[t.product_type] = [];
+      seriesByProduct[t.product_type].push({
         value: [yIdx, start, end, t],
         itemStyle: { color, borderRadius: 3 },
       });
     });
 
-    // Maintenance windows
     const maintData = data.maintenance.map(m => {
       const yIdx = machines.indexOf(m.machine_id);
       if (yIdx < 0) return null;
       return {
         value: [yIdx, new Date(m.start).getTime(), new Date(m.end).getTime(), m],
-        itemStyle: { color: 'rgba(100,116,139,0.3)', borderColor: '#64748b', borderWidth: 1, borderType: 'dashed' },
+        itemStyle: { color: hatchPattern, borderColor: '#ef4444', borderWidth: 1 },
       };
     }).filter(Boolean);
 
@@ -61,12 +78,41 @@ export default function GanttPage() {
       const start = api.coord([api.value(1), yIdx]);
       const end = api.coord([api.value(2), yIdx]);
       const height = api.size([0, 1])[1] * 0.6;
+      const width = Math.max(end[0] - start[0], 2);
+      const d = api.value(3);
+      
+      const style = api.style();
+      // Display order id inside the bar if it's wide enough
+      if (!d.is_setup && !d.reason && width > 40) {
+         style.text = d.order_id;
+         style.textFill = '#ffffff';
+         style.fontSize = 10;
+         style.overflow = 'truncate';
+      }
+
       return {
         type: 'rect',
-        shape: { x: start[0], y: start[1] - height / 2, width: Math.max(end[0] - start[0], 2), height },
-        style: api.style(),
+        shape: { x: start[0], y: start[1] - height / 2, width, height },
+        style: style,
       };
     }
+
+    const seriesList = Object.keys(seriesByProduct).map(p => ({
+      type: 'custom',
+      name: p,
+      renderItem: renderGanttBar,
+      encode: { x: [1, 2], y: 0 },
+      data: seriesByProduct[p]
+    }));
+
+    seriesList.push({
+      type: 'custom', name: '换产准备', renderItem: renderGanttBar, encode: { x: [1, 2], y: 0 },
+      data: setupData
+    });
+    seriesList.push({
+      type: 'custom', name: '维保窗口', renderItem: renderGanttBar, encode: { x: [1, 2], y: 0 },
+      data: maintData
+    });
 
     chart.setOption({
       backgroundColor: 'transparent',
@@ -87,53 +133,55 @@ export default function GanttPage() {
           return `维保: ${d.reason || '计划维保'}`;
         }
       },
-      grid: { top: 40, right: 40, bottom: 60, left: 100 },
-      xAxis: { type: 'time', axisLabel: { color: '#94a3b8', fontSize: 11 } },
-      yAxis: { type: 'category', data: machines, axisLabel: { color: '#f1f5f9', fontSize: 12, fontWeight: 600 },
-        inverse: true },
+      legend: {
+        top: 0,
+        left: 0,
+        textStyle: { color: '#cbd5e1', fontSize: 13 },
+        itemWidth: 14,
+        itemHeight: 14,
+        icon: 'roundRect',
+        type: 'scroll'
+      },
+      grid: { top: 60, right: 40, bottom: 60, left: 100 },
+      xAxis: { 
+        type: 'time', 
+        axisLabel: { color: '#94a3b8', fontSize: 11 },
+        splitLine: { show: true, lineStyle: { type: 'dashed', opacity: 0.15, color: '#334155' } }
+      },
+      yAxis: { 
+        type: 'category', data: machines, 
+        axisLabel: { color: '#f1f5f9', fontSize: 12, fontWeight: 600 },
+        inverse: true,
+        splitLine: { show: true, lineStyle: { opacity: 0.1, color: '#334155' } }
+      },
       dataZoom: [
         { type: 'slider', xAxisIndex: 0, bottom: 10, height: 20, borderColor: '#334155',
           backgroundColor: '#1e293b', fillerColor: 'rgba(59,130,246,0.15)',
-          handleStyle: { color: '#3b82f6' }, textStyle: { color: '#94a3b8' } },
+          handleStyle: { color: '#3b82f6' }, textStyle: { color: '#94a3b8' }, showDetail: true },
         { type: 'inside', xAxisIndex: 0 },
+        { type: 'slider', yAxisIndex: 0, right: 10, width: 20, borderColor: '#334155',
+          backgroundColor: '#1e293b', fillerColor: 'rgba(59,130,246,0.15)',
+          handleStyle: { color: '#3b82f6' } },
+        { type: 'inside', yAxisIndex: 0 },
       ],
-      series: [
-        { type: 'custom', name: '生产任务', renderItem: renderGanttBar, encode: { x: [1, 2], y: 0 },
-          data: seriesData },
-        { type: 'custom', name: '维保窗口', renderItem: renderGanttBar, encode: { x: [1, 2], y: 0 },
-          data: maintData },
-      ],
-    });
+      series: seriesList,
+    }, true);
 
     const resize = () => chart.resize();
     window.addEventListener('resize', resize);
     return () => { window.removeEventListener('resize', resize); chart.dispose(); };
   }, [data]);
 
-  // Build legend
-  const products = data?.tasks ? [...new Set(data.tasks.map(t => t.product_type))] : [];
+  const dynamicHeight = data && data.tasks ? Math.max(500, [...new Set(data.tasks.map(t => t.machine_id))].length * 60 + 120) : 520;
 
   return (
     <div>
       <div className="page-header">
         <h2>排程甘特图</h2>
       </div>
-      {/* Legend */}
-      <div style={{ display: 'flex', gap: 16, marginBottom: 16, flexWrap: 'wrap' }}>
-        {products.map(p => (
-          <div key={p} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-            <span style={{ width: 12, height: 12, borderRadius: 3, background: PRODUCT_COLORS[p] || '#64748b', display: 'inline-block' }} />
-            {p}
-          </div>
-        ))}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-          <span style={{ width: 12, height: 12, borderRadius: 3, background: '#475569', border: '1px dashed #64748b', display: 'inline-block' }} />
-          维保窗口
-        </div>
-      </div>
       <div className="card">
         {data ? (
-          <div ref={chartRef} className="gantt-wrapper" style={{ height: 520 }} />
+          <div ref={chartRef} className="gantt-wrapper" style={{ height: dynamicHeight }} />
         ) : (
           <div className="loading">加载甘特图数据...</div>
         )}
