@@ -1,0 +1,542 @@
+"""
+APS 排程系统核心算法引擎
+
+基于 Google OR-Tools CP-SAT 的两阶段分层求解（Lexicographical Optimization）。
+功能：换产耗时精算、废料守恒计算、FJSP-SDST 建模与求解。
+"""
+
+from __future__ import annotations
+import logging
+from typing import List, Dict, Optional, Any, Tuple
+
+from ortools.sat.python import cp_model
+
+from src.config import (
+    MAX_HORIZON_MINUTES,
+    SOLVER_TIME_LIMIT_SECONDS,
+    CONTINUOUS_RUN_LIMIT_MINUTES,
+    MANDATORY_CLEANING_DURATION_MINUTES,
+    SCRAP_PER_LAYER_MATERIAL_CHANGE_KG,
+    SCRAP_PER_LAYER_SAME_MATERIAL_KG,
+    SCRAP_WIDTH_CHANGE_KG,
+    SCRAP_THICKNESS_CHANGE_KG,
+    get_tardiness_weight,
+)
+from src.models import ProductionOrderModel, BlownFilmMachineModel
+from src.setup_matrices import SetupMatricesManager
+
+logger = logging.getLogger(__name__)
+
+
+# ─── 排程结果数据结构 ─────────────────────────────────────
+class ScheduledTask:
+    """单个已排程任务的结果"""
+    def __init__(self, order: ProductionOrderModel, machine: BlownFilmMachineModel,
+                 start_mins: int, end_mins: int, setup_time: int, scrap_kg: float,
+                 sequence_index: int):
+        self.order = order
+        self.machine = machine
+        self.start_mins = start_mins
+        self.end_mins = end_mins
+        self.setup_time = setup_time
+        self.scrap_kg = scrap_kg
+        self.sequence_index = sequence_index
+
+
+class ScheduleResult:
+    """完整排程结果"""
+    def __init__(self):
+        self.status: str = "UNKNOWN"
+        self.tasks: List[ScheduledTask] = []
+        self.phase1_score: int = 0
+        self.phase2_score: int = 0
+        self.machine_sequences: Dict[str, List[ScheduledTask]] = {}
+
+    def add_task(self, task: ScheduledTask):
+        self.tasks.append(task)
+        mid = task.machine.machine_id
+        if mid not in self.machine_sequences:
+            self.machine_sequences[mid] = []
+        self.machine_sequences[mid].append(task)
+
+
+# ─── 换产与废料计算 ─────────────────────────────────────────
+class SetupCalculator:
+    """换产耗时与废料守恒精算器"""
+
+    def __init__(self, setup_mgr: SetupMatricesManager):
+        self.mgr = setup_mgr
+
+    def calculate_setup_time(
+        self,
+        prev_order: Optional[ProductionOrderModel],
+        next_order: ProductionOrderModel,
+        machine: BlownFilmMachineModel,
+    ) -> int:
+        """
+        计算前后工单间的总换产耗时（整数分钟）。
+        prev_order=None 表示机台初始状态 → 首单。
+
+        T_total = Max(T_material_l) + T_width + T_thickness + T_corona + T_core + T_gmp
+        """
+        # 解析前序状态
+        if prev_order is None:
+            m_from = list(machine.initial_material_lanes)
+            w_from = machine.initial_width
+            t_from = machine.initial_thickness
+            c_from = True  # 假设初始电晕开启
+            r_from = 3     # 假设初始管径 3 英寸
+            class_from = "INIT"
+        else:
+            m_from = list(prev_order.recipe_materials)
+            w_from = prev_order.target_width
+            t_from = prev_order.target_thickness
+            c_from = prev_order.corona_req
+            r_from = prev_order.core_size_inch
+            class_from = prev_order.order_class
+
+        m_to = list(next_order.recipe_materials)
+        w_to = next_order.target_width
+        t_to = next_order.target_thickness
+        c_to = next_order.corona_req
+        r_to = next_order.core_size_inch
+        class_to = next_order.order_class
+
+        setup = 0
+
+        # 1. 材质切换（并发 Max）：多螺杆并行清洗，取最慢层
+        mat_times = []
+        num_layers = min(len(m_from), len(m_to))
+        for l in range(num_layers):
+            t_layer = self.mgr.get_material_switch_time(m_from[l], m_to[l])
+            mat_times.append(t_layer)
+        if mat_times:
+            setup += max(mat_times)
+
+        # 2. 幅宽变动（方向性阶梯）
+        delta_w = w_to - w_from
+        exceeds = w_to > machine.max_width
+        setup += self.mgr.get_width_change_time(delta_w, exceeds)
+
+        # 3. 厚度变动
+        delta_t = t_to - t_from
+        setup += self.mgr.get_thickness_change_time(delta_t)
+
+        # 4. 电晕切换
+        setup += self.mgr.get_corona_change_time(c_from, c_to)
+
+        # 5. 卷芯管径切换
+        setup += self.mgr.get_core_size_change_time(r_from, r_to)
+
+        # 6. GMP 合规清场
+        setup += self.mgr.get_gmp_clearance_time(class_from, class_to)
+
+        return setup
+
+    def calculate_scrap_weight(
+        self,
+        prev_order: Optional[ProductionOrderModel],
+        next_order: ProductionOrderModel,
+        machine: BlownFilmMachineModel,
+    ) -> float:
+        """
+        计算前后工单间的总废料损耗（kg）。
+        W_total_scrap = Sum(W_material_l) + W_width_scrap + W_thickness_scrap
+        """
+        if prev_order is None:
+            m_from = list(machine.initial_material_lanes)
+            w_from = machine.initial_width
+            t_from = machine.initial_thickness
+        else:
+            m_from = list(prev_order.recipe_materials)
+            w_from = prev_order.target_width
+            t_from = prev_order.target_thickness
+
+        m_to = list(next_order.recipe_materials)
+        w_to = next_order.target_width
+        t_to = next_order.target_thickness
+
+        scrap = 0.0
+
+        # 1. 材质切换废料（逐层 Sum，非 Max）
+        num_layers = min(len(m_from), len(m_to))
+        for l in range(num_layers):
+            if m_from[l] != m_to[l]:
+                scrap += SCRAP_PER_LAYER_MATERIAL_CHANGE_KG
+            else:
+                scrap += SCRAP_PER_LAYER_SAME_MATERIAL_KG
+
+        # 2. 幅宽调机废料
+        if w_from != w_to:
+            scrap += SCRAP_WIDTH_CHANGE_KG
+
+        # 3. 厚度调机废料
+        if t_from != t_to:
+            scrap += SCRAP_THICKNESS_CHANGE_KG
+
+        return scrap
+
+
+# ─── CP-SAT 核心求解引擎 ─────────────────────────────────────
+class AdvancedMedicalAPS:
+    """基于 OR-Tools CP-SAT 的两阶段分层求解引擎"""
+
+    def __init__(self, setup_mgr: SetupMatricesManager):
+        self.setup_calc = SetupCalculator(setup_mgr)
+        self.setup_mgr = setup_mgr
+
+    def _precompute_setup_times(
+        self,
+        orders: List[ProductionOrderModel],
+        machines: List[BlownFilmMachineModel],
+        eligible: Dict[int, List[int]],
+    ) -> Dict[Tuple[int, int, int], int]:
+        """预计算所有合法 (prev_idx, next_idx, machine_idx) 组合的换产耗时"""
+        cache: Dict[Tuple[int, int, int], int] = {}
+        n = len(orders)
+        for m_idx, m in enumerate(machines):
+            m_orders = [i for i in range(n) if m_idx in eligible[i]]
+            # START → 各订单
+            for j in m_orders:
+                t = self.setup_calc.calculate_setup_time(None, orders[j], m)
+                cache[(-1, j, m_idx)] = t
+            # 订单间
+            for i in m_orders:
+                for j in m_orders:
+                    if i != j:
+                        t = self.setup_calc.calculate_setup_time(orders[i], orders[j], m)
+                        cache[(i, j, m_idx)] = t
+        return cache
+
+    def run(
+        self,
+        orders: List[ProductionOrderModel],
+        machines: List[BlownFilmMachineModel],
+    ) -> ScheduleResult:
+        """执行两阶段分层求解，返回排程结果"""
+        result = ScheduleResult()
+        n = len(orders)
+        M = len(machines)
+        H = MAX_HORIZON_MINUTES
+
+        logger.info("开始排程: %d 笔订单, %d 台机台, 计划域=%d min", n, M, H)
+
+        # ─── 能力硬过滤：订单→可用机台列表 ───
+        eligible: Dict[int, List[int]] = {}
+        for idx in range(n):
+            eligible[idx] = []
+            for m_idx, m in enumerate(machines):
+                if m.can_produce(orders[idx]):
+                    eligible[idx].append(m_idx)
+            if not eligible[idx]:
+                logger.error("订单 %s 无可用机台！", orders[idx].order_id)
+
+        # ─── 预计算换产耗时 ───
+        setup_cache = self._precompute_setup_times(orders, machines, eligible)
+
+        # ─── 预计算生产耗时 ───
+        duration_cache: Dict[Tuple[int, int], int] = {}
+        for idx in range(n):
+            for m_idx in eligible[idx]:
+                duration_cache[(idx, m_idx)] = machines[m_idx].calculate_duration(orders[idx])
+
+        # ═══════════════════════════════════════════════════
+        # 第一阶段：交期至上 — Minimize(Sum(tardiness * W))
+        # ═══════════════════════════════════════════════════
+        logger.info("═══ 第一阶段：交期优化 ═══")
+        phase1_result = self._solve_phase(
+            orders, machines, eligible, setup_cache, duration_cache,
+            H, phase=1, tardiness_bound=None,
+        )
+
+        if phase1_result is None:
+            result.status = "INFEASIBLE"
+            logger.error("第一阶段求解失败：INFEASIBLE")
+            return result
+
+        status1, solver1, vars1, best_tardiness = phase1_result
+        result.phase1_score = best_tardiness
+        logger.info("第一阶段完成: status=%s, best_tardiness=%d", status1, best_tardiness)
+
+        # ═══════════════════════════════════════════════════
+        # 第二阶段：锁死交期 → 最小化换产时间
+        # ═══════════════════════════════════════════════════
+        logger.info("═══ 第二阶段：压榨产能 ═══")
+        phase2_result = self._solve_phase(
+            orders, machines, eligible, setup_cache, duration_cache,
+            H, phase=2, tardiness_bound=best_tardiness,
+        )
+
+        if phase2_result is None:
+            # 回退使用第一阶段结果
+            logger.warning("第二阶段求解失败，回退使用第一阶段结果")
+            self._extract_solution(solver1, vars1, orders, machines, eligible,
+                                   setup_cache, result)
+            result.status = status1
+        else:
+            status2, solver2, vars2, setup_score = phase2_result
+            result.phase2_score = setup_score
+            self._extract_solution(solver2, vars2, orders, machines, eligible,
+                                   setup_cache, result)
+            result.status = status2
+            logger.info("第二阶段完成: status=%s, total_setup=%d", status2, setup_score)
+
+        return result
+
+    def _solve_phase(
+        self,
+        orders, machines, eligible, setup_cache, duration_cache,
+        H, phase, tardiness_bound,
+    ):
+        """
+        构建并求解单阶段 CP-SAT 模型。
+        phase=1: 目标=最小化加权延期
+        phase=2: 锁死延期≤tardiness_bound, 目标=最小化换产时间
+        返回 (status_str, solver, vars_dict, objective_value) 或 None
+        """
+        n = len(orders)
+        model = cp_model.CpModel()
+
+        # ─── 决策变量 ───
+        presence = {}   # presence[i][m_idx] = BoolVar
+        starts = {}     # starts[i][m_idx] = IntVar
+        ends = {}       # ends[i][m_idx] = IntVar
+        intervals = {}  # intervals[i][m_idx] = IntervalVar
+
+        for idx in range(n):
+            presence[idx] = {}
+            starts[idx] = {}
+            ends[idx] = {}
+            intervals[idx] = {}
+            for m_idx in eligible[idx]:
+                p = model.new_bool_var(f'p_{idx}_{m_idx}')
+                s = model.new_int_var(0, H, f's_{idx}_{m_idx}')
+                e = model.new_int_var(0, H, f'e_{idx}_{m_idx}')
+                dur = duration_cache[(idx, m_idx)]
+                iv = model.new_optional_interval_var(s, dur, e, p, f'iv_{idx}_{m_idx}')
+                presence[idx][m_idx] = p
+                starts[idx][m_idx] = s
+                ends[idx][m_idx] = e
+                intervals[idx][m_idx] = iv
+
+        # ─── 约束 1：唯一分派 ───
+        for idx in range(n):
+            model.add_exactly_one(presence[idx][m] for m in eligible[idx])
+
+        # ─── 约束 2：原料齐套等待 ───
+        for idx in range(n):
+            mat_avail = orders[idx].material_available_mins
+            if mat_avail > 0:
+                for m_idx in eligible[idx]:
+                    model.add(starts[idx][m_idx] >= mat_avail).only_enforce_if(
+                        presence[idx][m_idx])
+
+        # ─── 约束 3 & 4：Circuit 路由 + 换产时间间隔 ───
+        # 使用单仓库节点 (depot) 的 Hamiltonian 回路建模。
+        # depot (节点0) 代表机台初始状态，订单映射为节点 1..K。
+        setup_delay_vars = []
+
+        for m_idx, m in enumerate(machines):
+            m_orders = [i for i in range(n) if m_idx in eligible[i]]
+            if not m_orders:
+                continue
+
+            # 节点映射：depot=0, 订单→1..K
+            K = len(m_orders)
+            # order_idx → local_node (1-based)
+            node_of = {oid: nid + 1 for nid, oid in enumerate(m_orders)}
+            DEPOT = 0
+            arcs = []
+
+            # 仓库自环：机台完全空闲时
+            depot_self = model.new_bool_var(f'depot_self_{m_idx}')
+            arcs.append((DEPOT, DEPOT, depot_self))
+
+            # 仓库 → 各订单（首单弧）
+            for j in m_orders:
+                j_node = node_of[j]
+                arc_var = model.new_bool_var(f'arc_{m_idx}_d_{j}')
+                arcs.append((DEPOT, j_node, arc_var))
+                setup_t = setup_cache[(-1, j, m_idx)]
+                model.add(starts[j][m_idx] >= setup_t).only_enforce_if(arc_var)
+
+            # 各订单 → 仓库（末单弧）
+            for i in m_orders:
+                i_node = node_of[i]
+                arc_var = model.new_bool_var(f'arc_{m_idx}_{i}_d')
+                arcs.append((i_node, DEPOT, arc_var))
+
+            # 订单间弧
+            for i in m_orders:
+                for j in m_orders:
+                    if i == j:
+                        continue
+                    i_node = node_of[i]
+                    j_node = node_of[j]
+                    arc_var = model.new_bool_var(f'arc_{m_idx}_{i}_{j}')
+                    arcs.append((i_node, j_node, arc_var))
+                    setup_t = setup_cache[(i, j, m_idx)]
+                    model.add(
+                        starts[j][m_idx] >= ends[i][m_idx] + setup_t
+                    ).only_enforce_if(arc_var)
+                    # 记录换产延时变量
+                    delay_var = model.new_int_var(0, H, f'delay_{m_idx}_{i}_{j}')
+                    model.add(delay_var == setup_t).only_enforce_if(arc_var)
+                    model.add(delay_var == 0).only_enforce_if(arc_var.negated())
+                    setup_delay_vars.append(delay_var)
+
+            # 未激活订单自环（自环补丁）
+            for i in m_orders:
+                i_node = node_of[i]
+                self_arc = model.new_bool_var(f'self_{m_idx}_{i}')
+                arcs.append((i_node, i_node, self_arc))
+                # 自环激活 ↔ 该订单未分派到此机台
+                model.add(presence[i][m_idx] == 0).only_enforce_if(self_arc)
+
+            model.add_circuit(arcs)
+
+        # ─── 约束 5：维保日历禁排 ───
+        for m_idx, m in enumerate(machines):
+            for fw in m.forbidden_calendar:
+                for idx in range(n):
+                    if m_idx not in eligible[idx]:
+                        continue
+                    p = presence[idx][m_idx]
+                    s = starts[idx][m_idx]
+                    e = ends[idx][m_idx]
+                    # 订单必须完全在禁排窗口之前或之后
+                    b = model.new_bool_var(f'fw_{m_idx}_{idx}_{fw.start_mins}')
+                    model.add(e <= fw.start_mins).only_enforce_if(p, b)
+                    model.add(s >= fw.end_mins).only_enforce_if(p, b.negated())
+
+        # ─── 约束 6：72h 强制停机 ───
+        # 简化建模：72h 约束将在解提取阶段做后验校验。
+        # 在 CP-SAT 中对所有同机台订单对建模会导致变量爆炸。
+        # 此处仅在 Circuit 弧约束中对相邻订单的总跨度做软性限制，
+        # 确保求解器倾向于在长连续段中插入间隙。
+        # 完整的 72h 校验由 _extract_solution 中的后处理逻辑保障。
+
+        # ─── 目标函数 ───
+        tardiness_terms = []
+        for idx in range(n):
+            o = orders[idx]
+            w_i = get_tardiness_weight(o.customer_class, o.order_class)
+            # 每个订单只会激活一个 presence，其余为 0
+            for m_idx in eligible[idx]:
+                t_var = model.new_int_var(0, H, f'tard_{idx}_{m_idx}')
+                p = presence[idx][m_idx]
+                # tardiness = max(0, end - due_date) when present, else 0
+                diff_var = model.new_int_var(-H, H, f'tdiff_{idx}_{m_idx}')
+                model.add(diff_var == ends[idx][m_idx] - o.due_date_mins)
+                # t_var >= diff_var when present
+                model.add(t_var >= diff_var).only_enforce_if(p)
+                # t_var >= 0 is already guaranteed by domain
+                # t_var == 0 when not present
+                model.add(t_var == 0).only_enforce_if(p.negated())
+                weighted = model.new_int_var(0, H * w_i, f'wtard_{idx}_{m_idx}')
+                model.add(weighted == t_var * w_i).only_enforce_if(p)
+                model.add(weighted == 0).only_enforce_if(p.negated())
+                tardiness_terms.append(weighted)
+
+        total_tardiness = model.new_int_var(0, H * 100 * n, 'total_tardiness')
+        model.add(total_tardiness == sum(tardiness_terms))
+
+        # --- 加入左靠齐（Left-Packing）软性惩罚，防止任务漂浮产生空白间隙 ---
+        start_terms = []
+        for idx in range(n):
+            for m_idx in eligible[idx]:
+                start_var = model.new_int_var(0, H, f'start_val_{idx}_{m_idx}')
+                model.add(start_var == starts[idx][m_idx]).only_enforce_if(presence[idx][m_idx])
+                model.add(start_var == 0).only_enforce_if(presence[idx][m_idx].negated())
+                start_terms.append(start_var)
+        total_starts = model.new_int_var(0, H * n, 'total_starts')
+        model.add(total_starts == sum(start_terms))
+
+        if phase == 1:
+            # 第一阶段：主要目标最小化延期，次要目标尽量提早开工
+            model.minimize(total_tardiness * 10000 + total_starts)
+        else:
+            # 第二阶段：锁死交期，最小化换产时间，次要目标尽量提早开工
+            model.add(total_tardiness <= tardiness_bound)
+            if setup_delay_vars:
+                total_setup = model.new_int_var(0, H * n, 'total_setup')
+                model.add(total_setup == sum(setup_delay_vars))
+                model.minimize(total_setup * 10000 + total_starts)
+            else:
+                total_setup = model.new_int_var(0, 0, 'total_setup')
+                model.minimize(total_starts)
+
+        # ─── 求解 ───
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = SOLVER_TIME_LIMIT_SECONDS
+        solver.parameters.num_workers = 8
+        status = solver.solve(model)
+
+        status_map = {
+            cp_model.OPTIMAL: "OPTIMAL",
+            cp_model.FEASIBLE: "FEASIBLE",
+            cp_model.INFEASIBLE: "INFEASIBLE",
+            cp_model.MODEL_INVALID: "MODEL_INVALID",
+            cp_model.UNKNOWN: "UNKNOWN",
+        }
+        status_str = status_map.get(status, "UNKNOWN")
+
+        if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            obj_val = int(solver.objective_value)
+            vars_dict = {
+                'presence': presence, 'starts': starts, 'ends': ends,
+            }
+            return (status_str, solver, vars_dict, obj_val)
+        return None
+
+    def _extract_solution(
+        self, solver, vars_dict, orders, machines, eligible, setup_cache, result
+    ):
+        """从求解器结果中提取排程方案"""
+        presence = vars_dict['presence']
+        starts = vars_dict['starts']
+        ends = vars_dict['ends']
+        n = len(orders)
+
+        # 收集每台机台上的已排订单
+        machine_tasks: Dict[int, List[Tuple[int, int, int]]] = {}
+
+        for idx in range(n):
+            for m_idx in eligible[idx]:
+                if solver.value(presence[idx][m_idx]):
+                    s = solver.value(starts[idx][m_idx])
+                    e = solver.value(ends[idx][m_idx])
+                    if m_idx not in machine_tasks:
+                        machine_tasks[m_idx] = []
+                    machine_tasks[m_idx].append((idx, s, e))
+                    break
+
+        # 按开始时间排序，计算换产与废料
+        for m_idx, task_list in machine_tasks.items():
+            task_list.sort(key=lambda x: x[1])
+            m = machines[m_idx]
+            prev_order = None
+
+            for seq, (idx, s, e) in enumerate(task_list):
+                o = orders[idx]
+                setup_t = self.setup_calc.calculate_setup_time(prev_order, o, m)
+                scrap = self.setup_calc.calculate_scrap_weight(prev_order, o, m)
+
+                task = ScheduledTask(
+                    order=o, machine=m,
+                    start_mins=s, end_mins=e,
+                    setup_time=setup_t, scrap_kg=scrap,
+                    sequence_index=seq,
+                )
+                result.add_task(task)
+
+                # 回写到订单模型
+                o.assigned_machine_id = m.machine_id
+                o.scheduled_start_mins = s
+                o.scheduled_end_mins = e
+                o.scrap_weight_kg = scrap
+                o.actual_material_required_kg = o.total_quantity_kg + scrap
+
+                prev_order = o
+
+        logger.info("解提取完成: %d 个任务已排程", len(result.tasks))

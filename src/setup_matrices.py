@@ -1,0 +1,247 @@
+"""
+APS 排程系统换产矩阵数据驱动管理器
+
+从 Excel 中解析四张换产规则矩阵表，提供标准化查表接口。
+彻底替代硬编码的换产时间值，提升系统可维护性和可配置性。
+"""
+
+from __future__ import annotations
+import re
+import logging
+from typing import Dict, List, Tuple, Optional, Any
+
+from src.config import DEFAULT_MATERIAL_SWITCH_TIME_MINS
+
+logger = logging.getLogger(__name__)
+
+
+class SetupMatricesManager:
+    """换产矩阵数据驱动管理器"""
+
+    def __init__(self):
+        # 原料切换矩阵: (from_material, to_material) -> mins
+        self.material_switch_matrix: Dict[Tuple[str, str], int] = {}
+        # 同料换批次耗时
+        self.same_material_time: int = 30
+        # 涉及 Special_Co-PE 的特殊换产
+        self.special_to_any_time: int = 150
+        self.any_to_special_time: int = 120
+
+        # 规格调机矩阵: list of rules
+        self.width_up_rules: List[Tuple[int, int]] = []    # (threshold, mins)
+        self.width_down_rules: List[Tuple[int, int]] = []   # (threshold, mins)
+        self.die_change_time: int = 360
+        self.thickness_rules: List[Tuple[int, int]] = []    # (threshold, mins)
+        self.corona_switch_time: int = 20
+        self.core_size_switch_time: int = 30
+
+        # GMP 合规清场矩阵: (from_class, to_class) -> mins
+        self.gmp_clearance_matrix: Dict[Tuple[str, str], int] = {}
+
+        # 72h 强制停机清场耗时
+        self.continuous_run_cleaning_time: int = 90
+
+    def load_from_dataframes(
+        self,
+        df_material: Any,
+        df_physical: Any,
+        df_medical: Any,
+    ) -> None:
+        """从 Pandas DataFrame 加载所有换产矩阵"""
+        self._load_material_matrix(df_material)
+        self._load_physical_matrix(df_physical)
+        self._load_medical_matrix(df_medical)
+        logger.info("换产矩阵加载完成: 原料组合=%d, 规格规则=%d, GMP清场规则=%d",
+                     len(self.material_switch_matrix),
+                     len(self.width_up_rules) + len(self.width_down_rules) + len(self.thickness_rules),
+                     len(self.gmp_clearance_matrix))
+
+    def _load_material_matrix(self, df: Any) -> None:
+        """解析原料切换矩阵 Sheet"""
+        col_from = df.columns[0]   # 前序原料牌号 (fromMaterial)
+        col_to = df.columns[1]     # 后续原料牌号 (toMaterial)
+        col_mins = df.columns[2]   # 洗机切换耗时 (mins)
+
+        for _, row in df.iterrows():
+            from_mat = str(row[col_from]).strip()
+            to_mat = str(row[col_to]).strip()
+            mins = int(row[col_mins])
+
+            # 处理特殊通配符
+            if "Same" in from_mat and "Same" in to_mat:
+                self.same_material_time = mins
+            elif "Special_Co-PE" in from_mat and ("Any" in to_mat or "任何" in to_mat):
+                self.special_to_any_time = mins
+            elif ("Any" in from_mat or "任何" in from_mat) and "Special_Co-PE" in to_mat:
+                self.any_to_special_time = mins
+            else:
+                self.material_switch_matrix[(from_mat, to_mat)] = mins
+
+    def _load_physical_matrix(self, df: Any) -> None:
+        """解析规格与调机时间矩阵 Sheet"""
+        col_attr = df.columns[0]       # 属性维度 (attribute)
+        col_condition = df.columns[1]  # 变动条件边界 (condition)
+        col_mins = df.columns[2]       # 调试耗时 (mins)
+
+        for _, row in df.iterrows():
+            attr = str(row[col_attr]).strip()
+            condition = str(row[col_condition]).strip()
+            mins = int(row[col_mins])
+
+            if "Width_Up" in attr:
+                threshold = self._parse_threshold(condition)
+                self.width_up_rules.append((threshold, mins))
+            elif "Width_Down" in attr:
+                threshold = self._parse_threshold(condition)
+                self.width_down_rules.append((threshold, mins))
+            elif "Die_Change" in attr:
+                self.die_change_time = mins
+            elif "Thickness" in attr:
+                threshold = self._parse_threshold(condition)
+                self.thickness_rules.append((threshold, mins))
+            elif "Corona" in attr:
+                self.corona_switch_time = mins
+            elif "Core_Size" in attr:
+                self.core_size_switch_time = mins
+
+        # 按阈值升序排列（用于阶梯查表）
+        self.width_up_rules.sort(key=lambda x: x[0])
+        self.width_down_rules.sort(key=lambda x: x[0])
+        self.thickness_rules.sort(key=lambda x: x[0])
+
+    def _load_medical_matrix(self, df: Any) -> None:
+        """解析医疗级清场验证矩阵 Sheet"""
+        col_from = df.columns[0]   # 前序工单特征 (fromOrderClass)
+        col_to = df.columns[1]     # 后续工单特征 (toOrderClass)
+        col_mins = df.columns[2]   # 验证清场耗时 (mins)
+
+        for _, row in df.iterrows():
+            from_class = str(row[col_from]).strip()
+            to_class = str(row[col_to]).strip()
+            mins = int(row[col_mins])
+
+            # 解析含有中文标注的分类标识
+            from_key = self._extract_order_class(from_class)
+            to_key = self._extract_order_class(to_class)
+
+            if from_key == "CONTINUOUS_RUN":
+                self.continuous_run_cleaning_time = mins
+            else:
+                self.gmp_clearance_matrix[(from_key, to_key)] = mins
+
+    @staticmethod
+    def _parse_threshold(condition: str) -> int:
+        """从条件描述中提取数字阈值，用于阶梯规则排序"""
+        # 匹配 "≤ 50mm", "51mm - 200mm", "> 200mm", "≤ 10um", "> 10um" 等
+        numbers = re.findall(r'(\d+)', condition)
+        if not numbers:
+            return 999999  # 无限大，兜底
+        if '>' in condition and '≤' not in condition:
+            # "> 200mm" 类型 → 阈值是 200（取最后一个数字）
+            return int(numbers[-1])
+        # "≤ 50mm" 或 "51mm - 200mm" 类型 → 取最后一个数字作为上界
+        return int(numbers[-1])
+
+    @staticmethod
+    def _extract_order_class(raw: str) -> str:
+        """从含中文标注的字符串中提取纯英文分类标识"""
+        if "Continuous_Run" in raw or "持续开机" in raw:
+            return "CONTINUOUS_RUN"
+        if "NORMAL" in raw:
+            return "NORMAL"
+        if "URGENT" in raw:
+            return "URGENT"
+        if "SAMPLE" in raw:
+            return "SAMPLE"
+        if "ANY" in raw or "任何" in raw:
+            return "ANY"
+        return raw
+
+    # ─── 公开查表接口 ────────────────────────────────────
+
+    def get_material_switch_time(self, from_grade: str, to_grade: str) -> int:
+        """查询原料切换耗时（单层）"""
+        if from_grade == to_grade:
+            return self.same_material_time
+
+        # 精确匹配
+        key = (from_grade, to_grade)
+        if key in self.material_switch_matrix:
+            return self.material_switch_matrix[key]
+
+        # 处理 Special_Co-PE 的通配规则
+        if from_grade == "Special_Co-PE":
+            return self.special_to_any_time
+        if to_grade == "Special_Co-PE":
+            return self.any_to_special_time
+
+        # 未命中：安全降级
+        logger.warning("原料切换矩阵未命中: %s → %s，降级使用默认值 %d min",
+                        from_grade, to_grade, DEFAULT_MATERIAL_SWITCH_TIME_MINS)
+        return DEFAULT_MATERIAL_SWITCH_TIME_MINS
+
+    def get_width_change_time(self, delta_width: int, exceeds_max: bool) -> int:
+        """查询幅宽变动耗时"""
+        if exceeds_max:
+            return self.die_change_time
+
+        if delta_width == 0:
+            return 0
+
+        abs_delta = abs(delta_width)
+        rules = self.width_up_rules if delta_width > 0 else self.width_down_rules
+
+        # 阶梯查表：找到 abs_delta 所落入的区间
+        for threshold, mins in rules:
+            if abs_delta <= threshold:
+                return mins
+
+        # 超过最大阈值 → 返回最后一条规则的耗时
+        if rules:
+            return rules[-1][1]
+        return 0
+
+    def get_thickness_change_time(self, delta_thickness: int) -> int:
+        """查询厚度变动耗时"""
+        if delta_thickness == 0:
+            return 0
+
+        abs_delta = abs(delta_thickness)
+        for threshold, mins in self.thickness_rules:
+            if abs_delta <= threshold:
+                return mins
+
+        if self.thickness_rules:
+            return self.thickness_rules[-1][1]
+        return 0
+
+    def get_corona_change_time(self, from_corona: bool, to_corona: bool) -> int:
+        """查询电晕切换耗时"""
+        if from_corona != to_corona:
+            return self.corona_switch_time
+        return 0
+
+    def get_core_size_change_time(self, from_core: int, to_core: int) -> int:
+        """查询卷芯管径切换耗时"""
+        if from_core != to_core:
+            return self.core_size_switch_time
+        return 0
+
+    def get_gmp_clearance_time(self, from_class: str, to_class: str) -> int:
+        """查询 GMP 合规清场耗时"""
+        # 精确匹配
+        key = (from_class, to_class)
+        if key in self.gmp_clearance_matrix:
+            return self.gmp_clearance_matrix[key]
+
+        # ANY 通配匹配
+        any_key = ("ANY", to_class)
+        if any_key in self.gmp_clearance_matrix:
+            return self.gmp_clearance_matrix[any_key]
+
+        from_any_key = (from_class, "ANY")
+        if from_any_key in self.gmp_clearance_matrix:
+            return self.gmp_clearance_matrix[from_any_key]
+
+        # 同级别流转默认无额外清场
+        return 0
