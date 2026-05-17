@@ -78,21 +78,30 @@ export default function GanttPage() {
       const start = api.coord([api.value(1), yIdx]);
       const end = api.coord([api.value(2), yIdx]);
       const height = api.size([0, 1])[1] * 0.6;
-      const width = Math.max(end[0] - start[0], 2);
+      const width = Math.max(end[0] - start[0], 1.5); // Ensure at least 1.5px to be visible
       const d = api.value(3);
       
       const style = api.style();
-      // Display order id inside the bar if it's wide enough
+      // Explicitly set text boundaries so truncation works and prevents bleeding into next order!
       if (!d.is_setup && !d.reason && width > 40) {
          style.text = d.order_id;
          style.textFill = '#ffffff';
          style.fontSize = 10;
+         style.width = width - 8; // Force bounding box for truncate
          style.overflow = 'truncate';
       }
 
-      return {
+      const rectShape = echarts.graphic.clipRectByRect({
+        x: start[0], y: start[1] - height / 2, width: width, height: height
+      }, {
+        x: params.coordSys.x, y: params.coordSys.y,
+        width: params.coordSys.width, height: params.coordSys.height
+      });
+
+      return rectShape && {
         type: 'rect',
-        shape: { x: start[0], y: start[1] - height / 2, width, height },
+        transition: ['shape'],
+        shape: { ...rectShape, r: Math.min(2, rectShape.width / 2) }, // Safe border radius
         style: style,
       };
     }
@@ -102,7 +111,8 @@ export default function GanttPage() {
       name: p,
       renderItem: renderGanttBar,
       encode: { x: [1, 2], y: 0 },
-      data: seriesByProduct[p]
+      data: seriesByProduct[p],
+      emphasis: { focus: 'none' }
     }));
 
     seriesList.push({
@@ -134,13 +144,9 @@ export default function GanttPage() {
         }
       },
       legend: {
-        top: 0,
-        left: 0,
+        top: 0, left: 0,
         textStyle: { color: '#cbd5e1', fontSize: 13 },
-        itemWidth: 14,
-        itemHeight: 14,
-        icon: 'roundRect',
-        type: 'scroll'
+        itemWidth: 14, itemHeight: 14, icon: 'roundRect', type: 'scroll'
       },
       grid: { top: 60, right: 40, bottom: 60, left: 100 },
       xAxis: { 
@@ -158,11 +164,7 @@ export default function GanttPage() {
         { type: 'slider', xAxisIndex: 0, bottom: 10, height: 20, borderColor: '#334155',
           backgroundColor: '#1e293b', fillerColor: 'rgba(59,130,246,0.15)',
           handleStyle: { color: '#3b82f6' }, textStyle: { color: '#94a3b8' }, showDetail: true },
-        { type: 'inside', xAxisIndex: 0 },
-        { type: 'slider', yAxisIndex: 0, right: 10, width: 20, borderColor: '#334155',
-          backgroundColor: '#1e293b', fillerColor: 'rgba(59,130,246,0.15)',
-          handleStyle: { color: '#3b82f6' } },
-        { type: 'inside', yAxisIndex: 0 },
+        { type: 'inside', xAxisIndex: 0 }
       ],
       series: seriesList,
     }, true);

@@ -55,7 +55,7 @@ function DashboardGanttChart({ tasks }) {
       const start = api.coord([api.value(1), categoryIndex]);
       const end = api.coord([api.value(2), categoryIndex]);
       const height = api.size([0, 1])[1] * 0.6;
-      const width = Math.max(end[0] - start[0], 2);
+      const width = Math.max(end[0] - start[0], 1.5);
       
       const d = api.value(3);
       const style = api.style();
@@ -64,6 +64,7 @@ function DashboardGanttChart({ tasks }) {
          style.text = d.order_id;
          style.textFill = '#ffffff';
          style.fontSize = 10;
+         style.width = width - 8;
          style.overflow = 'truncate';
       }
 
@@ -77,7 +78,7 @@ function DashboardGanttChart({ tasks }) {
       return rectShape && {
         type: 'rect',
         transition: ['shape'],
-        shape: { ...rectShape, r: 3 },
+        shape: { ...rectShape, r: Math.min(2, rectShape.width / 2) },
         style: style
       };
     };
