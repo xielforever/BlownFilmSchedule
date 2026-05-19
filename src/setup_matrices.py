@@ -41,6 +41,16 @@ class SetupMatricesManager:
         # 72h 强制停机清场耗时
         self.continuous_run_cleaning_time: int = 90
 
+        # 本轮求解观测：缺失的材料切换规则。求解器会高频查询换产矩阵，
+        # 因此缺失规则只记录一次 warning，并在排程结果里汇总诊断。
+        self.missing_material_switch_pairs: Dict[Tuple[str, str], int] = {}
+        self._warned_missing_material_switches = set()
+
+    def reset_runtime_observations(self) -> None:
+        """清空本轮求解期间收集的运行时观测。"""
+        self.missing_material_switch_pairs.clear()
+        self._warned_missing_material_switches.clear()
+
     def load_from_dataframes(
         self,
         df_material: Any,
@@ -176,9 +186,29 @@ class SetupMatricesManager:
             return self.any_to_special_time
 
         # 未命中：安全降级
-        logger.warning("原料切换矩阵未命中: %s → %s，降级使用默认值 %d min",
-                        from_grade, to_grade, DEFAULT_MATERIAL_SWITCH_TIME_MINS)
+        self.missing_material_switch_pairs[key] = (
+            self.missing_material_switch_pairs.get(key, 0) + 1
+        )
+        if key not in self._warned_missing_material_switches:
+            self._warned_missing_material_switches.add(key)
+            logger.warning("原料切换矩阵未命中: %s → %s，降级使用默认值 %d min",
+                            from_grade, to_grade, DEFAULT_MATERIAL_SWITCH_TIME_MINS)
         return DEFAULT_MATERIAL_SWITCH_TIME_MINS
+
+    def get_missing_material_switches(self) -> List[Dict[str, Any]]:
+        """返回本轮求解中触发默认降级的材料切换组合。"""
+        return [
+            {
+                "from_material": from_mat,
+                "to_material": to_mat,
+                "lookup_count": count,
+                "fallback_mins": DEFAULT_MATERIAL_SWITCH_TIME_MINS,
+            }
+            for (from_mat, to_mat), count in sorted(
+                self.missing_material_switch_pairs.items(),
+                key=lambda item: (-item[1], item[0][0], item[0][1]),
+            )
+        ]
 
     def get_width_change_time(self, delta_width: int, exceeds_max: bool) -> int:
         """查询幅宽变动耗时"""

@@ -18,6 +18,7 @@
 - [x] Attach diagnostic metadata to Gantt idle, maintenance, downtime, and late production events.
 - [x] Enrich ordinary Gantt idle gaps with order-pool evidence: hard-fit blockers, material waits, assigned-elsewhere orders, and window length.
 - [x] Keep raw logs as fallback detail only.
+- [x] Surface phase-2 fallback and missing material-switch rules as structured run diagnostics.
 
 ## Phase 3: UI Guidance Surfaces
 
@@ -25,7 +26,7 @@
 - [x] Scope Dashboard root-cause panel to blocked, late, and material-constrained orders only.
 - [x] Show structured failed-trigger diagnostics before raw logs.
 - [x] Add Gantt event detail panel for clicked events.
-- [ ] Add order configuration warning panel for `?order=...` diagnostics.
+- [x] Add order configuration warning panel for `?order=...` diagnostics.
 - [ ] Add machine-level diagnostic cards to `MachinesPage`.
 
 ## Phase 4: Real Data Regression

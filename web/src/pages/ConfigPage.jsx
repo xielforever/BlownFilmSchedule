@@ -11,6 +11,7 @@ import {
   getMachines,
   getOrders,
   getRulesSummary,
+  getScheduleDiagnostics,
   updateGmpRule,
   updateMachine,
   updateMaintenanceWindow,
@@ -18,7 +19,7 @@ import {
   updateOrder,
   updateSpecRule,
 } from '../api/client';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 
 const tabs = [
   { id: 'orders', label: '订单' },
@@ -93,6 +94,24 @@ const ruleColumnLabels = {
   is_recurring: '周期性',
   recurrence_rule: '周期规则',
 };
+const diagnosticSeverityLabels = {
+  critical: '关键',
+  warning: '警告',
+  info: '提示',
+};
+const diagnosticEvidenceLabels = {
+  target_width: '订单幅宽',
+  target_thickness: '订单厚度',
+  cleanroom_req: '洁净等级',
+  recipe_layers: '配方层数',
+  available_width_range: '可用幅宽范围',
+  available_thickness_range: '可用厚度范围',
+  max_machine_layers: '最大机台层数',
+  tardiness_mins: '延期',
+  setup_time_mins: '换产',
+  assigned_machine: '排入机台',
+  machine_blocker: '机台阻断',
+};
 
 function labelOptions(values, labels = {}) {
   return values.map(value => ({ value, label: labels[value] || value }));
@@ -157,6 +176,64 @@ function StatusLine({ message, tone }) {
   return <div className={`config-status ${tone === 'error' ? 'error' : 'ok'}`}>{message}</div>;
 }
 
+function formatEvidence(item) {
+  if (!item) return '';
+  const label = diagnosticEvidenceLabels[item.metric] || item.metric;
+  const actual = item.actual ?? '-';
+  const unit = item.unit ? ` ${item.unit}` : '';
+  return `${label}: ${actual}${unit}`;
+}
+
+function OrderDiagnosticPanel({ diagnostics, loading, error, runId }) {
+  if (loading) {
+    return <div className="config-diagnostic-panel compact">正在读取当前订单诊断...</div>;
+  }
+  if (error) {
+    return <div className="config-diagnostic-panel error">{error}</div>;
+  }
+  if (!diagnostics?.length) return null;
+
+  const rank = { critical: 0, warning: 1, info: 2 };
+  const visible = [...diagnostics].sort((a, b) => (rank[a.severity] ?? 9) - (rank[b.severity] ?? 9)).slice(0, 4);
+
+  return (
+    <div className="config-diagnostic-panel">
+      <div className="config-diagnostic-head">
+        <div>
+          <strong>当前订单根因</strong>
+          <span>{runId ? `运行 #${runId}` : '当前有效运行'} · {diagnostics.length} 条</span>
+        </div>
+      </div>
+      <div className="diagnostic-list compact">
+        {visible.map(diagnostic => (
+          <div key={diagnostic.id || `${diagnostic.entity_id}-${diagnostic.code}`} className={`diagnostic-row severity-${diagnostic.severity || 'info'}`}>
+            <div>
+              <span className="diagnostic-code">{diagnostic.code}</span>
+              <strong>{diagnostic.display_title || diagnostic.entity_id}</strong>
+              <span className="diagnostic-tag">{diagnosticSeverityLabels[diagnostic.severity] || diagnostic.severity || '提示'}</span>
+            </div>
+            <p>{diagnostic.root_cause}</p>
+            {!!diagnostic.evidence?.length && (
+              <div className="evidence-strip">
+                {diagnostic.evidence.slice(0, 5).map(item => (
+                  <span key={`${diagnostic.id}-${item.metric}-${item.actual}`}>{formatEvidence(item)}</span>
+                ))}
+              </div>
+            )}
+            {!!diagnostic.recommendations?.length && (
+              <div className="diagnostic-actions">
+                {diagnostic.recommendations.slice(0, 3).map(action => (
+                  <Link key={`${diagnostic.id}-${action.action}`} to={action.href}>{action.label}</Link>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function buildOrderDraft(order) {
   return {
     target_width: order.target_width,
@@ -201,6 +278,12 @@ function OrdersConfig({ orders, setOrders, onSaved, initialOrderId }) {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [editorDirty, setEditorDirty] = useState(false);
+  const [diagnosticState, setDiagnosticState] = useState({
+    loading: false,
+    error: '',
+    runId: null,
+    items: [],
+  });
   const selectedKey = selectedId || initialOrderId;
   const selected = useMemo(() => orders.find(o => o.order_id === selectedKey) || orders[0], [orders, selectedKey]);
   const filteredOrders = useMemo(() => {
@@ -228,6 +311,43 @@ function OrdersConfig({ orders, setOrders, onSaved, initialOrderId }) {
     setSelectedId(orderId);
   }, [editorDirty, selected?.order_id]);
 
+  useEffect(() => {
+    let cancelled = false;
+    Promise.resolve().then(async () => {
+      if (!selected?.order_id) {
+        if (!cancelled) {
+          setDiagnosticState({ loading: false, error: '', runId: null, items: [] });
+        }
+        return;
+      }
+
+      if (!cancelled) {
+        setDiagnosticState(prev => ({ ...prev, loading: true, error: '' }));
+      }
+
+      try {
+        const res = await getScheduleDiagnostics({ entity_type: 'order', entity_id: selected.order_id });
+        if (cancelled) return;
+        setDiagnosticState({
+          loading: false,
+          error: '',
+          runId: res.data.run_id,
+          items: res.data.diagnostics || [],
+        });
+      } catch (err) {
+        if (cancelled) return;
+        setDiagnosticState({
+          loading: false,
+          error: err.response?.data?.detail || err.message || '无法读取订单诊断。',
+          runId: null,
+          items: [],
+        });
+      }
+    });
+
+    return () => { cancelled = true; };
+  }, [selected?.order_id]);
+
   if (!selected) return <div className="loading">暂无订单</div>;
 
   return (
@@ -252,12 +372,31 @@ function OrdersConfig({ orders, setOrders, onSaved, initialOrderId }) {
         ))}
         {!filteredOrders.length && <div className="config-empty">没有匹配的订单。</div>}
       </div>
-      <OrderEditor key={selected.order_id} order={selected} setOrders={setOrders} onSaved={onSaved} onDirtyChange={setEditorDirty} />
+      <OrderEditor
+        key={selected.order_id}
+        order={selected}
+        setOrders={setOrders}
+        onSaved={onSaved}
+        onDirtyChange={setEditorDirty}
+        diagnostics={diagnosticState.items}
+        diagnosticsLoading={diagnosticState.loading}
+        diagnosticsError={diagnosticState.error}
+        diagnosticsRunId={diagnosticState.runId}
+      />
     </div>
   );
 }
 
-function OrderEditor({ order, setOrders, onSaved, onDirtyChange }) {
+function OrderEditor({
+  order,
+  setOrders,
+  onSaved,
+  onDirtyChange,
+  diagnostics,
+  diagnosticsLoading,
+  diagnosticsError,
+  diagnosticsRunId,
+}) {
   const baseDraft = useMemo(() => buildOrderDraft(order), [order]);
   const [draft, setDraft] = useState(() => buildOrderDraft(order));
   const isDirty = useMemo(() => !sameDraft(draft, baseDraft), [draft, baseDraft]);
@@ -291,6 +430,12 @@ function OrderEditor({ order, setOrders, onSaved, onDirtyChange }) {
         </div>
         <button className="btn btn-primary" onClick={save}>保存订单</button>
       </div>
+      <OrderDiagnosticPanel
+        diagnostics={diagnostics}
+        loading={diagnosticsLoading}
+        error={diagnosticsError}
+        runId={diagnosticsRunId}
+      />
       <div className="config-form">
         <Field label="幅宽 mm"><NumberInput value={draft.target_width} onChange={v => patch('target_width', v)} /></Field>
         <Field label="厚度 um"><NumberInput value={draft.target_thickness} onChange={v => patch('target_thickness', v)} /></Field>

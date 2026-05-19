@@ -16,6 +16,7 @@ from src.config import (
     SOLVER_TIME_LIMIT_SECONDS,
     CONTINUOUS_RUN_LIMIT_MINUTES,
     MANDATORY_CLEANING_DURATION_MINUTES,
+    DEFAULT_MATERIAL_SWITCH_TIME_MINS,
     SCRAP_PER_LAYER_MATERIAL_CHANGE_KG,
     SCRAP_PER_LAYER_SAME_MATERIAL_KG,
     SCRAP_WIDTH_CHANGE_KG,
@@ -227,12 +228,16 @@ class AdvancedMedicalAPS:
         machines: List[BlownFilmMachineModel],
     ) -> ScheduleResult:
         """执行两阶段分层求解，返回排程结果"""
+        if hasattr(self.setup_mgr, "reset_runtime_observations"):
+            self.setup_mgr.reset_runtime_observations()
+
         result = ScheduleResult()
         original_orders = list(orders)
         result.input_order_count = len(original_orders)
         M = len(machines)
 
         schedulable_orders: List[ProductionOrderModel] = []
+        blocked_log_lines: List[str] = []
         for order_item in original_orders:
             fits = [evaluate_machine_fit(order_item, m) for m in machines]
             if any(fit.eligible for fit in fits):
@@ -244,7 +249,8 @@ class AdvancedMedicalAPS:
                 f"width={order_item.target_width}, thickness={order_item.target_thickness}, "
                 f"cleanroom={order_item.cleanroom_req}, layers={len(order_item.recipe_materials)}"
             )
-            logger.error(error)
+            blocked_log_lines.append(error)
+            logger.debug(error)
             result.blocked_order_count += 1
             result.diagnostics.append(
                 build_infeasible_order_diagnostic(order_item, machines, fits)
@@ -252,6 +258,14 @@ class AdvancedMedicalAPS:
 
         result.schedulable_order_count = len(schedulable_orders)
         if not schedulable_orders:
+            logger.error(
+                "全部订单无可用机台，排程无法继续: blocked=%d",
+                result.blocked_order_count,
+            )
+            for line in blocked_log_lines[:20]:
+                logger.error("  - %s", line)
+            if len(blocked_log_lines) > 20:
+                logger.error("  - 另有 %d 个订单无可用机台，详见结构化诊断。", len(blocked_log_lines) - 20)
             result.status = "INFEASIBLE"
             return result
 
@@ -335,6 +349,7 @@ class AdvancedMedicalAPS:
                     DiagnosticRecommendation("review_constraints", "检查机台和维护约束", "/config?tab=machines"),
                 ],
             ))
+            self._append_material_matrix_diagnostic(result)
             return result
 
         status1, solver1, vars1, best_tardiness = phase1_result
@@ -352,10 +367,20 @@ class AdvancedMedicalAPS:
 
         if phase2_result is None:
             # 回退使用第一阶段结果
-            logger.warning("第二阶段求解失败，回退使用第一阶段结果")
+            phase2_status = getattr(self, "_last_solver_status", "UNKNOWN")
+            logger.warning("第二阶段求解失败，回退使用第一阶段结果: status=%s", phase2_status)
             self._extract_solution(solver1, vars1, orders, machines, eligible,
                                    setup_cache, result)
+            result.phase2_score = sum(t.setup_time for t in result.tasks)
             result.status = status1
+            self._append_phase2_fallback_diagnostic(
+                result,
+                phase1_status=status1,
+                phase2_status=phase2_status,
+                best_tardiness=best_tardiness,
+                order_count=n,
+                machine_count=M,
+            )
         else:
             status2, solver2, vars2, setup_score = phase2_result
             result.phase2_score = setup_score
@@ -388,12 +413,88 @@ class AdvancedMedicalAPS:
                     DiagnosticRecommendation("review_solver_inputs", "检查订单、机台和维护约束", "/config"),
                 ],
             ))
+            self._append_material_matrix_diagnostic(result)
         else:
             result.diagnostics.extend(build_result_diagnostics(result, orders, machines))
+            self._append_material_matrix_diagnostic(result)
             if result.blocked_order_count:
                 result.status = "PARTIAL"
 
         return result
+
+    def _append_phase2_fallback_diagnostic(
+        self,
+        result: ScheduleResult,
+        phase1_status: str,
+        phase2_status: str,
+        best_tardiness: int,
+        order_count: int,
+        machine_count: int,
+    ) -> None:
+        result.diagnostics.append(Diagnostic(
+            entity_type="run",
+            entity_id="current",
+            severity="warning",
+            category="capacity",
+            code="solver.phase2_fallback",
+            confidence="proven",
+            root_cause=(
+                "第二阶段换产优化未在时间限制内取得可发布解，系统已回退使用第一阶段交期优化结果。"
+            ),
+            evidence=[
+                DiagnosticEvidence("phase1_status", phase1_status),
+                DiagnosticEvidence("phase2_status", phase2_status),
+                DiagnosticEvidence("phase1_tardiness_score", best_tardiness),
+                DiagnosticEvidence("scheduled_order_count", order_count),
+                DiagnosticEvidence("machine_count", machine_count),
+                DiagnosticEvidence("time_limit_seconds", SOLVER_TIME_LIMIT_SECONDS, "s"),
+            ],
+            recommendations=[
+                DiagnosticRecommendation("review_phase2_scope", "减少本轮候选订单或放宽二阶段时间限制", "/config?tab=orders"),
+                DiagnosticRecommendation("review_setup_rules", "补齐关键换产规则后重新运行", "/config?tab=rules"),
+            ],
+            display_title="二阶段换产优化已回退",
+        ))
+
+    def _append_material_matrix_diagnostic(self, result: ScheduleResult) -> None:
+        missing_pairs = (
+            self.setup_mgr.get_missing_material_switches()
+            if hasattr(self.setup_mgr, "get_missing_material_switches")
+            else []
+        )
+        if not missing_pairs:
+            return
+
+        fallback_count = sum(item["lookup_count"] for item in missing_pairs)
+        evidence = [
+            DiagnosticEvidence("missing_pair_count", len(missing_pairs)),
+            DiagnosticEvidence("fallback_lookup_count", fallback_count),
+            DiagnosticEvidence("fallback_mins", DEFAULT_MATERIAL_SWITCH_TIME_MINS, "min"),
+        ]
+        for item in missing_pairs[:8]:
+            evidence.append(DiagnosticEvidence(
+                "missing_material_pair",
+                f"{item['from_material']} -> {item['to_material']} ({item['lookup_count']} 次)",
+            ))
+
+        result.diagnostics.append(Diagnostic(
+            entity_type="run",
+            entity_id="current",
+            severity="warning",
+            category="setup",
+            code="setup.material_switch_matrix_missing",
+            confidence="proven",
+            root_cause=(
+                f"本轮排程有 {len(missing_pairs)} 组原料切换规则缺失，"
+                f"已 {fallback_count} 次使用默认 {DEFAULT_MATERIAL_SWITCH_TIME_MINS} 分钟降级值。"
+            ),
+            evidence=evidence,
+            recommendations=[
+                DiagnosticRecommendation("add_material_switch_rules", "在规则页补充材料切换矩阵", "/config?tab=rules"),
+                DiagnosticRecommendation("rerun_schedule", "补齐规则后重新运行排程", "/dashboard"),
+            ],
+            display_title="材料切换规则缺失",
+        ))
 
     def _estimate_horizon(
         self,

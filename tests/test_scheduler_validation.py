@@ -137,6 +137,41 @@ class TestSchedulerSequencing(unittest.TestCase):
             for diagnostic in result.diagnostics
         ))
 
+    def test_phase2_fallback_diagnostic_is_structured(self):
+        result = ScheduleResult()
+        aps = AdvancedMedicalAPS(_make_setup_mgr())
+
+        aps._append_phase2_fallback_diagnostic(
+            result,
+            phase1_status="FEASIBLE",
+            phase2_status="UNKNOWN",
+            best_tardiness=123,
+            order_count=5,
+            machine_count=2,
+        )
+
+        self.assertEqual(len(result.diagnostics), 1)
+        diagnostic = result.diagnostics[0]
+        self.assertEqual(diagnostic.code, "solver.phase2_fallback")
+        self.assertEqual(diagnostic.category, "capacity")
+        self.assertEqual(diagnostic.severity, "warning")
+        self.assertTrue(any(item.metric == "phase2_status" and item.actual == "UNKNOWN" for item in diagnostic.evidence))
+
+    def test_material_matrix_missing_diagnostic_is_structured(self):
+        result = ScheduleResult()
+        setup_mgr = _make_setup_mgr()
+        setup_mgr.get_material_switch_time("RAW-A", "RAW-B")
+        setup_mgr.get_material_switch_time("RAW-A", "RAW-B")
+        aps = AdvancedMedicalAPS(setup_mgr)
+
+        aps._append_material_matrix_diagnostic(result)
+
+        self.assertEqual(len(result.diagnostics), 1)
+        diagnostic = result.diagnostics[0]
+        self.assertEqual(diagnostic.code, "setup.material_switch_matrix_missing")
+        self.assertEqual(diagnostic.category, "setup")
+        self.assertTrue(any(item.metric == "fallback_lookup_count" and item.actual == 2 for item in diagnostic.evidence))
+
     def test_decode_child_output_handles_gbk_logs(self):
         text = "订单 ORD-062 无可用机台: width=1718, thickness=80"
         self.assertEqual(_decode_child_output(text.encode("gbk")), text)

@@ -128,6 +128,20 @@ class TestSetupTimeCalculation(unittest.TestCase):
         # Max(120,120,120,120,120) = 120
         self.assertGreaterEqual(t, 120)
 
+    def test_missing_material_switches_are_summarized(self):
+        """未配置材料切换只记录汇总，供排程诊断展示。"""
+        self.mgr.reset_runtime_observations()
+
+        first = self.mgr.get_material_switch_time("A-RAW", "B-RAW")
+        second = self.mgr.get_material_switch_time("A-RAW", "B-RAW")
+        missing = self.mgr.get_missing_material_switches()
+
+        self.assertEqual(first, second)
+        self.assertEqual(len(missing), 1)
+        self.assertEqual(missing[0]["from_material"], "A-RAW")
+        self.assertEqual(missing[0]["to_material"], "B-RAW")
+        self.assertEqual(missing[0]["lookup_count"], 2)
+
     def test_corona_switch(self):
         """电晕切换"""
         a = _make_order(orderId="A", coronaReq="YES")
