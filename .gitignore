@@ -5,6 +5,7 @@ __pycache__/
 output/server/
 output/playwright/
 output/demo_seed_snapshot.json
+output/schedule_report.md
 
 web/dist/
 web/.vite/
