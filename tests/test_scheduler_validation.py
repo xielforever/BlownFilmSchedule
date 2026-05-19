@@ -101,7 +101,7 @@ class TestSchedulerSequencing(unittest.TestCase):
 
         self.assertTrue(result.validation_errors)
 
-    def test_infeasible_order_returns_validation_error(self):
+    def test_infeasible_order_returns_order_diagnostic(self):
         order = _make_order("ORD-WIDE", targetWidth=9999)
         machine = _make_machine()
         aps = AdvancedMedicalAPS(_make_setup_mgr())
@@ -110,10 +110,32 @@ class TestSchedulerSequencing(unittest.TestCase):
 
         self.assertEqual(result.status, "INFEASIBLE")
         self.assertEqual(result.tasks, [])
-        self.assertEqual(len(result.validation_errors), 1)
-        self.assertIn("无可用机台", result.validation_errors[0])
+        self.assertEqual(result.validation_errors, [])
+        self.assertEqual(result.input_order_count, 1)
+        self.assertEqual(result.schedulable_order_count, 0)
+        self.assertEqual(result.blocked_order_count, 1)
         self.assertEqual(len(result.diagnostics), 1)
         self.assertEqual(result.diagnostics[0].code, "eligibility.width_out_of_range")
+
+    def test_mixed_feasible_and_blocked_orders_returns_partial_schedule(self):
+        feasible = _make_order("ORD-OK")
+        blocked = _make_order("ORD-WIDE", targetWidth=9999)
+        machine = _make_machine()
+        aps = AdvancedMedicalAPS(_make_setup_mgr())
+
+        result = aps.run([feasible, blocked], [machine])
+
+        self.assertEqual(result.status, "PARTIAL")
+        self.assertEqual(result.validation_errors, [])
+        self.assertEqual(result.input_order_count, 2)
+        self.assertEqual(result.schedulable_order_count, 1)
+        self.assertEqual(result.blocked_order_count, 1)
+        self.assertEqual([task.order.order_id for task in result.tasks], ["ORD-OK"])
+        self.assertTrue(any(
+            diagnostic.entity_id == "ORD-WIDE"
+            and diagnostic.code == "eligibility.width_out_of_range"
+            for diagnostic in result.diagnostics
+        ))
 
     def test_decode_child_output_handles_gbk_logs(self):
         text = "订单 ORD-062 无可用机台: width=1718, thickness=80"

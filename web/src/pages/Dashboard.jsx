@@ -15,14 +15,6 @@ const ORDER_CLASS_LABELS = {
   SAMPLE: '样品',
 };
 
-const GANTT_KIND_LABELS = {
-  production: '生产',
-  setup: '换产',
-  idle: '空档',
-  maintenance: '维护',
-  downtime: '停机',
-};
-
 const DIAGNOSTIC_CATEGORY_LABELS = {
   eligibility: '可排性',
   lateness: '延期',
@@ -36,6 +28,9 @@ const SCHEDULE_STATE_LABELS = {
   running: '运行中',
   succeeded: '成功',
   failed: '失败',
+  PARTIAL: '部分排程',
+  OPTIMAL: '最优',
+  FEASIBLE: '可行',
 };
 
 function formatGanttTime(value) {
@@ -776,6 +771,9 @@ export default function Dashboard() {
   const idleCount = ganttData?.idle?.length || 0;
   const downtimeCount = ganttData?.downtime?.length || 0;
   const maintenanceCount = ganttData?.maintenance?.length || 0;
+  const inputOrderCount = summary.input_order_count ?? summary.total_orders;
+  const scheduledOrderCount = summary.scheduled_order_count ?? summary.total_orders;
+  const blockedOrderCount = summary.blocked_order_count ?? Math.max(0, inputOrderCount - scheduledOrderCount);
 
   return (
     <div>
@@ -790,7 +788,9 @@ export default function Dashboard() {
       <RootCausePanel diagnostics={visibleDiagnostics} />
 
       <div className="kpi-grid">
-        <KpiCard label="订单总数" value={summary.total_orders} />
+        <KpiCard label="输入订单" value={inputOrderCount} />
+        <KpiCard label="已排订单" value={scheduledOrderCount} />
+        <KpiCard label="无法排程" value={blockedOrderCount} valueColor={blockedOrderCount ? '#f97316' : '#10b981'} />
         <KpiCard label="准时率" value={`${summary.on_time_rate}%`} valueColor="#10b981" />
         <KpiCard label="废料总量" value={`${summary.total_scrap_kg}kg`} />
         <KpiCard label="机台利用率" value={`${summary.avg_utilization}%`} valueColor="#3b82f6" />

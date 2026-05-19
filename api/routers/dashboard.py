@@ -1,9 +1,39 @@
 """Dashboard API"""
+import json
+
 from fastapi import APIRouter, Depends
 from api.deps import get_db
 from api.auth import get_current_user
 
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
+
+
+def _normalize_solver_params(value):
+    if not value:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def _schedule_summary_counts(run):
+    params = _normalize_solver_params(run.get("solver_params"))
+    summary = params.get("summary") if isinstance(params.get("summary"), dict) else {}
+    scheduled_count = run["total_orders"] or 0
+    schedulable_count = summary.get("schedulable_order_count", scheduled_count)
+    input_count = summary.get("input_order_count", schedulable_count)
+    blocked_count = summary.get("blocked_order_count", max(0, input_count - schedulable_count))
+    return {
+        "input_order_count": input_count,
+        "scheduled_order_count": scheduled_count,
+        "schedulable_order_count": schedulable_count,
+        "blocked_order_count": blocked_count,
+    }
 
 
 @router.get("/summary")
@@ -33,9 +63,11 @@ def get_summary(db=Depends(get_db), _=Depends(get_current_user)):
         rates = [r["prod"] / r["span"] * 100 if r["span"] > 0 else 0 for r in utils]
         avg_util = round(sum(rates) / len(rates), 1)
 
+    counts = _schedule_summary_counts(run)
     on_time = round((run["total_orders"] - run["total_late_orders"]) / run["total_orders"] * 100, 1) if run["total_orders"] else 0
     return {
         "total_orders": run["total_orders"],
+        **counts,
         "on_time_rate": on_time,
         "total_scrap_kg": float(run["total_scrap_kg"] or 0),
         "total_setup_mins": run["total_setup_time_mins"],

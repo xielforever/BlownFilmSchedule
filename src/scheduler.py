@@ -61,6 +61,9 @@ class ScheduleResult:
         self.validation_errors: List[str] = []
         self.machine_sequences: Dict[str, List[ScheduledTask]] = {}
         self.diagnostics: List[Diagnostic] = []
+        self.input_order_count: int = 0
+        self.schedulable_order_count: int = 0
+        self.blocked_order_count: int = 0
 
     def add_task(self, task: ScheduledTask):
         self.tasks.append(task)
@@ -225,8 +228,42 @@ class AdvancedMedicalAPS:
     ) -> ScheduleResult:
         """执行两阶段分层求解，返回排程结果"""
         result = ScheduleResult()
-        n = len(orders)
+        original_orders = list(orders)
+        result.input_order_count = len(original_orders)
         M = len(machines)
+
+        schedulable_orders: List[ProductionOrderModel] = []
+        for order_item in original_orders:
+            fits = [evaluate_machine_fit(order_item, m) for m in machines]
+            if any(fit.eligible for fit in fits):
+                schedulable_orders.append(order_item)
+                continue
+
+            error = (
+                f"订单 {order_item.order_id} 无可用机台: "
+                f"width={order_item.target_width}, thickness={order_item.target_thickness}, "
+                f"cleanroom={order_item.cleanroom_req}, layers={len(order_item.recipe_materials)}"
+            )
+            logger.error(error)
+            result.blocked_order_count += 1
+            result.diagnostics.append(
+                build_infeasible_order_diagnostic(order_item, machines, fits)
+            )
+
+        result.schedulable_order_count = len(schedulable_orders)
+        if not schedulable_orders:
+            result.status = "INFEASIBLE"
+            return result
+
+        if result.blocked_order_count:
+            logger.warning(
+                "部分订单无可用机台，已从本轮求解中排除: blocked=%d, schedulable=%d",
+                result.blocked_order_count,
+                result.schedulable_order_count,
+            )
+
+        orders = schedulable_orders
+        n = len(orders)
 
         # ─── 能力硬过滤：订单→可用机台列表 ───
         eligible: Dict[int, List[int]] = {}
@@ -353,6 +390,8 @@ class AdvancedMedicalAPS:
             ))
         else:
             result.diagnostics.extend(build_result_diagnostics(result, orders, machines))
+            if result.blocked_order_count:
+                result.status = "PARTIAL"
 
         return result
 

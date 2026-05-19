@@ -1,6 +1,6 @@
 # Root Cause Guidance TODO
 
-**Updated**: 2026-05-19
+**Updated**: 2026-05-20
 
 ## Phase 1: Structured Diagnostics Core
 
@@ -28,14 +28,14 @@
 - [ ] Add order configuration warning panel for `?order=...` diagnostics.
 - [ ] Add machine-level diagnostic cards to `MachinesPage`.
 
-## Phase 4: Demo and Regression
+## Phase 4: Real Data Regression
 
 - [x] Add diagnostic unit tests.
 - [x] Extend scheduler validation tests for structured infeasible diagnostics.
 - [x] Extend Gantt helper tests for idle diagnostic metadata.
 - [x] Add regression coverage for concrete idle-gap root causes.
-- [ ] Update `docs/demo_scenario.md` with the root-cause walkthrough.
-- [x] Browser-smoke Dashboard and Gantt with demo data.
+- [x] Document the real-data scheduling path in `docs/real_data_scheduling.md`.
+- [x] Browser-smoke Dashboard and Gantt with current database data.
 - [x] Export Markdown schedule report with order exceptions and plant-wide root-cause analysis.
 
 ## Phase 5: Later What-If

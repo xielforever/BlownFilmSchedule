@@ -114,30 +114,19 @@ python main.py --save-db
 ```
 刷新大屏页面，即可观赏上万小时被精算得极其致密的工业级甘特图大盘！
 
-### Demo scenario seed
+### 使用当前订单数据运行
 
-For product walkthroughs, use the small deterministic demo seed instead of the
-232-order pressure scenario:
-
-```bash
-python scripts/seed_demo.py apply
-```
-
-It creates a reversible demo state with scheduled orders, setup, maintenance,
-downtime, idle rows, late work, material waiting, and a configurable infeasible
-sample order. To demonstrate the Dashboard failure fallback, run:
+排程入口现在以数据库中的当前订单、机台、配方和约束为准，不再提供内置演示数据切换脚本。
+通过 Config 页面调整订单或机台后，可以直接用数据库数据生成新的 active run：
 
 ```bash
-python scripts/seed_demo.py apply --blocked-pending
+python main.py --source db --save-db --triggered-by local
 ```
 
-Restore the previous active run and order/machine statuses with:
+Dashboard 的 Run Schedule 使用同一条数据库排程路径。运行前请确认待排订单处于
+`PENDING` 或 `SCHEDULED`，可用机台处于 `ACTIVE`。
 
-```bash
-python scripts/seed_demo.py restore
-```
-
-See `docs/demo_scenario.md` for the walkthrough.
+更完整的真实数据排程检查见 `docs/real_data_scheduling.md`。
 
 ---
 

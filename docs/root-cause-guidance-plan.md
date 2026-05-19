@@ -85,10 +85,10 @@
 
 ```json
 {
-  "id": "diag-run-7-order-DEMO-BLOCKED-width",
+  "id": "diag-run-7-order-ORD-BLOCKED-WIDTH",
   "run_id": 7,
   "entity_type": "run|order|machine|event",
-  "entity_id": "DEMO-BLOCKED",
+  "entity_id": "ORD-BLOCKED-WIDTH",
   "severity": "critical|warning|info",
   "category": "eligibility|lateness|idle|setup|material|maintenance|downtime|capacity",
   "code": "eligibility.width_out_of_range",
@@ -102,7 +102,7 @@
     {
       "action": "edit_order_width",
       "label": "检查订单幅宽",
-      "href": "/config?tab=orders&order=DEMO-BLOCKED"
+      "href": "/config?tab=orders&order=ORD-BLOCKED-WIDTH"
     },
     {
       "action": "enable_or_adjust_machine_capacity",
@@ -112,7 +112,7 @@
   ],
   "related_event": {
     "type": "idle|production|setup|maintenance|downtime",
-    "machine_id": "DEMO-LINE-03",
+    "machine_id": "LINE-03",
     "start": "2026-05-19T22:43:00+08:00",
     "end": "2026-05-27T08:35:00+08:00"
   }
@@ -123,9 +123,9 @@
 
 **Goal**: 先让后端能用结构化数据解释订单、机台和结果，不依赖日志解析。
 
-**Demo/Validation**:
+**Validation**:
 
-- 对 `DEMO-BLOCKED` 返回明确的无可用机台根因。
+- 对边界不可排订单返回明确的无可用机台根因。
 - 对逾期订单、维护/停机、idle 空档生成诊断列表。
 - 单元测试覆盖每类核心诊断。
 
@@ -148,7 +148,7 @@
   - 不破坏现有 `can_produce()` 调用。
   - 对幅宽、厚度、洁净度、层数至少输出 proven 级证据。
   - `ScheduleResult.validation_errors` 可继续保留，但不再是 UI 主数据源。
-- **Validation**: 覆盖 `DEMO-BLOCKED` 和边界机台能力测试。
+- **Validation**: 覆盖边界不可排订单和边界机台能力测试。
 
 ### Task 1.3: Add Order-Level Diagnostics to ScheduleResult
 
@@ -168,7 +168,7 @@
 - **Acceptance Criteria**:
   - 逾期订单至少输出 due/material/capacity/setup 的最可能原因。
   - setup 诊断给出换产分钟数、前序订单、规则类别。
-- **Validation**: 用 demo 订单断言存在逾期和换产诊断。
+- **Validation**: 用非演示 fixture 或当前订单数据断言存在逾期和换产诊断。
 
 ### Task 1.5: Classify Machine Load and Unused Machines
 
@@ -178,13 +178,13 @@
 - **Acceptance Criteria**:
   - 输出 high_load、low_load、unused、changeover_heavy。
   - unused 区分能力不足、无就绪订单、输给更优选择。
-- **Validation**: 使用 demo 的第四台机和压力数据做断言。
+- **Validation**: 使用真实机台数据或非演示 fixture 覆盖 unused、low-load 和压力场景。
 
 ## Sprint 2: Persist and Serve Diagnostics Over HTTP
 
 **Goal**: 让 HTTP 后端稳定提供诊断，不要求前端解析日志。
 
-**Demo/Validation**:
+**Validation**:
 
 - `/api/schedule/diagnostics` 能返回当前 active run 的诊断。
 - `/api/schedule/gantt` 的事件可关联诊断。
@@ -229,13 +229,13 @@
 - **Acceptance Criteria**:
   - 中文根因不再出现乱码风险。
   - 每条失败订单都能链接到 `/config?tab=orders&order=...`。
-- **Validation**: 触发 demo blocked pending，确认 Dashboard 展示结构化诊断。
+- **Validation**: 触发真实或测试边界订单不可排，确认 Dashboard 展示结构化诊断。
 
 ## Sprint 3: UI Guidance Surfaces
 
 **Goal**: 将诊断变成用户可行动的界面，而不是仅有报告。
 
-**Demo/Validation**:
+**Validation**:
 
 - Dashboard 首屏出现 “Root Cause & Next Actions”。
 - Gantt 中断/空档点击后能看到原因和下一步。
@@ -269,7 +269,7 @@
 - **Acceptance Criteria**:
   - 无可用机台时突出显示 width/thickness/cleanroom/product_type/due_date/material_available_time。
   - 保存后提示需要重新运行排程。
-- **Validation**: `DEMO-BLOCKED` 链接进入配置页能看到根因。
+- **Validation**: 不可排订单链接进入配置页能看到根因。
 
 ### Task 3.4: Machine Guidance Panel
 
@@ -279,40 +279,40 @@
 - **Acceptance Criteria**:
   - 机台状态、能力边界、当前状态和诊断同屏可对照。
   - 建议动作链接到机台编辑和维护配置。
-- **Validation**: demo 四台机至少覆盖一个 unused 或 low-load 说明。
+- **Validation**: 当前机台或非演示 fixture 至少覆盖一个 unused 或 low-load 说明。
 
-## Sprint 4: Demo Storyline and Regression Tests
+## Sprint 4: Real Data Walkthrough and Regression Tests
 
-**Goal**: 让演示能清楚讲出“结果、根因、指导动作”的闭环。
+**Goal**: 让当前订单数据能清楚讲出“结果、根因、指导动作”的闭环。
 
-**Demo/Validation**:
+**Validation**:
 
-- demo 数据能覆盖 blocked、late、maintenance idle、downtime、setup burden、unused machine。
-- 文档说明讲解路径和预期截图点。
+- 当前数据或非演示 fixture 能覆盖 blocked、late、maintenance idle、downtime、setup burden、unused machine。
+- 文档说明真实数据检查路径和预期截图点。
 
-### Task 4.1: Extend Demo Scenario Assertions
+### Task 4.1: Extend Real-Data Regression Assertions
 
-- **Location**: `tests/test_demo_seed.py`, `scripts/seed_demo.py`
-- **Description**: 不一定扩大数据量，但要保证 demo 能稳定产生诊断覆盖面。
+- **Location**: `tests/test_diagnostics.py`, `tests/test_scheduler_validation.py`, `tests/test_schedule_gantt.py`
+- **Description**: 不依赖演示 seed，保证真实数据同类问题有稳定的诊断覆盖面。
 - **Dependencies**: Sprint 1
 - **Acceptance Criteria**:
-  - 测试断言关键 demo 诊断 code 存在。
-  - 不破坏 `apply/restore/status` 可逆性。
+  - 测试断言关键诊断 code 存在。
+  - 不依赖数据库状态或人工切换脚本。
 - **Validation**: `python -m unittest discover -s tests -q`。
 
-### Task 4.2: Update Demo Documentation
+### Task 4.2: Update Real-Data Walkthrough Documentation
 
-- **Location**: `docs/demo_scenario.md`
-- **Description**: 增加“根因分析演示脚本”：Dashboard 看汇总、Gantt 看中断解释、Config 修复 blocked order、重新 run schedule。
+- **Location**: `docs/real_data_scheduling.md`
+- **Description**: 增加“根因分析真实数据检查脚本”：Dashboard 看汇总、Gantt 看中断解释、Config 修复不可排订单、重新 run schedule。
 - **Dependencies**: Sprint 3
 - **Acceptance Criteria**:
   - 每一步有 URL、预期现象、讲解口径。
   - 说明哪些根因是 proven，哪些是 inferred/unknown。
-- **Validation**: 按文档完整走一遍演示。
+- **Validation**: 按文档完整走一遍真实数据检查。
 
 ### Task 4.3: Add Browser Smoke Checklist
 
-- **Location**: optional `docs/demo_scenario.md` or `tests/`
+- **Location**: optional `docs/real_data_scheduling.md` or `tests/`
 - **Description**: 固化浏览器检查点，避免 UI 演示时出现甘特图中断未说明、链接无效、文本溢出。
 - **Dependencies**: Sprint 3
 - **Acceptance Criteria**:
@@ -350,9 +350,9 @@
   - `/api/schedule/diagnostics` contract。
   - `/api/schedule/gantt` event diagnostic linkage。
   - failed trigger 返回结构化 diagnostics。
-- Demo tests:
-  - `DEMO-BLOCKED` 必须有 proven eligibility 诊断。
-  - demo 必须覆盖 maintenance/downtime/idle/setup/late 中至少 4 类。
+- Scenario tests:
+  - 边界不可排订单必须有 proven eligibility 诊断。
+  - 真实数据或非演示 fixture 必须覆盖 maintenance/downtime/idle/setup/late 中至少 4 类。
 - Frontend validation:
   - `npm run build`。
   - 浏览器 smoke：Dashboard、Gantt、Config、Machines。
@@ -372,4 +372,4 @@
 - Sprint 1 可通过不暴露 diagnostics 字段回退，不影响现有排程。
 - Sprint 2 若数据库迁移有风险，先改为运行时 API 计算，不落库。
 - Sprint 3 UI 面板可以 feature flag 或仅在 diagnostics 存在时渲染。
-- Sprint 4 demo 变更保持 `restore` 可逆，失败时可恢复到前一个 active run。
+- Sprint 4 回归不依赖数据切换脚本，失败时保留当前 active run。

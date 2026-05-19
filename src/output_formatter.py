@@ -36,6 +36,9 @@ def export_schedule_json(result: ScheduleResult, path: str):
     ensure_output_dir()
     data = {
         "status": result.status,
+        "input_order_count": getattr(result, "input_order_count", len(result.tasks)),
+        "scheduled_order_count": len(result.tasks),
+        "blocked_order_count": getattr(result, "blocked_order_count", 0),
         "phase1_tardiness_score": result.phase1_score,
         "phase2_setup_score": result.phase2_score,
         "machines": {},
@@ -241,7 +244,9 @@ def export_schedule_report(result: ScheduleResult, path: str):
         "## 排程概览",
         "",
         f"- 求解状态：{result.status}",
+        f"- 输入订单：{getattr(result, 'input_order_count', len(result.tasks))}",
         f"- 已排订单：{len(result.tasks)}",
+        f"- 无可用机台订单：{getattr(result, 'blocked_order_count', 0)}",
         f"- 使用机台：{len(result.machine_sequences)}",
         f"- 逾期订单：{len(late_tasks)}",
         f"- 总生产时间：{_format_duration(prod_mins)}",

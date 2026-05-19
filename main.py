@@ -101,7 +101,8 @@ def main():
     # ─── Step 3: 输出结果 ───
     logger.info("Step 3: 导出排程结果")
     export_schedule_report(result, OUTPUT_SCHEDULE_REPORT_MD)
-    if result.status in ("OPTIMAL", "FEASIBLE"):
+    publishable_statuses = ("OPTIMAL", "FEASIBLE", "PARTIAL")
+    if result.status in publishable_statuses:
         export_schedule_json(result, OUTPUT_SCHEDULE_JSON)
         export_schedule_csv(result, OUTPUT_SCHEDULE_CSV)
         export_material_correction(result, OUTPUT_MATERIAL_CORRECTION_CSV)
@@ -120,6 +121,19 @@ def main():
         logger.error("排程失败: %s — 请检查数据约束是否过紧", result.status)
         for err in getattr(result, "validation_errors", [])[:20]:
             logger.error("  - %s", err)
+        for diagnostic in getattr(result, "diagnostics", [])[:20]:
+            logger.error("  - %s: %s", diagnostic.code, diagnostic.root_cause)
+        if args.save_db and getattr(result, "diagnostics", None):
+            from src.database import DatabaseManager
+            logger.info("Step 4: 保存失败排程诊断（不切换 active run）")
+            with DatabaseManager() as db:
+                run_id = db.save_schedule_result(
+                    result,
+                    triggered_by=args.triggered_by,
+                    activate=False,
+                    allow_invalid=True,
+                )
+                logger.info("  失败诊断已入库: run_id=%d", run_id)
         sys.exit(1)
 
 

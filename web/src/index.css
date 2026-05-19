@@ -200,7 +200,7 @@ h1, h2, h3, h4, h5, h6, .kpi-value, .machine-name {
   transition: transform 0.2s;
 }
 
-.kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; margin-bottom: 24px; }
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 24px; margin-bottom: 24px; }
 
 .kpi-card {
   padding: 24px;
@@ -223,7 +223,7 @@ h1, h2, h3, h4, h5, h6, .kpi-value, .machine-name {
 
 .kpi-card.warn::before { background: linear-gradient(90deg, var(--accent-amber), var(--accent-red)); }
 
-.kpi-label { font-size: 13px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px; font-weight: 500; }
+.kpi-label { font-size: 13px; color: var(--text-secondary); text-transform: none; letter-spacing: 0; font-weight: 500; }
 .kpi-value { 
   font-size: 36px; 
   font-weight: 700; 

@@ -195,7 +195,17 @@ class DatabaseManager:
             ORDER BY start_time
         """)
         calendar_by_machine: Dict[str, List[ForbiddenWindow]] = {}
+        seen_windows = set()
         for r in cur.fetchall():
+            key = (
+                r["machine_id"],
+                r["start_time"],
+                r["end_time"],
+                r["reason"] or "Maintenance",
+            )
+            if key in seen_windows:
+                continue
+            seen_windows.add(key)
             calendar_by_machine.setdefault(r["machine_id"], []).append(ForbiddenWindow(
                 start_mins=self._dt_to_mins(r["start_time"], base),
                 end_mins=self._dt_to_mins(r["end_time"], base),
@@ -395,19 +405,28 @@ class DatabaseManager:
 
     # ─── 排程结果持久化 ───────────────────────────────────
 
-    def save_schedule_result(self, result: ScheduleResult, triggered_by: Optional[str] = None):
+    def save_schedule_result(
+        self,
+        result: ScheduleResult,
+        triggered_by: Optional[str] = None,
+        activate: bool = True,
+        allow_invalid: bool = False,
+    ):
         """保存排程结果到数据库"""
-        if getattr(result, "validation_errors", None):
+        if getattr(result, "validation_errors", None) and not allow_invalid:
             raise ValueError(
                 "排程结果未通过校验，拒绝入库: "
                 + "; ".join(result.validation_errors[:5])
             )
+        if getattr(result, "status", None) == "INVALID" and not allow_invalid:
+            raise ValueError("Invalid schedule result cannot be published.")
 
         base = datetime.datetime.strptime(BASELINE_TIME, "%Y-%m-%d %H:%M")
 
         with self.conn.cursor() as cur:
             # 将之前的排程标记为非活跃
-            cur.execute("UPDATE schedule_runs SET is_active = FALSE WHERE is_active = TRUE")
+            if activate:
+                cur.execute("UPDATE schedule_runs SET is_active = FALSE WHERE is_active = TRUE")
 
             total_setup = sum(t.setup_time for t in result.tasks)
             total_scrap = sum(t.scrap_kg for t in result.tasks)
@@ -424,13 +443,13 @@ class DatabaseManager:
                      phase1_tardiness_score, phase2_setup_score,
                      total_setup_time_mins, total_scrap_kg,
                      total_late_orders, vip_late_orders, is_active)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,TRUE)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 RETURNING run_id
             """, (base, triggered_by, result.status, len(result.tasks),
                   len(result.machine_sequences),
                   phase1_score, phase2_score,
                   total_setup, total_scrap,
-                  len(late), len(vip_late)))
+                  len(late), len(vip_late), activate))
             run_id = cur.fetchone()[0]
 
             diagnostics_payload = diagnostics_to_dicts(
@@ -439,7 +458,14 @@ class DatabaseManager:
             )
             cur.execute(
                 "UPDATE schedule_runs SET solver_params=%s WHERE run_id=%s",
-                (Json({"diagnostics": diagnostics_payload}), run_id),
+                (Json({
+                    "diagnostics": diagnostics_payload,
+                    "summary": {
+                        "input_order_count": getattr(result, "input_order_count", len(result.tasks)),
+                        "schedulable_order_count": getattr(result, "schedulable_order_count", len(result.tasks)),
+                        "blocked_order_count": getattr(result, "blocked_order_count", 0),
+                    },
+                }), run_id),
             )
 
             # 保存任务明细
