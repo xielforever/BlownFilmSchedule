@@ -1,7 +1,7 @@
 """
 APS 排程系统结果输出与可视化模块
 
-提供 JSON/CSV 导出、投料修正通知单、ASCII 甘特图、统计摘要。
+提供 JSON/CSV 导出、投料修正通知单、Markdown 排程报告、ASCII 甘特图、统计摘要。
 """
 
 from __future__ import annotations
@@ -10,9 +10,10 @@ import csv
 import os
 import datetime
 import logging
-from typing import List, Dict
+from typing import Any, Dict, Iterable, List
 
 from src.config import BASELINE_TIME, OUTPUT_DIR
+from src.diagnostics import diagnostics_to_dicts
 from src.scheduler import ScheduleResult, ScheduledTask
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ def export_schedule_json(result: ScheduleResult, path: str):
         "phase1_tardiness_score": result.phase1_score,
         "phase2_setup_score": result.phase2_score,
         "machines": {},
+        "diagnostics": diagnostics_to_dicts(getattr(result, "diagnostics", [])),
     }
 
     for mid, tasks in result.machine_sequences.items():
@@ -127,6 +129,152 @@ def export_material_correction(result: ScheduleResult, path: str):
         writer.writeheader()
         writer.writerows(rows)
     logger.info("投料修正通知已导出: %s", path)
+
+
+def _format_duration(minutes: int) -> str:
+    if minutes < 60:
+        return f"{minutes} 分钟"
+    hours = minutes // 60
+    mins = minutes % 60
+    return f"{hours} 小时 {mins} 分钟" if mins else f"{hours} 小时"
+
+
+def _diagnostic_dicts(result: ScheduleResult) -> List[Dict[str, Any]]:
+    return diagnostics_to_dicts(getattr(result, "diagnostics", []))
+
+
+def _is_order_exception(diagnostic: Dict[str, Any]) -> bool:
+    if diagnostic.get("entity_type") != "order":
+        return False
+    category = diagnostic.get("category")
+    code = diagnostic.get("code") or ""
+    return (
+        category in {"eligibility", "lateness", "material", "validation"}
+        or code.startswith("eligibility.")
+        or code.startswith("lateness.")
+        or code.startswith("material.")
+    )
+
+
+def _is_global_diagnostic(diagnostic: Dict[str, Any]) -> bool:
+    return not _is_order_exception(diagnostic)
+
+
+def _evidence_text(evidence: Iterable[Dict[str, Any]], limit: int = 5) -> str:
+    items = []
+    for item in evidence or []:
+        actual = item.get("actual")
+        if actual is None or actual == "":
+            continue
+        metric = item.get("metric") or "evidence"
+        unit = f" {item.get('unit')}" if item.get("unit") else ""
+        entity = f" ({item.get('entity_id')})" if item.get("entity_id") else ""
+        items.append(f"{metric}={actual}{unit}{entity}")
+        if len(items) >= limit:
+            break
+    return "；".join(items) if items else "-"
+
+
+def _recommendation_text(recommendations: Iterable[Dict[str, str]], limit: int = 3) -> str:
+    labels = [item.get("label") for item in recommendations or [] if item.get("label")]
+    return "；".join(labels[:limit]) if labels else "复核订单、机台和规则配置后重新排程"
+
+
+def _diagnostic_table(diagnostics: List[Dict[str, Any]], limit: int = 20) -> List[str]:
+    if not diagnostics:
+        return ["当前无该类诊断。"]
+    lines = [
+        "| 对象 | 类型 | 严重度 | 根因 | 关键证据 | 建议 |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for item in diagnostics[:limit]:
+        entity = item.get("display_title") or item.get("entity_id") or "-"
+        code = item.get("code") or "-"
+        severity = item.get("severity") or "-"
+        root = (item.get("root_cause") or "-").replace("\n", " ")
+        evidence = _evidence_text(item.get("evidence") or [])
+        recommendation = _recommendation_text(item.get("recommendations") or [])
+        lines.append(f"| {entity} | `{code}` | {severity} | {root} | {evidence} | {recommendation} |")
+    if len(diagnostics) > limit:
+        lines.append(f"\n> 另有 {len(diagnostics) - limit} 条诊断未展开，请查看 JSON 结果。")
+    return lines
+
+
+def _machine_summary_table(result: ScheduleResult) -> List[str]:
+    if not result.machine_sequences:
+        return ["当前无机台排程结果。"]
+
+    lines = [
+        "| 机台 | 订单数 | 生产时间 | 换产时间 | 逾期订单 | 时间跨度利用率 |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for machine_id in sorted(result.machine_sequences.keys()):
+        tasks = sorted(result.machine_sequences[machine_id], key=lambda t: t.start_mins)
+        prod_mins = sum(t.end_mins - t.start_mins for t in tasks)
+        setup_mins = sum(t.setup_time for t in tasks)
+        late_count = sum(1 for t in tasks if t.end_mins > t.order.due_date_mins)
+        span = max(t.end_mins for t in tasks) - min(
+            max(0, t.start_mins - t.setup_time) for t in tasks
+        )
+        utilization = (prod_mins / span * 100) if span > 0 else 0
+        lines.append(
+            f"| {machine_id} | {len(tasks)} | {_format_duration(prod_mins)} | "
+            f"{_format_duration(setup_mins)} | {late_count} | {utilization:.1f}% |"
+        )
+    return lines
+
+
+def export_schedule_report(result: ScheduleResult, path: str):
+    """输出面向业务复盘的 Markdown 排程报告。"""
+    ensure_output_dir()
+    diagnostics = _diagnostic_dicts(result)
+    order_exceptions = [item for item in diagnostics if _is_order_exception(item)]
+    global_diagnostics = [item for item in diagnostics if _is_global_diagnostic(item)]
+    late_tasks = [t for t in result.tasks if t.end_mins > t.order.due_date_mins]
+    setup_mins = sum(t.setup_time for t in result.tasks)
+    prod_mins = sum(t.end_mins - t.start_mins for t in result.tasks)
+    scrap_kg = sum(t.scrap_kg for t in result.tasks)
+
+    lines = [
+        "# 吹膜机排程报告",
+        "",
+        "## 排程概览",
+        "",
+        f"- 求解状态：{result.status}",
+        f"- 已排订单：{len(result.tasks)}",
+        f"- 使用机台：{len(result.machine_sequences)}",
+        f"- 逾期订单：{len(late_tasks)}",
+        f"- 总生产时间：{_format_duration(prod_mins)}",
+        f"- 总换产时间：{_format_duration(setup_mins)}",
+        f"- 总废料：{scrap_kg:.1f} kg",
+        f"- 诊断总数：{len(diagnostics)}",
+        "",
+        "## 订单异常根因",
+        "",
+        "本节只列无法排程、延期、原料不可用等订单级问题，适合作为 Dashboard 的同源解释。",
+        "",
+        *_diagnostic_table(order_exceptions),
+        "",
+        "## 全局排程根因分析",
+        "",
+        "本节汇总机台负载、低利用、未使用、换产负担、校验和其他全局诊断，用于解释整厂排程质量。",
+        "",
+        *_diagnostic_table(global_diagnostics),
+        "",
+        "## 机台排程摘要",
+        "",
+        *_machine_summary_table(result),
+        "",
+        "## 后续指导方向",
+        "",
+        "- 先处理 `critical` 和 `warning` 订单异常，再重新运行排程。",
+        "- 对全局机台问题，优先检查高负载机台、未使用机台和换产占比较高的机台。",
+        "- 若空档或低利用较多，结合甘特图查看维护、停机、原料齐套和订单分配关系。",
+    ]
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    logger.info("Markdown 排程报告已导出: %s", path)
 
 
 def print_ascii_gantt(result: ScheduleResult):

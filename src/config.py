@@ -9,7 +9,8 @@ APS 排程系统集中配置管理模块
 BASELINE_TIME = "2026-05-17 08:00"
 
 # CP-SAT 求解器每阶段时间限制（秒）
-SOLVER_TIME_LIMIT_SECONDS = 30.0
+# 232 单压力场景在修复同机台重叠后需要更长时间找到可行解。
+SOLVER_TIME_LIMIT_SECONDS = 120.0
 
 # 计划域上界（分钟），31 天 × 24 小时 × 60 分钟
 MAX_HORIZON_MINUTES = 44640
@@ -70,6 +71,7 @@ OUTPUT_DIR = "output"
 OUTPUT_SCHEDULE_JSON = "output/schedule_result.json"
 OUTPUT_SCHEDULE_CSV = "output/schedule_result.csv"
 OUTPUT_MATERIAL_CORRECTION_CSV = "output/material_correction.csv"
+OUTPUT_SCHEDULE_REPORT_MD = "output/schedule_report.md"
 
 # ─── 数据库连接 ─────────────────────────────────────────────
 DATABASE_CONFIG = {

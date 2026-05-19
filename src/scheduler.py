@@ -7,7 +7,7 @@ APS 排程系统核心算法引擎
 
 from __future__ import annotations
 import logging
-from typing import List, Dict, Optional, Any, Tuple
+from typing import List, Dict, Optional, Tuple
 
 from ortools.sat.python import cp_model
 
@@ -21,6 +21,14 @@ from src.config import (
     SCRAP_WIDTH_CHANGE_KG,
     SCRAP_THICKNESS_CHANGE_KG,
     get_tardiness_weight,
+)
+from src.diagnostics import (
+    Diagnostic,
+    DiagnosticEvidence,
+    DiagnosticRecommendation,
+    build_infeasible_order_diagnostic,
+    build_result_diagnostics,
+    evaluate_machine_fit,
 )
 from src.models import ProductionOrderModel, BlownFilmMachineModel
 from src.setup_matrices import SetupMatricesManager
@@ -50,7 +58,9 @@ class ScheduleResult:
         self.tasks: List[ScheduledTask] = []
         self.phase1_score: int = 0
         self.phase2_score: int = 0
+        self.validation_errors: List[str] = []
         self.machine_sequences: Dict[str, List[ScheduledTask]] = {}
+        self.diagnostics: List[Diagnostic] = []
 
     def add_task(self, task: ScheduledTask):
         self.tasks.append(task)
@@ -217,19 +227,34 @@ class AdvancedMedicalAPS:
         result = ScheduleResult()
         n = len(orders)
         M = len(machines)
-        H = MAX_HORIZON_MINUTES
-
-        logger.info("开始排程: %d 笔订单, %d 台机台, 计划域=%d min", n, M, H)
 
         # ─── 能力硬过滤：订单→可用机台列表 ───
         eligible: Dict[int, List[int]] = {}
+        fit_audit: Dict[int, List] = {}
         for idx in range(n):
             eligible[idx] = []
+            fit_audit[idx] = []
             for m_idx, m in enumerate(machines):
-                if m.can_produce(orders[idx]):
+                fit = evaluate_machine_fit(orders[idx], m)
+                fit_audit[idx].append(fit)
+                if fit.eligible:
                     eligible[idx].append(m_idx)
             if not eligible[idx]:
-                logger.error("订单 %s 无可用机台！", orders[idx].order_id)
+                o = orders[idx]
+                error = (
+                    f"订单 {o.order_id} 无可用机台: "
+                    f"width={o.target_width}, thickness={o.target_thickness}, "
+                    f"cleanroom={o.cleanroom_req}, layers={len(o.recipe_materials)}"
+                )
+                logger.error(error)
+                result.validation_errors.append(error)
+                result.diagnostics.append(
+                    build_infeasible_order_diagnostic(o, machines, fit_audit[idx])
+                )
+
+        if result.validation_errors:
+            result.status = "INFEASIBLE"
+            return result
 
         # ─── 预计算换产耗时 ───
         setup_cache = self._precompute_setup_times(orders, machines, eligible)
@@ -239,6 +264,9 @@ class AdvancedMedicalAPS:
         for idx in range(n):
             for m_idx in eligible[idx]:
                 duration_cache[(idx, m_idx)] = machines[m_idx].calculate_duration(orders[idx])
+
+        H = self._estimate_horizon(n, M, eligible, setup_cache, duration_cache)
+        logger.info("开始排程: %d 笔订单, %d 台机台, 计划域=%d min", n, M, H)
 
         # ═══════════════════════════════════════════════════
         # 第一阶段：交期至上 — Minimize(Sum(tardiness * W))
@@ -250,8 +278,26 @@ class AdvancedMedicalAPS:
         )
 
         if phase1_result is None:
-            result.status = "INFEASIBLE"
-            logger.error("第一阶段求解失败：INFEASIBLE")
+            result.status = getattr(self, "_last_solver_status", "INFEASIBLE")
+            logger.error("第一阶段求解未获得可行解: status=%s", result.status)
+            result.diagnostics.append(Diagnostic(
+                entity_type="run",
+                entity_id="current",
+                severity="critical",
+                category="capacity",
+                code="capacity.no_feasible_solution",
+                confidence="inferred",
+                root_cause="求解器未获得可行解，通常意味着产能、交期、禁排或硬约束组合过紧。",
+                evidence=[
+                    DiagnosticEvidence("order_count", n),
+                    DiagnosticEvidence("machine_count", M),
+                    DiagnosticEvidence("solver_status", result.status),
+                ],
+                recommendations=[
+                    DiagnosticRecommendation("review_orders", "检查订单交期和原料齐套", "/config?tab=orders"),
+                    DiagnosticRecommendation("review_constraints", "检查机台和维护约束", "/config?tab=machines"),
+                ],
+            ))
             return result
 
         status1, solver1, vars1, best_tardiness = phase1_result
@@ -281,7 +327,58 @@ class AdvancedMedicalAPS:
             result.status = status2
             logger.info("第二阶段完成: status=%s, total_setup=%d", status2, setup_score)
 
+        self._validate_result(result, expected_order_count=n)
+        if result.validation_errors:
+            result.status = "INVALID"
+            for err in result.validation_errors[:10]:
+                logger.error("排程结果校验失败: %s", err)
+            result.diagnostics.append(Diagnostic(
+                entity_type="run",
+                entity_id="current",
+                severity="critical",
+                category="validation",
+                code="validation.schedule_result_invalid",
+                confidence="proven",
+                root_cause="排程结果未通过完整性校验，不能作为可发布计划。",
+                evidence=[
+                    DiagnosticEvidence("validation_error_count", len(result.validation_errors)),
+                    *[
+                        DiagnosticEvidence("validation_error", err)
+                        for err in result.validation_errors[:5]
+                    ],
+                ],
+                recommendations=[
+                    DiagnosticRecommendation("review_solver_inputs", "检查订单、机台和维护约束", "/config"),
+                ],
+            ))
+        else:
+            result.diagnostics.extend(build_result_diagnostics(result, orders, machines))
+
         return result
+
+    def _estimate_horizon(
+        self,
+        n: int,
+        machine_count: int,
+        eligible: Dict[int, List[int]],
+        setup_cache: Dict[Tuple[int, int, int], int],
+        duration_cache: Dict[Tuple[int, int], int],
+    ) -> int:
+        """根据当前订单量估算求解计划域，避免压力订单超出固定 31 天窗口。"""
+        if n == 0:
+            return MAX_HORIZON_MINUTES
+
+        min_total_duration = sum(
+            min(duration_cache[(idx, m_idx)] for m_idx in eligible[idx])
+            for idx in range(n)
+        )
+        max_setup = max(setup_cache.values(), default=0)
+        setup_buffer = n * max_setup
+        # Use a conservative per-machine upper bound. The pressure-test workbook
+        # can exceed the fixed 31-day plant capacity; a tight average-load bound
+        # still becomes infeasible when orders are restricted to a subset of lines.
+        dynamic_horizon = min_total_duration + setup_buffer
+        return max(MAX_HORIZON_MINUTES, dynamic_horizon)
 
     def _solve_phase(
         self,
@@ -351,20 +448,30 @@ class AdvancedMedicalAPS:
             # 仓库自环：机台完全空闲时
             depot_self = model.new_bool_var(f'depot_self_{m_idx}')
             arcs.append((DEPOT, DEPOT, depot_self))
+            machine_presence = [presence[i][m_idx] for i in m_orders]
+            assigned_count = sum(machine_presence)
+            model.add(assigned_count == 0).only_enforce_if(depot_self)
+            model.add(assigned_count >= 1).only_enforce_if(depot_self.negated())
 
             # 仓库 → 各订单（首单弧）
             for j in m_orders:
                 j_node = node_of[j]
                 arc_var = model.new_bool_var(f'arc_{m_idx}_d_{j}')
                 arcs.append((DEPOT, j_node, arc_var))
+                model.add(arc_var <= presence[j][m_idx])
                 setup_t = setup_cache[(-1, j, m_idx)]
                 model.add(starts[j][m_idx] >= setup_t).only_enforce_if(arc_var)
+                delay_var = model.new_int_var(0, H, f'delay_{m_idx}_d_{j}')
+                model.add(delay_var == setup_t).only_enforce_if(arc_var)
+                model.add(delay_var == 0).only_enforce_if(arc_var.negated())
+                setup_delay_vars.append(delay_var)
 
             # 各订单 → 仓库（末单弧）
             for i in m_orders:
                 i_node = node_of[i]
                 arc_var = model.new_bool_var(f'arc_{m_idx}_{i}_d')
                 arcs.append((i_node, DEPOT, arc_var))
+                model.add(arc_var <= presence[i][m_idx])
 
             # 订单间弧
             for i in m_orders:
@@ -375,6 +482,8 @@ class AdvancedMedicalAPS:
                     j_node = node_of[j]
                     arc_var = model.new_bool_var(f'arc_{m_idx}_{i}_{j}')
                     arcs.append((i_node, j_node, arc_var))
+                    model.add(arc_var <= presence[i][m_idx])
+                    model.add(arc_var <= presence[j][m_idx])
                     setup_t = setup_cache[(i, j, m_idx)]
                     model.add(
                         starts[j][m_idx] >= ends[i][m_idx] + setup_t
@@ -391,23 +500,22 @@ class AdvancedMedicalAPS:
                 self_arc = model.new_bool_var(f'self_{m_idx}_{i}')
                 arcs.append((i_node, i_node, self_arc))
                 # 自环激活 ↔ 该订单未分派到此机台
-                model.add(presence[i][m_idx] == 0).only_enforce_if(self_arc)
+                model.add(self_arc + presence[i][m_idx] == 1)
 
             model.add_circuit(arcs)
 
-        # ─── 约束 5：维保日历禁排 ───
-        for m_idx, m in enumerate(machines):
+            machine_intervals = [intervals[i][m_idx] for i in m_orders]
             for fw in m.forbidden_calendar:
-                for idx in range(n):
-                    if m_idx not in eligible[idx]:
-                        continue
-                    p = presence[idx][m_idx]
-                    s = starts[idx][m_idx]
-                    e = ends[idx][m_idx]
-                    # 订单必须完全在禁排窗口之前或之后
-                    b = model.new_bool_var(f'fw_{m_idx}_{idx}_{fw.start_mins}')
-                    model.add(e <= fw.start_mins).only_enforce_if(p, b)
-                    model.add(s >= fw.end_mins).only_enforce_if(p, b.negated())
+                maintenance_interval = model.new_fixed_size_interval_var(
+                    fw.start_mins,
+                    fw.end_mins - fw.start_mins,
+                    f'fw_iv_{m_idx}_{fw.start_mins}',
+                )
+                machine_intervals.append(maintenance_interval)
+            model.add_no_overlap(machine_intervals)
+
+        # ─── 约束 5：维保日历禁排 ───
+        # 维保窗口已作为固定 interval 并入每台机的 NoOverlap 约束。
 
         # ─── 约束 6：72h 强制停机 ───
         # 简化建模：72h 约束将在解提取阶段做后验校验。
@@ -480,13 +588,18 @@ class AdvancedMedicalAPS:
             cp_model.UNKNOWN: "UNKNOWN",
         }
         status_str = status_map.get(status, "UNKNOWN")
+        self._last_solver_status = status_str
 
         if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            obj_val = int(solver.objective_value)
+            if phase == 1:
+                obj_val = int(solver.value(total_tardiness))
+            else:
+                obj_val = int(solver.value(total_setup))
             vars_dict = {
                 'presence': presence, 'starts': starts, 'ends': ends,
             }
             return (status_str, solver, vars_dict, obj_val)
+        logger.warning("第 %d 阶段求解未获得可行解: status=%s", phase, status_str)
         return None
 
     def _extract_solution(
@@ -540,3 +653,56 @@ class AdvancedMedicalAPS:
                 prev_order = o
 
         logger.info("解提取完成: %d 个任务已排程", len(result.tasks))
+
+    def _validate_result(self, result: ScheduleResult, expected_order_count: int):
+        """校验提取后的排程结果，防止错误结果进入导出/API。"""
+        errors: List[str] = []
+
+        if len(result.tasks) != expected_order_count:
+            errors.append(
+                f"已排订单数 {len(result.tasks)} 与输入订单数 {expected_order_count} 不一致"
+            )
+
+        seen = set()
+        for task in result.tasks:
+            oid = task.order.order_id
+            if oid in seen:
+                errors.append(f"订单 {oid} 被重复排程")
+            seen.add(oid)
+            if task.end_mins <= task.start_mins:
+                errors.append(
+                    f"订单 {oid} 时间窗口非法: {task.start_mins}-{task.end_mins}"
+                )
+
+        for mid, tasks in result.machine_sequences.items():
+            ordered = sorted(tasks, key=lambda x: (x.start_mins, x.end_mins))
+            for idx, task in enumerate(ordered):
+                if idx == 0:
+                    if task.start_mins < task.setup_time:
+                        errors.append(
+                            f"{mid} 首单 {task.order.order_id} 未预留初始换产时间"
+                        )
+                    continue
+
+                prev = ordered[idx - 1]
+                required_start = prev.end_mins + task.setup_time
+                if task.start_mins < required_start:
+                    errors.append(
+                        f"{mid} 订单 {prev.order.order_id}->{task.order.order_id} "
+                        f"时间重叠或缺少换产间隔: prev_end={prev.end_mins}, "
+                        f"setup={task.setup_time}, start={task.start_mins}"
+                    )
+
+            for task in ordered:
+                for fw in task.machine.forbidden_calendar:
+                    overlaps_fw = (
+                        task.start_mins < fw.end_mins
+                        and task.end_mins > fw.start_mins
+                    )
+                    if overlaps_fw:
+                        errors.append(
+                            f"{mid} 订单 {task.order.order_id} 跨越禁排窗口 "
+                            f"{fw.start_mins}-{fw.end_mins}"
+                        )
+
+        result.validation_errors = errors

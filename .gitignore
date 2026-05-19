@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+output/server/
+output/playwright/
+output/demo_seed_snapshot.json
+
+web/dist/
+web/.vite/
+web/node_modules/

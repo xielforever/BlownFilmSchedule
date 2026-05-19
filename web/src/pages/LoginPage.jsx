@@ -32,7 +32,7 @@ export default function LoginPage() {
         <div className="form-group">
           <label>用户名</label>
           <input type="text" value={username} onChange={e => setUsername(e.target.value)}
-                 placeholder="admin / planner / viewer" autoFocus />
+                 placeholder="用户名，例如 admin / planner / viewer" autoFocus />
         </div>
         <div className="form-group">
           <label>密码</label>
@@ -40,7 +40,7 @@ export default function LoginPage() {
                  placeholder="输入密码" />
         </div>
         <button className="btn btn-primary login-btn" type="submit" disabled={loading}>
-          {loading ? '登录中...' : '登 录'}
+          {loading ? '登录中...' : '登录'}
         </button>
         {error && <div className="login-error">{error}</div>}
       </form>

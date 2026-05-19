@@ -1,3 +1,10 @@
 pandas>=2.0
 ortools>=9.8
 openpyxl>=3.1
+fastapi>=0.110
+uvicorn[standard]>=0.29
+psycopg2-binary>=2.9
+python-jose[cryptography]>=3.3
+python-multipart>=0.0.9
+requests>=2.31
+pytest>=8.0

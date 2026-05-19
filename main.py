@@ -22,6 +22,7 @@ from src.config import (
     OUTPUT_SCHEDULE_JSON,
     OUTPUT_SCHEDULE_CSV,
     OUTPUT_MATERIAL_CORRECTION_CSV,
+    OUTPUT_SCHEDULE_REPORT_MD,
 )
 from src.data_ingestion import BlownFilmDataIngestionPipeline
 from src.scheduler import AdvancedMedicalAPS
@@ -29,6 +30,7 @@ from src.output_formatter import (
     export_schedule_json,
     export_schedule_csv,
     export_material_correction,
+    export_schedule_report,
     print_ascii_gantt,
     print_summary_stats,
 )
@@ -50,6 +52,10 @@ def main():
                         help="初始化数据库（创建 15 张表）")
     parser.add_argument("--save-db", action="store_true",
                         help="排程结果入库")
+    parser.add_argument("--source", choices=["excel", "db"], default="excel",
+                        help="Scheduler input source")
+    parser.add_argument("--triggered-by", default=None,
+                        help="HTTP/API user that triggered this schedule run")
     args = parser.parse_args()
 
     excel_path = args.input
@@ -68,11 +74,20 @@ def main():
     # ─── Step 1: 数据加载与清洗 ───
     logger.info("Step 1: 加载数据 — %s", excel_path)
     pipeline = BlownFilmDataIngestionPipeline()
-    machines, orders, recipes_map, setup_mgr = pipeline.load_from_excel(excel_path)
+    if args.source == "db":
+        from src.database import DatabaseManager
+        logger.info("Step 1: 从数据库加载 UI 配置后的排程输入")
+        _, _, _, fallback_setup_mgr = pipeline.load_from_excel(excel_path)
+        with DatabaseManager() as db:
+            machines, orders, recipes_map, setup_mgr = db.load_master_data(
+                fallback_setup_mgr=fallback_setup_mgr
+            )
+    else:
+        machines, orders, recipes_map, setup_mgr = pipeline.load_from_excel(excel_path)
     logger.info("  机台: %d, 订单: %d, 配方: %d", len(machines), len(orders), len(recipes_map))
 
     # ─── Step 1.5: 主数据入库（可选） ───
-    if args.save_db:
+    if args.save_db and args.source == "excel":
         from src.database import DatabaseManager
         logger.info("Step 1.5: 主数据导入数据库")
         with DatabaseManager() as db:
@@ -85,6 +100,7 @@ def main():
 
     # ─── Step 3: 输出结果 ───
     logger.info("Step 3: 导出排程结果")
+    export_schedule_report(result, OUTPUT_SCHEDULE_REPORT_MD)
     if result.status in ("OPTIMAL", "FEASIBLE"):
         export_schedule_json(result, OUTPUT_SCHEDULE_JSON)
         export_schedule_csv(result, OUTPUT_SCHEDULE_CSV)
@@ -98,10 +114,12 @@ def main():
             from src.database import DatabaseManager
             logger.info("Step 4: 排程结果持久化入库")
             with DatabaseManager() as db:
-                run_id = db.save_schedule_result(result)
+                run_id = db.save_schedule_result(result, triggered_by=args.triggered_by)
                 logger.info("  入库完成: run_id=%d", run_id)
     else:
         logger.error("排程失败: %s — 请检查数据约束是否过紧", result.status)
+        for err in getattr(result, "validation_errors", [])[:20]:
+            logger.error("  - %s", err)
         sys.exit(1)
 
 

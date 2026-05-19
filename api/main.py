@@ -15,7 +15,7 @@ from api.auth import (
     USERS_DB, verify_password, create_access_token,
     Token, get_current_user
 )
-from api.routers import dashboard, schedule, orders, machines
+from api.routers import dashboard, schedule, orders, machines, rules
 
 app = FastAPI(title="医疗PE薄膜 APS 排程系统", version="2.0")
 
@@ -49,6 +49,7 @@ app.include_router(dashboard.router)
 app.include_router(schedule.router)
 app.include_router(orders.router)
 app.include_router(machines.router)
+app.include_router(rules.router)
 
 # ─── 静态文件（前端构建产物） ───
 web_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web", "dist")

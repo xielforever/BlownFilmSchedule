@@ -44,6 +44,8 @@ def get_summary(db=Depends(get_db), _=Depends(get_current_user)):
         "phase2_score": run["phase2_setup_score"],
         "status": run["status"],
         "run_id": run["run_id"],
+        "run_time": run["run_time"].isoformat() if run["run_time"] else None,
+        "triggered_by": run["triggered_by"],
         "late_orders": [dict(r) for r in late],
     }
 

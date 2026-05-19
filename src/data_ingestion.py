@@ -40,6 +40,18 @@ class BlownFilmDataIngestionPipeline:
             return 0
         return int((dt - self.baseline_time).total_seconds() / 60)
 
+    def _normalize_cleanroom_req(self, raw_value) -> str:
+        """将订单洁净度需求标准化为可被机台能力判断的枚举。"""
+        value = str(raw_value).strip()
+        aliases = {
+            "NO": "Class_100K",
+            "NONE": "Class_100K",
+            "N/A": "Class_100K",
+            "无": "Class_100K",
+            "普通": "Class_100K",
+        }
+        return aliases.get(value.upper(), value)
+
     def load_from_excel(self, excel_path: str) -> Tuple[
         List[BlownFilmMachineModel],
         List[ProductionOrderModel],
@@ -184,7 +196,7 @@ class BlownFilmDataIngestionPipeline:
                 "targetWidth": int(row[df.columns[2]]),
                 "targetThickness": int(row[df.columns[3]]),
                 "totalQuantityKg": int(row[df.columns[4]]),
-                "cleanroomReq": str(row[df.columns[5]]).strip(),
+                "cleanroomReq": self._normalize_cleanroom_req(row[df.columns[5]]),
                 "customerClass": str(row[df.columns[8]]).strip(),
                 "orderClass": str(row[df.columns[9]]).strip(),
                 "coronaReq": str(row[df.columns[10]]).strip(),

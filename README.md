@@ -114,6 +114,31 @@ python main.py --save-db
 ```
 刷新大屏页面，即可观赏上万小时被精算得极其致密的工业级甘特图大盘！
 
+### Demo scenario seed
+
+For product walkthroughs, use the small deterministic demo seed instead of the
+232-order pressure scenario:
+
+```bash
+python scripts/seed_demo.py apply
+```
+
+It creates a reversible demo state with scheduled orders, setup, maintenance,
+downtime, idle rows, late work, material waiting, and a configurable infeasible
+sample order. To demonstrate the Dashboard failure fallback, run:
+
+```bash
+python scripts/seed_demo.py apply --blocked-pending
+```
+
+Restore the previous active run and order/machine statuses with:
+
+```bash
+python scripts/seed_demo.py restore
+```
+
+See `docs/demo_scenario.md` for the walkthrough.
+
 ---
 
 ## 📝 贡献与许可

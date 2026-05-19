@@ -9,13 +9,17 @@ import os
 import datetime
 import json
 import logging
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import psycopg2
 import psycopg2.extras
+from psycopg2.extras import Json
 
 from src.config import DATABASE_CONFIG, BASELINE_TIME
+from src.diagnostics import diagnostics_to_dicts
+from src.models import BlownFilmMachineModel, ForbiddenWindow, ProductionOrderModel
 from src.scheduler import ScheduleResult
+from src.setup_matrices import SetupMatricesManager
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +82,189 @@ class DatabaseManager:
             self._save_setup_matrices(cur, setup_mgr)
         self.conn.commit()
         logger.info("主数据导入完成")
+
+    def load_master_data(
+        self,
+        fallback_setup_mgr: Optional[SetupMatricesManager] = None,
+    ) -> Tuple[
+        List[BlownFilmMachineModel],
+        List[ProductionOrderModel],
+        Dict[str, List[str]],
+        SetupMatricesManager,
+    ]:
+        """Load scheduler inputs from the configured database."""
+        base = datetime.datetime.strptime(BASELINE_TIME, "%Y-%m-%d %H:%M")
+        setup_mgr = fallback_setup_mgr or SetupMatricesManager()
+
+        with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            recipes_map = self._load_recipes_map(cur)
+            self._load_setup_matrices_from_db(cur, setup_mgr)
+            machines = self._load_machines_from_db(cur, base)
+            orders = self._load_orders_from_db(cur, base, recipes_map)
+
+        logger.info(
+            "从数据库加载排程输入完成: machines=%d, orders=%d, recipes=%d",
+            len(machines), len(orders), len(recipes_map),
+        )
+        return machines, orders, recipes_map, setup_mgr
+
+    def _load_recipes_map(self, cur) -> Dict[str, List[str]]:
+        cur.execute("""
+            SELECT product_type, layer, material_grade
+            FROM recipes
+            ORDER BY product_type, layer
+        """)
+        recipes_map: Dict[str, List[str]] = {}
+        for r in cur.fetchall():
+            recipes_map.setdefault(r["product_type"], []).append(r["material_grade"])
+        return recipes_map
+
+    def _load_setup_matrices_from_db(self, cur, setup_mgr: SetupMatricesManager) -> None:
+        cur.execute("""
+            SELECT from_material, to_material, switch_time_mins
+            FROM material_switch_matrix
+        """)
+        for r in cur.fetchall():
+            setup_mgr.material_switch_matrix[
+                (r["from_material"], r["to_material"])
+            ] = int(r["switch_time_mins"])
+
+        cur.execute("""
+            SELECT from_order_class, to_order_class, clearance_time_mins
+            FROM gmp_clearance_matrix
+        """)
+        for r in cur.fetchall():
+            from_class = r["from_order_class"]
+            to_class = r["to_order_class"]
+            mins = int(r["clearance_time_mins"])
+            if from_class == "CONTINUOUS_RUN":
+                setup_mgr.continuous_run_cleaning_time = mins
+            else:
+                setup_mgr.gmp_clearance_matrix[(from_class, to_class)] = mins
+
+        cur.execute("""
+            SELECT attribute, condition_desc, threshold_lower, threshold_upper,
+                change_time_mins
+            FROM spec_change_rules
+            ORDER BY attribute, threshold_upper NULLS LAST, id
+        """)
+        spec_rows = cur.fetchall()
+        if spec_rows:
+            setup_mgr.width_up_rules = []
+            setup_mgr.width_down_rules = []
+            setup_mgr.thickness_rules = []
+        for r in spec_rows:
+            attr = r["attribute"]
+            mins = int(r["change_time_mins"])
+            threshold = r["threshold_upper"] or r["threshold_lower"]
+            if threshold is None:
+                threshold = setup_mgr._parse_threshold(r["condition_desc"] or "")
+            threshold = int(threshold)
+
+            if attr == "Width_Up":
+                setup_mgr.width_up_rules.append((threshold, mins))
+            elif attr == "Width_Down":
+                setup_mgr.width_down_rules.append((threshold, mins))
+            elif attr == "Thickness":
+                setup_mgr.thickness_rules.append((threshold, mins))
+            elif attr == "Die_Change":
+                setup_mgr.die_change_time = mins
+            elif attr == "Corona":
+                setup_mgr.corona_switch_time = mins
+            elif attr == "Core_Size":
+                setup_mgr.core_size_switch_time = mins
+
+        setup_mgr.width_up_rules.sort(key=lambda x: x[0])
+        setup_mgr.width_down_rules.sort(key=lambda x: x[0])
+        setup_mgr.thickness_rules.sort(key=lambda x: x[0])
+
+    def _load_machines_from_db(self, cur, base: datetime.datetime) -> List[BlownFilmMachineModel]:
+        cur.execute("""
+            SELECT m.*, s.current_material_lanes, s.current_width,
+                s.current_thickness
+            FROM machines m
+            LEFT JOIN machine_current_state s ON m.machine_id = s.machine_id
+            WHERE m.status='ACTIVE'
+            ORDER BY m.machine_id
+        """)
+        machine_rows = cur.fetchall()
+
+        cur.execute("""
+            SELECT machine_id, start_time, end_time, reason
+            FROM machine_maintenance_calendar
+            ORDER BY start_time
+        """)
+        calendar_by_machine: Dict[str, List[ForbiddenWindow]] = {}
+        for r in cur.fetchall():
+            calendar_by_machine.setdefault(r["machine_id"], []).append(ForbiddenWindow(
+                start_mins=self._dt_to_mins(r["start_time"], base),
+                end_mins=self._dt_to_mins(r["end_time"], base),
+                reason=r["reason"] or "Maintenance",
+            ))
+
+        machines = []
+        for r in machine_rows:
+            machines.append(BlownFilmMachineModel(
+                machine_id=r["machine_id"],
+                name=r["name"],
+                cleanroom_level=r["cleanroom_level"],
+                layer_structure=int(r["layer_structure"]),
+                die_diameter_mm=int(r["die_diameter_mm"]),
+                min_width=int(r["min_width"]),
+                max_width=int(r["max_width"]),
+                min_thickness=int(r["min_thickness"]),
+                max_thickness=int(r["max_thickness"]),
+                hourly_output_kg=int(r["hourly_output_kg"]),
+                max_slitting_lanes=int(r["max_slitting_lanes"]),
+                initial_material_lanes=list(r["current_material_lanes"] or []),
+                initial_width=int(r["current_width"] or 0),
+                initial_thickness=int(r["current_thickness"] or 0),
+                forbidden_calendar=calendar_by_machine.get(r["machine_id"], []),
+            ))
+        return machines
+
+    def _load_orders_from_db(
+        self,
+        cur,
+        base: datetime.datetime,
+        recipes_map: Dict[str, List[str]],
+    ) -> List[ProductionOrderModel]:
+        cur.execute("""
+            SELECT o.*, COALESCE(c.customer_class, 'STANDARD') AS customer_class
+            FROM production_orders o
+            LEFT JOIN customers c ON o.customer_id = c.customer_id
+            WHERE o.status IN ('PENDING', 'SCHEDULED')
+            ORDER BY o.due_date, o.order_id
+        """)
+        orders = []
+        for r in cur.fetchall():
+            recipe_materials = recipes_map.get(r["product_type"], ["Standard_Med_LDPE"])
+            orders.append(ProductionOrderModel(
+                order_id=r["order_id"],
+                product_type=r["product_type"],
+                target_width=int(r["target_width"]),
+                target_thickness=int(r["target_thickness"]),
+                total_quantity_kg=int(r["total_quantity_kg"]),
+                cleanroom_req=r["cleanroom_req"],
+                customer_class=r["customer_class"],
+                order_class=r["order_class"],
+                corona_req=bool(r["corona_req"]),
+                core_size_inch=int(r["core_size_inch"] or 3),
+                order_date_mins=self._dt_to_mins(r["order_date"], base) if r["order_date"] else 0,
+                due_date_mins=self._dt_to_mins(r["due_date"], base),
+                material_available_mins=(
+                    self._dt_to_mins(r["material_available_time"], base)
+                    if r["material_available_time"] else 0
+                ),
+                recipe_materials=recipe_materials,
+            ))
+        return orders
+
+    @staticmethod
+    def _dt_to_mins(value, base: datetime.datetime) -> int:
+        if value.tzinfo is not None:
+            value = value.replace(tzinfo=None)
+        return int((value - base).total_seconds() / 60)
 
     def _save_raw_materials(self, cur, recipes_map, setup_mgr):
         """导入原料牌号"""
@@ -208,8 +395,14 @@ class DatabaseManager:
 
     # ─── 排程结果持久化 ───────────────────────────────────
 
-    def save_schedule_result(self, result: ScheduleResult):
+    def save_schedule_result(self, result: ScheduleResult, triggered_by: Optional[str] = None):
         """保存排程结果到数据库"""
+        if getattr(result, "validation_errors", None):
+            raise ValueError(
+                "排程结果未通过校验，拒绝入库: "
+                + "; ".join(result.validation_errors[:5])
+            )
+
         base = datetime.datetime.strptime(BASELINE_TIME, "%Y-%m-%d %H:%M")
 
         with self.conn.cursor() as cur:
@@ -227,18 +420,27 @@ class DatabaseManager:
 
             cur.execute("""
                 INSERT INTO schedule_runs
-                    (baseline_time, status, total_orders, total_machines_used,
+                    (baseline_time, triggered_by, status, total_orders, total_machines_used,
                      phase1_tardiness_score, phase2_setup_score,
                      total_setup_time_mins, total_scrap_kg,
                      total_late_orders, vip_late_orders, is_active)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,TRUE)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,TRUE)
                 RETURNING run_id
-            """, (base, result.status, len(result.tasks),
+            """, (base, triggered_by, result.status, len(result.tasks),
                   len(result.machine_sequences),
                   phase1_score, phase2_score,
                   total_setup, total_scrap,
                   len(late), len(vip_late)))
             run_id = cur.fetchone()[0]
+
+            diagnostics_payload = diagnostics_to_dicts(
+                getattr(result, "diagnostics", []),
+                run_id=run_id,
+            )
+            cur.execute(
+                "UPDATE schedule_runs SET solver_params=%s WHERE run_id=%s",
+                (Json({"diagnostics": diagnostics_payload}), run_id),
+            )
 
             # 保存任务明细
             for mid in sorted(result.machine_sequences.keys()):

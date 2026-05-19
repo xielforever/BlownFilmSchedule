@@ -1,0 +1,45 @@
+# Root Cause Guidance TODO
+
+**Updated**: 2026-05-19
+
+## Phase 1: Structured Diagnostics Core
+
+- [x] Add `src/diagnostics.py` with stable diagnostic, evidence, and recommendation objects.
+- [x] Add explainable machine eligibility checks without breaking `can_produce()`.
+- [x] Attach infeasible-order diagnostics to `ScheduleResult`.
+- [x] Attach lateness, setup burden, high/low load, unused machine, and changeover-heavy diagnostics after a successful solve.
+- [x] Export diagnostics in schedule JSON output.
+
+## Phase 2: HTTP Product Loop
+
+- [x] Persist run diagnostics in existing `schedule_runs.solver_params` JSONB.
+- [x] Add `GET /api/schedule/diagnostics`.
+- [x] Add structured diagnostics to failed schedule trigger status when the child process reports no eligible machine.
+- [x] Attach diagnostic metadata to Gantt idle, maintenance, downtime, and late production events.
+- [x] Enrich ordinary Gantt idle gaps with order-pool evidence: hard-fit blockers, material waits, assigned-elsewhere orders, and window length.
+- [x] Keep raw logs as fallback detail only.
+
+## Phase 3: UI Guidance Surfaces
+
+- [x] Add Dashboard `Root Cause & Next Actions` panel.
+- [x] Scope Dashboard root-cause panel to blocked, late, and material-constrained orders only.
+- [x] Show structured failed-trigger diagnostics before raw logs.
+- [x] Add Gantt event detail panel for clicked events.
+- [ ] Add order configuration warning panel for `?order=...` diagnostics.
+- [ ] Add machine-level diagnostic cards to `MachinesPage`.
+
+## Phase 4: Demo and Regression
+
+- [x] Add diagnostic unit tests.
+- [x] Extend scheduler validation tests for structured infeasible diagnostics.
+- [x] Extend Gantt helper tests for idle diagnostic metadata.
+- [x] Add regression coverage for concrete idle-gap root causes.
+- [ ] Update `docs/demo_scenario.md` with the root-cause walkthrough.
+- [x] Browser-smoke Dashboard and Gantt with demo data.
+- [x] Export Markdown schedule report with order exceptions and plant-wide root-cause analysis.
+
+## Phase 5: Later What-If
+
+- [ ] Add non-persistent what-if API for single-order or single-machine changes.
+- [ ] Compare current diagnostics with what-if impact.
+- [ ] Keep all what-if actions as recommendations, not automatic edits.

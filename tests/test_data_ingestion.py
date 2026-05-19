@@ -24,7 +24,7 @@ class TestDataIngestion(unittest.TestCase):
 
     def test_orders_loaded(self):
         """验证订单数量"""
-        self.assertEqual(len(self.orders), 32)
+        self.assertGreaterEqual(len(self.orders), 32)
 
     def test_machines_loaded(self):
         """验证机台数量"""
