@@ -6,6 +6,7 @@ import GanttPage from './pages/GanttPage';
 import OrdersPage from './pages/OrdersPage';
 import MachinesPage from './pages/MachinesPage';
 import ConfigPage from './pages/ConfigPage';
+import ScheduleWorkbench from './pages/ScheduleWorkbench';
 import './index.css';
 
 function ProtectedRoute({ children }) {
@@ -21,6 +22,7 @@ export default function App() {
         <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
           <Route index element={<Dashboard />} />
           <Route path="dashboard" element={<Dashboard />} />
+          <Route path="workbench" element={<ScheduleWorkbench />} />
           <Route path="gantt" element={<GanttPage />} />
           <Route path="orders" element={<OrdersPage />} />
           <Route path="machines" element={<MachinesPage />} />

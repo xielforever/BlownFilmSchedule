@@ -36,6 +36,7 @@ def _make_machine(**kwargs) -> BlownFilmMachineModel:
         "hourlyOutputKg": 50, "maxSlittingLanes": 4,
         "initialMaterialLanes": ["Standard_Med_LDPE"] * 5,
         "initialWidth": 300, "initialThickness": 40,
+        "initialCorona": "NO", "initialCoreSize": 3,
         "forbiddenCalendar": [],
     }
     defaults.update(kwargs)
@@ -149,6 +150,17 @@ class TestSetupTimeCalculation(unittest.TestCase):
         t = self.calc.calculate_setup_time(a, b, self.machine)
         self.assertEqual(t, 30 + 20)  # 同料30 + 电晕20
 
+    def test_first_order_uses_machine_current_corona_and_core(self):
+        """首单换产应使用机台当前电晕和纸芯状态。"""
+        machine = _make_machine(
+            initialMaterialLanes=["Borealis_LE6601-PH"] * 5,
+            initialCorona="NO",
+            initialCoreSize=6,
+        )
+        b = _make_order(orderId="B", coronaReq="YES", coreSizeInch=3)
+        t = self.calc.calculate_setup_time(None, b, machine)
+        self.assertEqual(t, 30 + 20 + 30)
+
 
 class TestScrapWeightCalculation(unittest.TestCase):
     """废料守恒精算测试"""
@@ -189,6 +201,33 @@ class TestScrapWeightCalculation(unittest.TestCase):
         scrap = self.calc.calculate_scrap_weight(a, b, self.machine)
         # 5 layers same (5*5=25) + width change (15) = 40
         self.assertEqual(scrap, 5 * 5 + 15)
+
+    def test_material_scrap_rule_overrides_constant(self):
+        """Rules 中配置的材料废料应覆盖默认每层废料常量。"""
+        self.mgr.material_switch_scrap_matrix[
+            ("Sinopec_YM-210", "Borealis_LE6601-PH")
+        ] = 7.5
+        a = _make_order(
+            orderId="A",
+            recipeMaterialsSequence=[
+                "Sinopec_YM-210",
+                "Borealis_LE6601-PH",
+                "Borealis_LE6601-PH",
+                "Borealis_LE6601-PH",
+                "Borealis_LE6601-PH",
+            ],
+        )
+        b = _make_order(orderId="B")
+        scrap = self.calc.calculate_scrap_weight(a, b, self.machine)
+        self.assertEqual(scrap, 7.5 + 5 * 4)
+
+    def test_spec_scrap_rule_overrides_constant(self):
+        """Rules 中配置的规格废料应覆盖默认幅宽废料常量。"""
+        self.mgr.width_up_scrap_rules = [(50, 2.5), (200, None), (999, None)]
+        a = _make_order(orderId="A", targetWidth=300)
+        b = _make_order(orderId="B", targetWidth=340)
+        scrap = self.calc.calculate_scrap_weight(a, b, self.machine)
+        self.assertEqual(scrap, 5 * 5 + 2.5)
 
 
 if __name__ == "__main__":

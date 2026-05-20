@@ -10,7 +10,7 @@ const ORDER_CLASS_COLORS = {
 };
 
 const ORDER_CLASS_LABELS = {
-  URGENT: 'URGENT',
+  URGENT: '加急',
   NORMAL: '普通',
   SAMPLE: '样品',
 };

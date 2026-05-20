@@ -68,6 +68,90 @@ class DatabaseManager:
         self.conn.commit()
         logger.info("数据库 Schema 初始化完成（15 张表）")
 
+    def ensure_planning_schema(self):
+        """Ensure planning lifecycle tables/columns exist on older databases."""
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                ALTER TABLE schedule_runs
+                    ADD COLUMN IF NOT EXISTS mode VARCHAR(20) DEFAULT 'AUTO',
+                    ADD COLUMN IF NOT EXISTS lifecycle_status VARCHAR(30) DEFAULT 'CONFIRMED',
+                    ADD COLUMN IF NOT EXISTS confirmed_by VARCHAR(50),
+                    ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ,
+                    ADD COLUMN IF NOT EXISTS cancelled_by VARCHAR(50),
+                    ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ,
+                    ADD COLUMN IF NOT EXISTS cancel_reason TEXT
+            """)
+            cur.execute("""
+                ALTER TABLE scheduled_tasks
+                    ADD COLUMN IF NOT EXISTS task_source VARCHAR(20) DEFAULT 'AUTO',
+                    ADD COLUMN IF NOT EXISTS manual_lock_machine BOOLEAN DEFAULT FALSE,
+                    ADD COLUMN IF NOT EXISTS manual_lock_time BOOLEAN DEFAULT FALSE
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS schedule_settings (
+                    id                                  BOOLEAN PRIMARY KEY DEFAULT TRUE,
+                    review_required                     BOOLEAN NOT NULL DEFAULT TRUE,
+                    manual_adjust_enabled               BOOLEAN NOT NULL DEFAULT TRUE,
+                    manual_adjust_reason_required       BOOLEAN NOT NULL DEFAULT TRUE,
+                    publish_with_warnings_allowed       BOOLEAN NOT NULL DEFAULT TRUE,
+                    auto_release_enabled                BOOLEAN NOT NULL DEFAULT FALSE,
+                    updated_at                          TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                INSERT INTO schedule_settings (id)
+                VALUES (TRUE)
+                ON CONFLICT (id) DO NOTHING
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS schedule_adjustment_audit (
+                    id                  SERIAL       PRIMARY KEY,
+                    run_id              INTEGER      NOT NULL REFERENCES schedule_runs(run_id),
+                    order_id            VARCHAR(20)  REFERENCES production_orders(order_id),
+                    action_type         VARCHAR(30)  NOT NULL,
+                    before_state        JSONB,
+                    after_state         JSONB,
+                    reason_code         VARCHAR(50),
+                    reason_text         TEXT,
+                    changed_by          VARCHAR(50),
+                    changed_at          TIMESTAMPTZ  DEFAULT NOW(),
+                    validation_status   VARCHAR(20)  DEFAULT 'PENDING',
+                    validation_messages JSONB
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS manufacturing_queue (
+                    id                  SERIAL       PRIMARY KEY,
+                    run_id              INTEGER      NOT NULL REFERENCES schedule_runs(run_id),
+                    scheduled_task_id   INTEGER      REFERENCES scheduled_tasks(id),
+                    order_id            VARCHAR(20)  NOT NULL REFERENCES production_orders(order_id),
+                    machine_id          VARCHAR(20)  NOT NULL REFERENCES machines(machine_id),
+                    sequence_index      INTEGER      NOT NULL,
+                    planned_start_time  TIMESTAMPTZ  NOT NULL,
+                    planned_end_time    TIMESTAMPTZ  NOT NULL,
+                    queue_status        VARCHAR(30)  NOT NULL DEFAULT 'QUEUED',
+                    released_by         VARCHAR(50),
+                    released_at         TIMESTAMPTZ  DEFAULT NOW(),
+                    started_at          TIMESTAMPTZ,
+                    completed_at        TIMESTAMPTZ,
+                    UNIQUE(run_id, order_id)
+                )
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_schedule_runs_lifecycle
+                ON schedule_runs(lifecycle_status, run_id DESC)
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_queue_status
+                ON manufacturing_queue(queue_status, planned_start_time)
+            """)
+            cur.execute("""
+                UPDATE schedule_runs
+                SET lifecycle_status='CONFIRMED'
+                WHERE lifecycle_status IS NULL
+            """)
+        self.conn.commit()
+
     # ─── 主数据导入 ───────────────────────────────────────
 
     def save_master_data(self, machines, orders, recipes_map, setup_mgr):
@@ -86,6 +170,8 @@ class DatabaseManager:
     def load_master_data(
         self,
         fallback_setup_mgr: Optional[SetupMatricesManager] = None,
+        order_ids: Optional[List[str]] = None,
+        order_statuses: Optional[Tuple[str, ...]] = None,
     ) -> Tuple[
         List[BlownFilmMachineModel],
         List[ProductionOrderModel],
@@ -100,7 +186,13 @@ class DatabaseManager:
             recipes_map = self._load_recipes_map(cur)
             self._load_setup_matrices_from_db(cur, setup_mgr)
             machines = self._load_machines_from_db(cur, base)
-            orders = self._load_orders_from_db(cur, base, recipes_map)
+            orders = self._load_orders_from_db(
+                cur,
+                base,
+                recipes_map,
+                order_ids=order_ids,
+                order_statuses=order_statuses,
+            )
 
         logger.info(
             "从数据库加载排程输入完成: machines=%d, orders=%d, recipes=%d",
@@ -121,13 +213,14 @@ class DatabaseManager:
 
     def _load_setup_matrices_from_db(self, cur, setup_mgr: SetupMatricesManager) -> None:
         cur.execute("""
-            SELECT from_material, to_material, switch_time_mins
+            SELECT from_material, to_material, switch_time_mins, scrap_weight_kg
             FROM material_switch_matrix
         """)
         for r in cur.fetchall():
-            setup_mgr.material_switch_matrix[
-                (r["from_material"], r["to_material"])
-            ] = int(r["switch_time_mins"])
+            key = (r["from_material"], r["to_material"])
+            setup_mgr.material_switch_matrix[key] = int(r["switch_time_mins"])
+            if r["scrap_weight_kg"] is not None:
+                setup_mgr.material_switch_scrap_matrix[key] = float(r["scrap_weight_kg"])
 
         cur.execute("""
             SELECT from_order_class, to_order_class, clearance_time_mins
@@ -144,7 +237,7 @@ class DatabaseManager:
 
         cur.execute("""
             SELECT attribute, condition_desc, threshold_lower, threshold_upper,
-                change_time_mins
+                change_time_mins, scrap_weight_kg
             FROM spec_change_rules
             ORDER BY attribute, threshold_upper NULLS LAST, id
         """)
@@ -153,9 +246,17 @@ class DatabaseManager:
             setup_mgr.width_up_rules = []
             setup_mgr.width_down_rules = []
             setup_mgr.thickness_rules = []
+            setup_mgr.width_up_scrap_rules = []
+            setup_mgr.width_down_scrap_rules = []
+            setup_mgr.thickness_scrap_rules = []
         for r in spec_rows:
             attr = r["attribute"]
             mins = int(r["change_time_mins"])
+            scrap = (
+                float(r["scrap_weight_kg"])
+                if r["scrap_weight_kg"] is not None
+                else None
+            )
             threshold = r["threshold_upper"] or r["threshold_lower"]
             if threshold is None:
                 threshold = setup_mgr._parse_threshold(r["condition_desc"] or "")
@@ -163,25 +264,35 @@ class DatabaseManager:
 
             if attr == "Width_Up":
                 setup_mgr.width_up_rules.append((threshold, mins))
+                setup_mgr.width_up_scrap_rules.append((threshold, scrap))
             elif attr == "Width_Down":
                 setup_mgr.width_down_rules.append((threshold, mins))
+                setup_mgr.width_down_scrap_rules.append((threshold, scrap))
             elif attr == "Thickness":
                 setup_mgr.thickness_rules.append((threshold, mins))
+                setup_mgr.thickness_scrap_rules.append((threshold, scrap))
             elif attr == "Die_Change":
                 setup_mgr.die_change_time = mins
+                setup_mgr.die_change_scrap_kg = scrap
             elif attr == "Corona":
                 setup_mgr.corona_switch_time = mins
+                setup_mgr.corona_switch_scrap_kg = scrap
             elif attr == "Core_Size":
                 setup_mgr.core_size_switch_time = mins
+                setup_mgr.core_size_switch_scrap_kg = scrap
 
         setup_mgr.width_up_rules.sort(key=lambda x: x[0])
         setup_mgr.width_down_rules.sort(key=lambda x: x[0])
         setup_mgr.thickness_rules.sort(key=lambda x: x[0])
+        setup_mgr.width_up_scrap_rules.sort(key=lambda x: x[0])
+        setup_mgr.width_down_scrap_rules.sort(key=lambda x: x[0])
+        setup_mgr.thickness_scrap_rules.sort(key=lambda x: x[0])
 
     def _load_machines_from_db(self, cur, base: datetime.datetime) -> List[BlownFilmMachineModel]:
         cur.execute("""
             SELECT m.*, s.current_material_lanes, s.current_width,
-                s.current_thickness
+                s.current_thickness, s.current_corona, s.current_core_size,
+                s.continuous_run_mins
             FROM machines m
             LEFT JOIN machine_current_state s ON m.machine_id = s.machine_id
             WHERE m.status='ACTIVE'
@@ -229,6 +340,9 @@ class DatabaseManager:
                 initial_material_lanes=list(r["current_material_lanes"] or []),
                 initial_width=int(r["current_width"] or 0),
                 initial_thickness=int(r["current_thickness"] or 0),
+                initial_corona=bool(r["current_corona"]) if r["current_corona"] is not None else False,
+                initial_core_size=int(r["current_core_size"] or 3),
+                initial_continuous_run_mins=int(r["continuous_run_mins"] or 0),
                 forbidden_calendar=calendar_by_machine.get(r["machine_id"], []),
             ))
         return machines
@@ -238,14 +352,23 @@ class DatabaseManager:
         cur,
         base: datetime.datetime,
         recipes_map: Dict[str, List[str]],
+        order_ids: Optional[List[str]] = None,
+        order_statuses: Optional[Tuple[str, ...]] = None,
     ) -> List[ProductionOrderModel]:
-        cur.execute("""
+        statuses = tuple(order_statuses or ("PENDING", "SCHEDULED"))
+        params = [list(statuses)]
+        where_extra = ""
+        if order_ids:
+            where_extra = " AND o.order_id = ANY(%s)"
+            params.append(list(order_ids))
+        cur.execute(f"""
             SELECT o.*, COALESCE(c.customer_class, 'STANDARD') AS customer_class
             FROM production_orders o
             LEFT JOIN customers c ON o.customer_id = c.customer_id
-            WHERE o.status IN ('PENDING', 'SCHEDULED')
+            WHERE o.status = ANY(%s)
+            {where_extra}
             ORDER BY o.due_date, o.order_id
-        """)
+        """, params)
         orders = []
         for r in cur.fetchall():
             recipe_materials = recipes_map.get(r["product_type"], ["Standard_Med_LDPE"])
@@ -265,6 +388,11 @@ class DatabaseManager:
                 material_available_mins=(
                     self._dt_to_mins(r["material_available_time"], base)
                     if r["material_available_time"] else 0
+                ),
+                priority_override=(
+                    int(r["priority_override"])
+                    if r["priority_override"] is not None
+                    else None
                 ),
                 recipe_materials=recipe_materials,
             ))
@@ -349,15 +477,19 @@ class DatabaseManager:
             # 初始状态
             cur.execute("""
                 INSERT INTO machine_current_state
-                    (machine_id, current_material_lanes, current_width, current_thickness)
-                VALUES (%s, %s, %s, %s)
+                    (machine_id, current_material_lanes, current_width,
+                     current_thickness, current_corona, current_core_size)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (machine_id) DO UPDATE SET
                     current_material_lanes=EXCLUDED.current_material_lanes,
                     current_width=EXCLUDED.current_width,
                     current_thickness=EXCLUDED.current_thickness,
+                    current_corona=EXCLUDED.current_corona,
+                    current_core_size=EXCLUDED.current_core_size,
                     updated_at=NOW()
             """, (m.machine_id, m.initial_material_lanes,
-                  m.initial_width, m.initial_thickness))
+                  m.initial_width, m.initial_thickness,
+                  m.initial_corona, m.initial_core_size))
             # 维保日历
             for fw in m.forbidden_calendar:
                 base = datetime.datetime.strptime(BASELINE_TIME, "%Y-%m-%d %H:%M")
@@ -391,17 +523,59 @@ class DatabaseManager:
     def _save_setup_matrices(self, cur, setup_mgr):
         """导入换产矩阵"""
         for (f, t), mins in setup_mgr.material_switch_matrix.items():
+            scrap = setup_mgr.material_switch_scrap_matrix.get((f, t))
             cur.execute("""
-                INSERT INTO material_switch_matrix (from_material, to_material, switch_time_mins)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (from_material, to_material) DO NOTHING
-            """, (f, t, mins))
+                INSERT INTO material_switch_matrix
+                    (from_material, to_material, switch_time_mins, scrap_weight_kg)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (from_material, to_material) DO UPDATE SET
+                    switch_time_mins=EXCLUDED.switch_time_mins,
+                    scrap_weight_kg=COALESCE(
+                        EXCLUDED.scrap_weight_kg,
+                        material_switch_matrix.scrap_weight_kg
+                    )
+            """, (f, t, mins, scrap))
         for (fc, tc), mins in setup_mgr.gmp_clearance_matrix.items():
             cur.execute("""
                 INSERT INTO gmp_clearance_matrix (from_order_class, to_order_class, clearance_time_mins)
                 VALUES (%s, %s, %s)
-                ON CONFLICT (from_order_class, to_order_class) DO NOTHING
+                ON CONFLICT (from_order_class, to_order_class) DO UPDATE SET
+                    clearance_time_mins=EXCLUDED.clearance_time_mins
             """, (fc, tc, mins))
+        for rule in setup_mgr.iter_spec_rules():
+            cur.execute("""
+                UPDATE spec_change_rules SET
+                    threshold_lower=%s,
+                    threshold_upper=%s,
+                    change_time_mins=%s,
+                    scrap_weight_kg=COALESCE(%s, scrap_weight_kg),
+                    description=COALESCE(description, %s)
+                WHERE attribute=%s AND condition_desc=%s
+            """, (
+                rule["threshold_lower"],
+                rule["threshold_upper"],
+                rule["change_time_mins"],
+                rule["scrap_weight_kg"],
+                rule["description"],
+                rule["attribute"],
+                rule["condition_desc"],
+            ))
+            if cur.rowcount:
+                continue
+            cur.execute("""
+                INSERT INTO spec_change_rules
+                    (attribute, condition_desc, threshold_lower, threshold_upper,
+                     change_time_mins, scrap_weight_kg, description)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (
+                rule["attribute"],
+                rule["condition_desc"],
+                rule["threshold_lower"],
+                rule["threshold_upper"],
+                rule["change_time_mins"],
+                rule["scrap_weight_kg"],
+                rule["description"],
+            ))
 
     # ─── 排程结果持久化 ───────────────────────────────────
 
@@ -411,8 +585,13 @@ class DatabaseManager:
         triggered_by: Optional[str] = None,
         activate: bool = True,
         allow_invalid: bool = False,
+        publish_orders: bool = True,
+        mode: str = "AUTO",
+        lifecycle_status: Optional[str] = None,
+        selected_order_ids: Optional[List[str]] = None,
     ):
         """保存排程结果到数据库"""
+        self.ensure_planning_schema()
         if getattr(result, "validation_errors", None) and not allow_invalid:
             raise ValueError(
                 "排程结果未通过校验，拒绝入库: "
@@ -442,14 +621,16 @@ class DatabaseManager:
                     (baseline_time, triggered_by, status, total_orders, total_machines_used,
                      phase1_tardiness_score, phase2_setup_score,
                      total_setup_time_mins, total_scrap_kg,
-                     total_late_orders, vip_late_orders, is_active)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     total_late_orders, vip_late_orders, is_active,
+                     mode, lifecycle_status)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 RETURNING run_id
             """, (base, triggered_by, result.status, len(result.tasks),
                   len(result.machine_sequences),
                   phase1_score, phase2_score,
                   total_setup, total_scrap,
-                  len(late), len(vip_late), activate))
+                  len(late), len(vip_late), activate,
+                  mode, lifecycle_status or ("CONFIRMED" if activate else "DRAFT")))
             run_id = cur.fetchone()[0]
 
             diagnostics_payload = diagnostics_to_dicts(
@@ -465,6 +646,8 @@ class DatabaseManager:
                         "schedulable_order_count": getattr(result, "schedulable_order_count", len(result.tasks)),
                         "blocked_order_count": getattr(result, "blocked_order_count", 0),
                     },
+                    "selected_order_ids": selected_order_ids or [],
+                    "mode": mode,
                 }), run_id),
             )
 
@@ -483,8 +666,8 @@ class DatabaseManager:
                              setup_start_time, start_time, end_time,
                              start_mins, end_mins, duration_mins, setup_time_mins,
                              scrap_kg, net_weight_kg, actual_material_required_kg,
-                             is_late, tardiness_mins, prev_order_id)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                             is_late, tardiness_mins, prev_order_id, task_source)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     """, (run_id, t.order.order_id, t.machine.machine_id,
                           t.sequence_index, setup_st, st, et,
                           t.start_mins, t.end_mins,
@@ -493,28 +676,16 @@ class DatabaseManager:
                           t.order.total_quantity_kg + t.scrap_kg,
                           t.end_mins > t.order.due_date_mins,
                           max(0, t.end_mins - t.order.due_date_mins),
-                          prev_oid))
+                          prev_oid, "AUTO"))
                     prev_oid = t.order.order_id
 
             # 更新订单状态
-            for t in result.tasks:
-                cur.execute("""
-                    UPDATE production_orders SET status='SCHEDULED', updated_at=NOW()
-                    WHERE order_id=%s AND status='PENDING'
-                """, (t.order.order_id,))
-
-            # 更新机台当前状态（最后一个订单的末态）
-            for mid, tasks in result.machine_sequences.items():
-                last = sorted(tasks, key=lambda x: x.end_mins)[-1]
-                o = last.order
-                cur.execute("""
-                    UPDATE machine_current_state SET
-                        current_material_lanes=%s, current_width=%s,
-                        current_thickness=%s, current_corona=%s,
-                        current_core_size=%s, last_order_id=%s, updated_at=NOW()
-                    WHERE machine_id=%s
-                """, (o.recipe_materials, o.target_width, o.target_thickness,
-                      o.corona_req, o.core_size_inch, o.order_id, mid))
+            if publish_orders:
+                for t in result.tasks:
+                    cur.execute("""
+                        UPDATE production_orders SET status='SCHEDULED', updated_at=NOW()
+                        WHERE order_id=%s AND status='PENDING'
+                    """, (t.order.order_id,))
 
         self.conn.commit()
         logger.info("排程结果已入库: run_id=%d, %d 个任务", run_id, len(result.tasks))

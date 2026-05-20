@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  applyScheduleEndState,
   createGmpRule,
   createMaintenanceWindow,
   createMaterialSwitchRule,
   createSpecRule,
+  dedupeMaintenanceWindows,
   deleteGmpRule,
   deleteMaintenanceWindow,
   deleteMaterialSwitchRule,
@@ -44,7 +46,7 @@ const machineStatusLabels = {
 const cleanroomOptions = ['Class_10K', 'Class_100K'];
 const orderClassOptions = ['URGENT', 'NORMAL', 'SAMPLE'];
 const orderClassLabels = {
-  URGENT: 'URGENT',
+  URGENT: '加急',
   NORMAL: '普通',
   SAMPLE: '样品',
   ANY: '任意',
@@ -72,6 +74,7 @@ const ruleSectionLabels = {
   spec: '规格变更',
   maintenance: '维护窗口',
 };
+const ruleSectionIds = Object.keys(ruleSectionLabels);
 const ruleColumnLabels = {
   from_material: '原材料',
   to_material: '目标材料',
@@ -266,6 +269,8 @@ function buildMachineDraft(machine) {
     current_width: machine.current_width ?? 0,
     current_thickness: machine.current_thickness ?? 0,
     current_materials: (machine.current_materials || []).join(', '),
+    current_corona: Boolean(machine.current_corona),
+    current_core_size: machine.current_core_size ?? 3,
   };
 }
 
@@ -278,6 +283,7 @@ function OrdersConfig({ orders, setOrders, onSaved, initialOrderId }) {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [editorDirty, setEditorDirty] = useState(false);
+  const [pendingOrderId, setPendingOrderId] = useState('');
   const [diagnosticState, setDiagnosticState] = useState({
     loading: false,
     error: '',
@@ -304,12 +310,14 @@ function OrdersConfig({ orders, setOrders, onSaved, initialOrderId }) {
 
   const requestSelect = useCallback((orderId) => {
     if (orderId === selected?.order_id) return;
-    if (editorDirty && !window.confirm('当前订单有未保存修改，切换订单会丢失草稿，是否继续？')) {
+    if (editorDirty && pendingOrderId !== orderId) {
+      setPendingOrderId(orderId);
       return;
     }
     setEditorDirty(false);
+    setPendingOrderId('');
     setSelectedId(orderId);
-  }, [editorDirty, selected?.order_id]);
+  }, [editorDirty, pendingOrderId, selected?.order_id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -363,6 +371,15 @@ function OrdersConfig({ orders, setOrders, onSaved, initialOrderId }) {
           </select>
           <small>{filteredOrders.length} / {orders.length} 条订单</small>
         </div>
+        {pendingOrderId && editorDirty && (
+          <InlineConfirm
+            message={`当前订单有未保存修改，确认切换到 ${pendingOrderId}？`}
+            detail="切换后未保存草稿会被丢弃。"
+            confirmLabel="确认切换"
+            onConfirm={() => requestSelect(pendingOrderId)}
+            onCancel={() => setPendingOrderId('')}
+          />
+        )}
         {filteredOrders.map(order => (
           <button key={order.order_id} className={selected.order_id === order.order_id ? 'selected' : ''} onClick={() => requestSelect(order.order_id)}>
             <strong>{order.order_id}</strong>
@@ -446,7 +463,7 @@ function OrderEditor({
         <Field label="交期"><TextInput type="datetime-local" value={draft.due_date} onChange={v => patch('due_date', v)} /></Field>
         <Field label="材料可用时间"><TextInput type="datetime-local" value={draft.material_available_time} onChange={v => patch('material_available_time', v)} /></Field>
         <Field label="纸芯英寸"><NumberInput value={draft.core_size_inch} onChange={v => patch('core_size_inch', v)} /></Field>
-        <Field label="优先级"><NumberInput value={draft.priority_override} onChange={v => patch('priority_override', v)} /></Field>
+        <Field label="延期权重覆盖"><NumberInput value={draft.priority_override} onChange={v => patch('priority_override', v)} /></Field>
         <Field label="电晕"><SwitchInput checked={Boolean(draft.corona_req)} onChange={v => patch('corona_req', v)} /></Field>
       </div>
     </div>
@@ -458,6 +475,9 @@ function MachinesConfig({ machines, setMachines, onSaved, initialMachineId }) {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [cleanroomFilter, setCleanroomFilter] = useState('');
+  const [applyBusy, setApplyBusy] = useState(false);
+  const [applyConfirming, setApplyConfirming] = useState(false);
+  const [pendingMachineId, setPendingMachineId] = useState('');
   const selectedKey = selectedId || initialMachineId;
   const selected = useMemo(() => machines.find(m => m.machine_id === selectedKey) || machines[0], [machines, selectedKey]);
   const [draft, setDraft] = useState(null);
@@ -492,9 +512,11 @@ function MachinesConfig({ machines, setMachines, onSaved, initialMachineId }) {
 
   const requestSelect = (machineId) => {
     if (machineId === selected.machine_id) return;
-    if (isDirty && !window.confirm('当前机台有未保存修改，切换机台会丢失草稿，是否继续？')) {
+    if (isDirty && pendingMachineId !== machineId) {
+      setPendingMachineId(machineId);
       return;
     }
+    setPendingMachineId('');
     setSelectedId(machineId);
   };
 
@@ -509,6 +531,24 @@ function MachinesConfig({ machines, setMachines, onSaved, initialMachineId }) {
     setMachines(prev => prev.map(m => m.machine_id === selected.machine_id ? nextMachine : m));
     setDraft(buildMachineDraft(nextMachine));
     onSaved(`机台 ${selected.machine_id} 已保存`);
+  };
+  const applyEndState = async () => {
+    if (!applyConfirming) {
+      setApplyConfirming(true);
+      return;
+    }
+    setApplyBusy(true);
+    try {
+      const res = await applyScheduleEndState();
+      const machineRes = await getMachines();
+      setMachines(machineRes.data);
+      onSaved(`已应用运行 #${res.data.run_id} 的 ${res.data.applied_count} 台机台末态`);
+      setApplyConfirming(false);
+    } catch (err) {
+      onSaved(err.response?.data?.detail || err.message || '应用排程末态失败', 'error');
+    } finally {
+      setApplyBusy(false);
+    }
   };
 
   return (
@@ -526,6 +566,15 @@ function MachinesConfig({ machines, setMachines, onSaved, initialMachineId }) {
           </select>
           <small>{filteredMachines.length} / {machines.length} 台机台</small>
         </div>
+        {pendingMachineId && isDirty && (
+          <InlineConfirm
+            message={`当前机台有未保存修改，确认切换到 ${pendingMachineId}？`}
+            detail="切换后未保存草稿会被丢弃。"
+            confirmLabel="确认切换"
+            onConfirm={() => requestSelect(pendingMachineId)}
+            onCancel={() => setPendingMachineId('')}
+          />
+        )}
         {filteredMachines.map(machine => (
           <button key={machine.machine_id} className={selected.machine_id === machine.machine_id ? 'selected' : ''} onClick={() => requestSelect(machine.machine_id)}>
             <strong>{machine.machine_id}</strong>
@@ -541,7 +590,15 @@ function MachinesConfig({ machines, setMachines, onSaved, initialMachineId }) {
             <h3>{selected.machine_id}</h3>
             <p>{selected.name}</p>
           </div>
-          <button className="btn btn-primary" onClick={save}>保存机台</button>
+          <div className="config-actions">
+            <button className="btn btn-ghost" onClick={applyEndState} disabled={applyBusy}>
+              {applyBusy ? '应用中...' : (applyConfirming ? '确认应用末态' : '应用排程末态')}
+            </button>
+            {applyConfirming && !applyBusy && (
+              <button className="btn btn-ghost" onClick={() => setApplyConfirming(false)}>取消</button>
+            )}
+            <button className="btn btn-primary" onClick={save}>保存机台</button>
+          </div>
         </div>
         <div className="config-form">
           <Field label="名称"><TextInput value={draft.name} onChange={v => patch('name', v)} /></Field>
@@ -557,6 +614,8 @@ function MachinesConfig({ machines, setMachines, onSaved, initialMachineId }) {
           <Field label="分切道数"><NumberInput value={draft.max_slitting_lanes} onChange={v => patch('max_slitting_lanes', v)} /></Field>
           <Field label="当前幅宽"><NumberInput value={draft.current_width} onChange={v => patch('current_width', v)} /></Field>
           <Field label="当前厚度"><NumberInput value={draft.current_thickness} onChange={v => patch('current_thickness', v)} /></Field>
+          <Field label="当前电晕"><SwitchInput checked={Boolean(draft.current_corona)} onChange={v => patch('current_corona', v)} /></Field>
+          <Field label="当前纸芯英寸"><NumberInput value={draft.current_core_size} onChange={v => patch('current_core_size', v)} /></Field>
           <Field label="当前挂料"><TextInput value={draft.current_materials} onChange={v => patch('current_materials', v)} /></Field>
         </div>
       </div>
@@ -564,12 +623,24 @@ function MachinesConfig({ machines, setMachines, onSaved, initialMachineId }) {
   );
 }
 
-function RulesConfig({ rules, machines, reload, onSaved }) {
-  const [section, setSection] = useState('material');
+function RulesConfig({ rules, machines, reload, onSaved, initialSection, onSectionChange }) {
+  const [fallbackSection, setFallbackSection] = useState('material');
+  const section = ruleSectionIds.includes(initialSection) ? initialSection : fallbackSection;
   const [draft, setDraft] = useState(emptyRuleDraft);
+  const [dedupeBusy, setDedupeBusy] = useState(false);
+  const [dedupeConfirming, setDedupeConfirming] = useState(false);
+  const [pendingDeleteKey, setPendingDeleteKey] = useState('');
+  const duplicateSummary = rules.maintenance_duplicate_summary || { group_count: 0, duplicate_row_count: 0, groups: [] };
+  const deleteKey = (kind, id) => `${kind}:${id}`;
 
   const updateDraft = (group, key, value) => {
     setDraft(prev => ({ ...prev, [group]: { ...prev[group], [key]: value } }));
+  };
+  const selectSection = (nextSection) => {
+    setFallbackSection(nextSection);
+    setDedupeConfirming(false);
+    setPendingDeleteKey('');
+    onSectionChange?.(nextSection);
   };
 
   const saveInline = async (kind, id, payload) => {
@@ -582,11 +653,16 @@ function RulesConfig({ rules, machines, reload, onSaved }) {
   };
 
   const deleteRule = async (kind, id) => {
-    if (!window.confirm('确定删除这条规则吗？')) return;
+    const key = deleteKey(kind, id);
+    if (pendingDeleteKey !== key) {
+      setPendingDeleteKey(key);
+      return;
+    }
     if (kind === 'material') await deleteMaterialSwitchRule(id);
     if (kind === 'gmp') await deleteGmpRule(id);
     if (kind === 'spec') await deleteSpecRule(id);
     if (kind === 'maintenance') await deleteMaintenanceWindow(id);
+    setPendingDeleteKey('');
     await reload();
     onSaved('规则已删除');
   };
@@ -599,6 +675,24 @@ function RulesConfig({ rules, machines, reload, onSaved }) {
     await reload();
     onSaved('规则已创建');
   };
+  const dedupeMaintenance = async () => {
+    if (!duplicateSummary.duplicate_row_count) return;
+    if (!dedupeConfirming) {
+      setDedupeConfirming(true);
+      return;
+    }
+    setDedupeBusy(true);
+    try {
+      const res = await dedupeMaintenanceWindows();
+      await reload();
+      onSaved(`已合并 ${res.data.deleted_count} 条重复维护窗口`);
+      setDedupeConfirming(false);
+    } catch (err) {
+      onSaved(err.response?.data?.detail || err.message || '合并维护窗口失败', 'error');
+    } finally {
+      setDedupeBusy(false);
+    }
+  };
 
   return (
     <div>
@@ -609,7 +703,7 @@ function RulesConfig({ rules, machines, reload, onSaved }) {
           ['spec', ruleSectionLabels.spec],
           ['maintenance', ruleSectionLabels.maintenance],
         ].map(([id, label]) => (
-          <button key={id} className={section === id ? 'active' : ''} onClick={() => setSection(id)}>{label}</button>
+          <button key={id} className={section === id ? 'active' : ''} onClick={() => selectSection(id)}>{label}</button>
         ))}
       </div>
 
@@ -620,6 +714,8 @@ function RulesConfig({ rules, machines, reload, onSaved }) {
           numeric={['switch_time_mins', 'scrap_weight_kg']}
           onSave={(id, payload) => saveInline('material', id, payload)}
           onDelete={id => deleteRule('material', id)}
+          deleteConfirming={id => pendingDeleteKey === deleteKey('material', id)}
+          onCancelDelete={() => setPendingDeleteKey('')}
         />
       )}
       {section === 'gmp' && (
@@ -629,6 +725,8 @@ function RulesConfig({ rules, machines, reload, onSaved }) {
           numeric={['clearance_time_mins']}
           onSave={(id, payload) => saveInline('gmp', id, payload)}
           onDelete={id => deleteRule('gmp', id)}
+          deleteConfirming={id => pendingDeleteKey === deleteKey('gmp', id)}
+          onCancelDelete={() => setPendingDeleteKey('')}
         />
       )}
       {section === 'spec' && (
@@ -638,15 +736,28 @@ function RulesConfig({ rules, machines, reload, onSaved }) {
           numeric={['threshold_lower', 'threshold_upper', 'change_time_mins', 'scrap_weight_kg']}
           onSave={(id, payload) => saveInline('spec', id, payload)}
           onDelete={id => deleteRule('spec', id)}
+          deleteConfirming={id => pendingDeleteKey === deleteKey('spec', id)}
+          onCancelDelete={() => setPendingDeleteKey('')}
         />
       )}
       {section === 'maintenance' && (
-        <MaintenanceTable
-          rows={rules.maintenance || []}
-          machines={machines}
-          onSave={(id, payload) => saveInline('maintenance', id, payload)}
-          onDelete={id => deleteRule('maintenance', id)}
-        />
+        <>
+          <MaintenanceDuplicatePanel
+            summary={duplicateSummary}
+            busy={dedupeBusy}
+            confirming={dedupeConfirming}
+            onDedupe={dedupeMaintenance}
+            onCancel={() => setDedupeConfirming(false)}
+          />
+          <MaintenanceTable
+            rows={rules.maintenance || []}
+            machines={machines}
+            onSave={(id, payload) => saveInline('maintenance', id, payload)}
+            onDelete={id => deleteRule('maintenance', id)}
+            deleteConfirming={id => pendingDeleteKey === deleteKey('maintenance', id)}
+            onCancelDelete={() => setPendingDeleteKey('')}
+          />
+        </>
       )}
 
       <div className="config-create">
@@ -658,7 +769,22 @@ function RulesConfig({ rules, machines, reload, onSaved }) {
   );
 }
 
-function EditableRuleTable({ columns, rows, numeric, onSave, onDelete }) {
+function InlineConfirm({ message, detail, confirmLabel, onConfirm, onCancel }) {
+  return (
+    <div className="config-inline-confirm">
+      <div>
+        <strong>{message}</strong>
+        {detail && <span>{detail}</span>}
+      </div>
+      <div className="config-actions">
+        <button className="btn btn-danger" onClick={onConfirm}>{confirmLabel}</button>
+        <button className="btn btn-ghost" onClick={onCancel}>取消</button>
+      </div>
+    </div>
+  );
+}
+
+function EditableRuleTable({ columns, rows, numeric, onSave, onDelete, deleteConfirming, onCancelDelete }) {
   const [edits, setEdits] = useState({});
   const valueFor = (row, col) => edits[row.id]?.[col] ?? row[col] ?? '';
   const patch = (id, col, value) => setEdits(prev => ({ ...prev, [id]: { ...prev[id], [col]: value } }));
@@ -682,7 +808,12 @@ function EditableRuleTable({ columns, rows, numeric, onSave, onDelete }) {
               <td>
                 <div className="config-actions">
                   <button className="btn btn-ghost" onClick={() => onSave(row.id, edits[row.id] || {})}>保存</button>
-                  <button className="btn btn-danger" onClick={() => onDelete(row.id)}>删除</button>
+                  <button className="btn btn-danger" onClick={() => onDelete(row.id)}>
+                    {deleteConfirming?.(row.id) ? '确认删除' : '删除'}
+                  </button>
+                  {deleteConfirming?.(row.id) && (
+                    <button className="btn btn-ghost" onClick={onCancelDelete}>取消</button>
+                  )}
                 </div>
               </td>
             </tr>
@@ -694,7 +825,36 @@ function EditableRuleTable({ columns, rows, numeric, onSave, onDelete }) {
   );
 }
 
-function MaintenanceTable({ rows, machines, onSave, onDelete }) {
+function MaintenanceDuplicatePanel({ summary, busy, confirming, onDedupe, onCancel }) {
+  if (!summary?.duplicate_row_count) return null;
+  const examples = (summary.groups || []).slice(0, 3);
+
+  return (
+    <div className="config-maintenance-alert">
+      <div>
+        <strong>检测到 {summary.group_count} 组重复维护窗口</strong>
+        <span>重复行 {summary.duplicate_row_count} 条，当前列表已临时去重显示。</span>
+      </div>
+      <div className="config-maintenance-alert-list">
+        {examples.map(group => (
+          <span key={`${group.keep_id}-${group.machine_id}`}>
+            {group.machine_id} · {toDatetimeLocal(group.start_time)} · {group.duplicate_count} 条
+          </span>
+        ))}
+      </div>
+      <div className="config-actions">
+        <button className="btn btn-danger" onClick={onDedupe} disabled={busy}>
+          {busy ? '合并中...' : (confirming ? `确认合并 ${summary.duplicate_row_count} 条` : '一键合并重复窗口')}
+        </button>
+        {confirming && !busy && (
+          <button className="btn btn-ghost" onClick={onCancel}>取消</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MaintenanceTable({ rows, machines, onSave, onDelete, deleteConfirming, onCancelDelete }) {
   const [edits, setEdits] = useState({});
   const valueFor = (row, col) => edits[row.id]?.[col] ?? row[col] ?? '';
   const patch = (id, col, value) => setEdits(prev => ({ ...prev, [id]: { ...prev[id], [col]: value } }));
@@ -709,8 +869,6 @@ function MaintenanceTable({ rows, machines, onSave, onDelete }) {
             <th>{ruleColumnLabels.end_time}</th>
             <th>{ruleColumnLabels.maintenance_type}</th>
             <th>{ruleColumnLabels.reason}</th>
-            <th>{ruleColumnLabels.is_recurring}</th>
-            <th>{ruleColumnLabels.recurrence_rule}</th>
             <th />
           </tr>
         </thead>
@@ -722,12 +880,15 @@ function MaintenanceTable({ rows, machines, onSave, onDelete }) {
               <td><input type="datetime-local" value={toDatetimeLocal(valueFor(row, 'end_time'))} onChange={e => patch(row.id, 'end_time', fromDatetimeLocal(e.target.value))} /></td>
               <td><SelectInput value={valueFor(row, 'maintenance_type')} onChange={v => patch(row.id, 'maintenance_type', v)} options={labelOptions(maintenanceTypeOptions, maintenanceTypeLabels)} /></td>
               <td><input value={valueFor(row, 'reason')} onChange={e => patch(row.id, 'reason', e.target.value)} /></td>
-              <td><SwitchInput checked={Boolean(valueFor(row, 'is_recurring'))} onChange={v => patch(row.id, 'is_recurring', v)} /></td>
-              <td><input value={valueFor(row, 'recurrence_rule')} onChange={e => patch(row.id, 'recurrence_rule', e.target.value)} /></td>
               <td>
                 <div className="config-actions">
                   <button className="btn btn-ghost" onClick={() => onSave(row.id, edits[row.id] || {})}>保存</button>
-                  <button className="btn btn-danger" onClick={() => onDelete(row.id)}>删除</button>
+                  <button className="btn btn-danger" onClick={() => onDelete(row.id)}>
+                    {deleteConfirming?.(row.id) ? '确认删除' : '删除'}
+                  </button>
+                  {deleteConfirming?.(row.id) && (
+                    <button className="btn btn-ghost" onClick={onCancelDelete}>取消</button>
+                  )}
                 </div>
               </td>
             </tr>
@@ -776,8 +937,6 @@ function RuleDraftForm({ section, draft, machines, updateDraft }) {
       <Field label="结束时间"><TextInput type="datetime-local" value={toDatetimeLocal(draft.maintenance.end_time)} onChange={v => updateDraft('maintenance', 'end_time', fromDatetimeLocal(v))} /></Field>
       <Field label="维护类型"><SelectInput value={draft.maintenance.maintenance_type} onChange={v => updateDraft('maintenance', 'maintenance_type', v)} options={labelOptions(maintenanceTypeOptions, maintenanceTypeLabels)} /></Field>
       <Field label="原因"><TextInput value={draft.maintenance.reason} onChange={v => updateDraft('maintenance', 'reason', v)} /></Field>
-      <Field label="周期性"><SwitchInput checked={Boolean(draft.maintenance.is_recurring)} onChange={v => updateDraft('maintenance', 'is_recurring', v)} /></Field>
-      <Field label="周期规则"><TextInput value={draft.maintenance.recurrence_rule} onChange={v => updateDraft('maintenance', 'recurrence_rule', v)} /></Field>
     </div>
   );
 }
@@ -818,6 +977,8 @@ export default function ConfigPage() {
   const activeFromParams = tabs.some(tab => tab.id === requestedTab) ? requestedTab : null;
   const initialOrderId = searchParams.get('order') || '';
   const initialMachineId = searchParams.get('machine') || '';
+  const requestedRuleSection = searchParams.get('section') || '';
+  const initialRuleSection = ruleSectionIds.includes(requestedRuleSection) ? requestedRuleSection : 'material';
   const [activeFallback, setActiveFallback] = useState('orders');
   const active = activeFromParams || activeFallback;
   const [orders, setOrders] = useState([]);
@@ -825,7 +986,7 @@ export default function ConfigPage() {
   const [rules, setRules] = useState(null);
   const [status, setStatus] = useState({ message: '', tone: 'ok' });
 
-  const showSaved = message => setStatus({ message, tone: 'ok' });
+  const showSaved = (message, tone = 'ok') => setStatus({ message, tone });
 
   const loadAll = useCallback(async (options = {}) => {
     const [ordersRes, machinesRes, rulesRes] = await Promise.all([
@@ -837,7 +998,7 @@ export default function ConfigPage() {
     setOrders(ordersRes);
     setMachines(machinesRes.data);
     setRules(rulesRes.data);
-  }, []);
+  }, [setMachines, setOrders, setRules]);
 
   useEffect(() => {
     let cancelled = false;
@@ -868,7 +1029,7 @@ export default function ConfigPage() {
             className={active === tab.id ? 'active' : ''}
             onClick={() => {
               setActiveFallback(tab.id);
-              setSearchParams({ tab: tab.id });
+              setSearchParams(tab.id === 'rules' ? { tab: tab.id, section: initialRuleSection } : { tab: tab.id });
             }}
           >
             {tab.label}
@@ -878,7 +1039,16 @@ export default function ConfigPage() {
       <StatusLine message={status.message} tone={status.tone} />
       {active === 'orders' && <OrdersConfig orders={orders} setOrders={setOrders} onSaved={showSaved} initialOrderId={initialOrderId} />}
       {active === 'machines' && <MachinesConfig machines={machines} setMachines={setMachines} onSaved={showSaved} initialMachineId={initialMachineId} />}
-      {active === 'rules' && <RulesConfig rules={rules} machines={machines} reload={loadAll} onSaved={showSaved} />}
+      {active === 'rules' && (
+        <RulesConfig
+          rules={rules}
+          machines={machines}
+          reload={loadAll}
+          onSaved={showSaved}
+          initialSection={initialRuleSection}
+          onSectionChange={section => setSearchParams({ tab: 'rules', section })}
+        />
+      )}
     </div>
   );
 }

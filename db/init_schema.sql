@@ -205,6 +205,13 @@ CREATE TABLE IF NOT EXISTS schedule_runs (
     vip_late_orders         INTEGER,
     solver_time_seconds     NUMERIC(8,2),
     solver_params           JSONB,
+    mode                    VARCHAR(20)  DEFAULT 'AUTO' CHECK (mode IN ('AUTO', 'MANUAL', 'HYBRID')),
+    lifecycle_status        VARCHAR(30)  DEFAULT 'CONFIRMED' CHECK (lifecycle_status IN ('DRAFT', 'VALIDATED', 'CONFIRMED', 'CANCELLED', 'SUPERSEDED')),
+    confirmed_by            VARCHAR(50),
+    confirmed_at            TIMESTAMPTZ,
+    cancelled_by            VARCHAR(50),
+    cancelled_at            TIMESTAMPTZ,
+    cancel_reason           TEXT,
     is_active               BOOLEAN      DEFAULT TRUE
 );
 COMMENT ON TABLE schedule_runs IS '排程运行批次记录';
@@ -228,9 +235,57 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
     is_late                     BOOLEAN       DEFAULT FALSE,
     tardiness_mins              INTEGER       DEFAULT 0,
     prev_order_id               VARCHAR(20),
-    setup_detail                JSONB
+    setup_detail                JSONB,
+    task_source                 VARCHAR(20)   DEFAULT 'AUTO' CHECK (task_source IN ('AUTO', 'ADJUSTED', 'MANUAL')),
+    manual_lock_machine         BOOLEAN       DEFAULT FALSE,
+    manual_lock_time            BOOLEAN       DEFAULT FALSE
 );
 COMMENT ON TABLE scheduled_tasks IS '排程任务明细';
+
+CREATE TABLE IF NOT EXISTS schedule_settings (
+    id                                  BOOLEAN PRIMARY KEY DEFAULT TRUE,
+    review_required                     BOOLEAN NOT NULL DEFAULT TRUE,
+    manual_adjust_enabled               BOOLEAN NOT NULL DEFAULT TRUE,
+    manual_adjust_reason_required       BOOLEAN NOT NULL DEFAULT TRUE,
+    publish_with_warnings_allowed       BOOLEAN NOT NULL DEFAULT TRUE,
+    auto_release_enabled                BOOLEAN NOT NULL DEFAULT FALSE,
+    updated_at                          TIMESTAMPTZ DEFAULT NOW()
+);
+COMMENT ON TABLE schedule_settings IS '排程发布与人工复核开关';
+
+CREATE TABLE IF NOT EXISTS schedule_adjustment_audit (
+    id                  SERIAL       PRIMARY KEY,
+    run_id              INTEGER      NOT NULL REFERENCES schedule_runs(run_id),
+    order_id            VARCHAR(20)  REFERENCES production_orders(order_id),
+    action_type         VARCHAR(30)  NOT NULL,
+    before_state        JSONB,
+    after_state         JSONB,
+    reason_code         VARCHAR(50),
+    reason_text         TEXT,
+    changed_by          VARCHAR(50),
+    changed_at          TIMESTAMPTZ  DEFAULT NOW(),
+    validation_status   VARCHAR(20)  DEFAULT 'PENDING',
+    validation_messages JSONB
+);
+COMMENT ON TABLE schedule_adjustment_audit IS '人工复核与人工改动审计记录';
+
+CREATE TABLE IF NOT EXISTS manufacturing_queue (
+    id                  SERIAL       PRIMARY KEY,
+    run_id              INTEGER      NOT NULL REFERENCES schedule_runs(run_id),
+    scheduled_task_id   INTEGER      REFERENCES scheduled_tasks(id),
+    order_id            VARCHAR(20)  NOT NULL REFERENCES production_orders(order_id),
+    machine_id          VARCHAR(20)  NOT NULL REFERENCES machines(machine_id),
+    sequence_index      INTEGER      NOT NULL,
+    planned_start_time  TIMESTAMPTZ  NOT NULL,
+    planned_end_time    TIMESTAMPTZ  NOT NULL,
+    queue_status        VARCHAR(30)  NOT NULL DEFAULT 'QUEUED' CHECK (queue_status IN ('QUEUED', 'READY', 'IN_PRODUCTION', 'ON_HOLD', 'COMPLETED', 'CANCELLED')),
+    released_by         VARCHAR(50),
+    released_at         TIMESTAMPTZ  DEFAULT NOW(),
+    started_at          TIMESTAMPTZ,
+    completed_at        TIMESTAMPTZ,
+    UNIQUE(run_id, order_id)
+);
+COMMENT ON TABLE manufacturing_queue IS '确认发布后的制造队列';
 
 CREATE TABLE IF NOT EXISTS production_actuals (
     id                  SERIAL        PRIMARY KEY,
@@ -258,8 +313,14 @@ CREATE INDEX IF NOT EXISTS idx_orders_customer ON production_orders(customer_id)
 CREATE INDEX IF NOT EXISTS idx_tasks_run_id ON scheduled_tasks(run_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_machine_time ON scheduled_tasks(machine_id, start_time);
 CREATE INDEX IF NOT EXISTS idx_tasks_order ON scheduled_tasks(order_id);
+CREATE INDEX IF NOT EXISTS idx_schedule_runs_lifecycle ON schedule_runs(lifecycle_status, run_id DESC);
 CREATE INDEX IF NOT EXISTS idx_maint_machine_time ON machine_maintenance_calendar(machine_id, start_time, end_time);
 CREATE INDEX IF NOT EXISTS idx_downtime_machine ON machine_downtime_events(machine_id, start_time);
 CREATE INDEX IF NOT EXISTS idx_recipes_product ON recipes(product_type);
 CREATE INDEX IF NOT EXISTS idx_inventory_material ON material_inventory(material_grade, status);
 CREATE INDEX IF NOT EXISTS idx_actuals_task ON production_actuals(scheduled_task_id);
+CREATE INDEX IF NOT EXISTS idx_queue_status ON manufacturing_queue(queue_status, planned_start_time);
+
+INSERT INTO schedule_settings (id)
+VALUES (TRUE)
+ON CONFLICT (id) DO NOTHING;

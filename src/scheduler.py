@@ -98,8 +98,8 @@ class SetupCalculator:
             m_from = list(machine.initial_material_lanes)
             w_from = machine.initial_width
             t_from = machine.initial_thickness
-            c_from = True  # 假设初始电晕开启
-            r_from = 3     # 假设初始管径 3 英寸
+            c_from = machine.initial_corona
+            r_from = machine.initial_core_size
             class_from = "INIT"
         else:
             m_from = list(prev_order.recipe_materials)
@@ -175,18 +175,31 @@ class SetupCalculator:
         # 1. 材质切换废料（逐层 Sum，非 Max）
         num_layers = min(len(m_from), len(m_to))
         for l in range(num_layers):
-            if m_from[l] != m_to[l]:
+            configured_scrap = self.mgr.get_material_switch_scrap(m_from[l], m_to[l])
+            if configured_scrap is not None:
+                scrap += configured_scrap
+            elif m_from[l] != m_to[l]:
                 scrap += SCRAP_PER_LAYER_MATERIAL_CHANGE_KG
             else:
                 scrap += SCRAP_PER_LAYER_SAME_MATERIAL_KG
 
         # 2. 幅宽调机废料
         if w_from != w_to:
-            scrap += SCRAP_WIDTH_CHANGE_KG
+            configured_scrap = self.mgr.get_width_change_scrap(w_to - w_from)
+            scrap += (
+                configured_scrap
+                if configured_scrap is not None
+                else SCRAP_WIDTH_CHANGE_KG
+            )
 
         # 3. 厚度调机废料
         if t_from != t_to:
-            scrap += SCRAP_THICKNESS_CHANGE_KG
+            configured_scrap = self.mgr.get_thickness_change_scrap(t_to - t_from)
+            scrap += (
+                configured_scrap
+                if configured_scrap is not None
+                else SCRAP_THICKNESS_CHANGE_KG
+            )
 
         return scrap
 
@@ -198,6 +211,12 @@ class AdvancedMedicalAPS:
     def __init__(self, setup_mgr: SetupMatricesManager):
         self.setup_calc = SetupCalculator(setup_mgr)
         self.setup_mgr = setup_mgr
+
+    @staticmethod
+    def _tardiness_weight(order: ProductionOrderModel) -> int:
+        if order.priority_override is not None:
+            return max(0, int(order.priority_override))
+        return get_tardiness_weight(order.customer_class, order.order_class)
 
     def _precompute_setup_times(
         self,
@@ -416,6 +435,7 @@ class AdvancedMedicalAPS:
             self._append_material_matrix_diagnostic(result)
         else:
             result.diagnostics.extend(build_result_diagnostics(result, orders, machines))
+            self._append_continuous_run_diagnostics(result)
             self._append_material_matrix_diagnostic(result)
             if result.blocked_order_count:
                 result.status = "PARTIAL"
@@ -455,6 +475,72 @@ class AdvancedMedicalAPS:
             ],
             display_title="二阶段换产优化已回退",
         ))
+
+    def _append_continuous_run_diagnostics(self, result: ScheduleResult) -> None:
+        """Post-solve visibility for the 72h cleaning rule."""
+        for machine_id, tasks in result.machine_sequences.items():
+            ordered = sorted(tasks, key=lambda item: (item.start_mins, item.end_mins))
+            if not ordered:
+                continue
+
+            machine = ordered[0].machine
+            initial_mins = max(0, int(machine.initial_continuous_run_mins or 0))
+            segment_anchor: Optional[int] = None
+            segment_initial = initial_mins
+            segment_first_order: Optional[str] = None
+            last_end: Optional[int] = None
+            reported = False
+
+            for task in ordered:
+                setup_start = max(0, task.start_mins - task.setup_time)
+                if segment_anchor is None:
+                    segment_anchor = setup_start
+                    segment_first_order = task.order.order_id
+                elif last_end is not None:
+                    gap = setup_start - last_end
+                    if gap >= MANDATORY_CLEANING_DURATION_MINUTES:
+                        segment_anchor = setup_start
+                        segment_initial = 0
+                        segment_first_order = task.order.order_id
+
+                elapsed = segment_initial + task.end_mins - (segment_anchor or 0)
+                if elapsed > CONTINUOUS_RUN_LIMIT_MINUTES and not reported:
+                    result.diagnostics.append(Diagnostic(
+                        entity_type="machine",
+                        entity_id=machine_id,
+                        severity="warning",
+                        category="maintenance",
+                        code="maintenance.continuous_run_cleaning_required",
+                        confidence="inferred",
+                        root_cause=(
+                            f"{machine_id} 当前计划段连续运行约 {elapsed} 分钟，"
+                            f"超过 {CONTINUOUS_RUN_LIMIT_MINUTES} 分钟上限；需要在该段前后插入"
+                            f"不少于 {MANDATORY_CLEANING_DURATION_MINUTES} 分钟的清场/维护窗口后重新排程。"
+                        ),
+                        evidence=[
+                            DiagnosticEvidence("continuous_run_mins", elapsed, "min"),
+                            DiagnosticEvidence("limit_mins", CONTINUOUS_RUN_LIMIT_MINUTES, "min"),
+                            DiagnosticEvidence("required_cleaning_mins", MANDATORY_CLEANING_DURATION_MINUTES, "min"),
+                            DiagnosticEvidence("first_order_id", segment_first_order),
+                            DiagnosticEvidence("last_order_id", task.order.order_id),
+                        ],
+                        recommendations=[
+                            DiagnosticRecommendation(
+                                "add_maintenance_window",
+                                "新增清场维护窗口",
+                                f"/config?tab=rules&section=maintenance&machine={machine_id}",
+                            ),
+                            DiagnosticRecommendation(
+                                "rerun_schedule",
+                                "维护窗口保存后重新运行排程",
+                                "/dashboard",
+                            ),
+                        ],
+                        display_title=f"{machine_id} 连续运行超过 72h",
+                    ))
+                    reported = True
+
+                last_end = task.end_mins
 
     def _append_material_matrix_diagnostic(self, result: ScheduleResult) -> None:
         missing_pairs = (
@@ -668,7 +754,7 @@ class AdvancedMedicalAPS:
         tardiness_terms = []
         for idx in range(n):
             o = orders[idx]
-            w_i = get_tardiness_weight(o.customer_class, o.order_class)
+            w_i = self._tardiness_weight(o)
             # 每个订单只会激活一个 presence，其余为 0
             for m_idx in eligible[idx]:
                 t_var = model.new_int_var(0, H, f'tard_{idx}_{m_idx}')

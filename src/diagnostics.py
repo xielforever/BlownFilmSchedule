@@ -202,7 +202,7 @@ def build_infeasible_order_diagnostic(
         for issue in result.issues:
             issue_counts[issue.code] = issue_counts.get(issue.code, 0) + 1
 
-    primary_code = _pick_primary_eligibility_code(issue_counts, bool(machine_list))
+    primary_code = _pick_primary_eligibility_code(order, machine_list, issue_counts)
     evidence = [
         DiagnosticEvidence("candidate_machine_count", len(machine_list)),
         DiagnosticEvidence("eligible_machine_count", 0),
@@ -249,7 +249,13 @@ def build_infeasible_order_diagnostic(
         category="eligibility",
         code=primary_code,
         confidence="proven",
-        root_cause=_eligibility_root_cause(order, machine_list, primary_code),
+        root_cause=_eligibility_root_cause(
+            order,
+            machine_list,
+            primary_code,
+            issue_counts,
+            results,
+        ),
         evidence=evidence,
         recommendations=_eligibility_recommendations(order.order_id, primary_code),
         display_title=f"{order.order_id} 无可用机台",
@@ -553,18 +559,49 @@ def diagnostics_to_dicts(
     return [item.to_dict(run_id=run_id) for item in diagnostics]
 
 
-def _pick_primary_eligibility_code(issue_counts: Dict[str, int], has_machines: bool) -> str:
-    if not has_machines:
+def _pick_primary_eligibility_code(
+    order: ProductionOrderModel,
+    machines: List[BlownFilmMachineModel],
+    issue_counts: Dict[str, int],
+) -> str:
+    if not machines:
         return "eligibility.machine_unavailable"
-    priority = [
-        "eligibility.width_out_of_range",
-        "eligibility.thickness_out_of_range",
-        "eligibility.cleanroom_mismatch",
-        "eligibility.layer_mismatch",
-    ]
-    for code in priority:
-        if issue_counts.get(code):
-            return code
+
+    width_min = min(m.min_width for m in machines)
+    width_max = max(m.max_width for m in machines)
+    if (
+        issue_counts.get("eligibility.width_out_of_range")
+        and (order.target_width < width_min or order.target_width > width_max)
+    ):
+        return "eligibility.width_out_of_range"
+
+    thick_min = min(m.min_thickness for m in machines)
+    thick_max = max(m.max_thickness for m in machines)
+    if (
+        issue_counts.get("eligibility.thickness_out_of_range")
+        and (
+            order.target_thickness < thick_min
+            or order.target_thickness > thick_max
+        )
+    ):
+        return "eligibility.thickness_out_of_range"
+
+    if (
+        issue_counts.get("eligibility.cleanroom_mismatch")
+        and order.cleanroom_req == "Class_10K"
+        and not any(_machine_matches_cleanroom(order, machine) for machine in machines)
+    ):
+        return "eligibility.cleanroom_mismatch"
+
+    recipe_layers = len(order.recipe_materials)
+    if (
+        issue_counts.get("eligibility.layer_mismatch")
+        and recipe_layers > max(m.layer_structure for m in machines)
+    ):
+        return "eligibility.layer_mismatch"
+
+    if issue_counts:
+        return "eligibility.combined_constraint_mismatch"
     return "eligibility.no_eligible_machine"
 
 
@@ -572,6 +609,8 @@ def _eligibility_root_cause(
     order: ProductionOrderModel,
     machines: List[BlownFilmMachineModel],
     code: str,
+    issue_counts: Optional[Dict[str, int]] = None,
+    fit_results: Optional[List[MachineFitResult]] = None,
 ) -> str:
     if not machines:
         return "当前没有 ACTIVE 机台可参与排程。"
@@ -594,6 +633,13 @@ def _eligibility_root_cause(
         return f"订单 {order.order_id} 洁净度要求 {order.cleanroom_req}，当前候选机台洁净能力不足。"
     if code == "eligibility.layer_mismatch":
         return f"订单 {order.order_id} 配方层数 {len(order.recipe_materials)} 超过可用机台层数能力。"
+    if code == "eligibility.combined_constraint_mismatch":
+        return _combined_constraint_root_cause(
+            order,
+            machines,
+            issue_counts or {},
+            fit_results or [],
+        )
     return f"订单 {order.order_id} 没有任何可用机台，需要联合检查订单规格和机台能力。"
 
 
@@ -610,6 +656,7 @@ def _eligibility_recommendations(order_id: str, code: str) -> List[DiagnosticRec
         "eligibility.thickness_out_of_range",
         "eligibility.cleanroom_mismatch",
         "eligibility.layer_mismatch",
+        "eligibility.combined_constraint_mismatch",
         "eligibility.machine_unavailable",
         "eligibility.no_eligible_machine",
     }:
@@ -619,6 +666,94 @@ def _eligibility_recommendations(order_id: str, code: str) -> List[DiagnosticRec
             "/config?tab=machines",
         ))
     return recs
+
+
+def _machine_matches_cleanroom(
+    order: ProductionOrderModel,
+    machine: BlownFilmMachineModel,
+) -> bool:
+    return not (
+        order.cleanroom_req == "Class_10K"
+        and machine.cleanroom_level == "Class_100K"
+    )
+
+
+def _format_machine_list(machines: List[BlownFilmMachineModel], limit: int = 3) -> str:
+    ids = [machine.machine_id for machine in machines[:limit]]
+    text = "/".join(ids)
+    if len(machines) > limit:
+        text += f" 等 {len(machines)} 台"
+    return text
+
+
+def _format_issue_name(code: str) -> str:
+    return {
+        "eligibility.width_out_of_range": "宽幅不覆盖",
+        "eligibility.thickness_out_of_range": "厚度不覆盖",
+        "eligibility.cleanroom_mismatch": "洁净度不匹配",
+        "eligibility.layer_mismatch": "层数不匹配",
+    }.get(code, code)
+
+
+def _format_issue_counts(issue_counts: Dict[str, int]) -> str:
+    parts = []
+    for code, count in sorted(issue_counts.items(), key=lambda item: (-item[1], item[0])):
+        parts.append(f"{_format_issue_name(code)} {count} 台")
+    return "、".join(parts)
+
+
+def _combined_constraint_root_cause(
+    order: ProductionOrderModel,
+    machines: List[BlownFilmMachineModel],
+    issue_counts: Dict[str, int],
+    fit_results: List[MachineFitResult],
+) -> str:
+    recipe_layers = len(order.recipe_materials)
+    requirement = (
+        f"{recipe_layers}层、{order.cleanroom_req}、"
+        f"{order.target_width}mm 幅宽和 {order.target_thickness}um 厚度"
+    )
+    parts = [f"订单 {order.order_id} 没有单台机同时满足 {requirement}。"]
+
+    clean_layer_machines = [
+        machine for machine in machines
+        if _machine_matches_cleanroom(order, machine)
+        and recipe_layers <= machine.layer_structure
+    ]
+    if clean_layer_machines:
+        width_min = min(machine.min_width for machine in clean_layer_machines)
+        width_max = max(machine.max_width for machine in clean_layer_machines)
+        thick_min = min(machine.min_thickness for machine in clean_layer_machines)
+        thick_max = max(machine.max_thickness for machine in clean_layer_machines)
+        parts.append(
+            f"满足洁净度和层数的 {_format_machine_list(clean_layer_machines)} 机台，"
+            f"能力范围为宽幅 {width_min}-{width_max}mm、厚度 {thick_min}-{thick_max}um。"
+        )
+
+    result_by_machine = {fit.machine_id: fit for fit in fit_results}
+    width_capable_machines = [
+        machine for machine in machines
+        if machine.min_width <= order.target_width <= machine.max_width
+    ]
+    width_capable_blockers: Dict[str, int] = {}
+    for machine in width_capable_machines:
+        fit = result_by_machine.get(machine.machine_id)
+        if not fit:
+            continue
+        for issue in fit.issues:
+            if issue.code == "eligibility.width_out_of_range":
+                continue
+            width_capable_blockers[issue.code] = width_capable_blockers.get(issue.code, 0) + 1
+    if width_capable_machines and width_capable_blockers:
+        parts.append(
+            f"宽幅可覆盖的 {_format_machine_list(width_capable_machines)} 机台，"
+            f"仍受{_format_issue_counts(width_capable_blockers)}限制。"
+        )
+
+    if issue_counts:
+        parts.append(f"全体候选机台阻断分布：{_format_issue_counts(issue_counts)}。")
+
+    return "".join(parts)
 
 
 def _unused_machine_diagnostic(

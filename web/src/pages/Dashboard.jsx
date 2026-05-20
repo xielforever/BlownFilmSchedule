@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import * as echarts from 'echarts';
-import { getDashboard, getGantt, getScheduleDiagnostics, getScheduleStatus, triggerSchedule } from '../api/client';
+import { getDashboard, getGantt, getScheduleDiagnostics, getScheduleStatus } from '../api/client';
 
 const ORDER_CLASS_COLORS = {
   URGENT: '#ef4444',
@@ -10,7 +10,7 @@ const ORDER_CLASS_COLORS = {
 };
 
 const ORDER_CLASS_LABELS = {
-  URGENT: 'URGENT',
+  URGENT: '加急',
   NORMAL: '普通',
   SAMPLE: '样品',
 };
@@ -681,10 +681,8 @@ export default function Dashboard() {
   const [ganttData, setGanttData] = useState(null);
   const [tasks, setTasks] = useState(null);
   const [diagnostics, setDiagnostics] = useState([]);
-  const [scheduling, setScheduling] = useState(false);
   const [scheduleStatus, setScheduleStatus] = useState(null);
   const [scheduleError, setScheduleError] = useState('');
-  const scheduleBusy = scheduling || scheduleStatus?.state === 'running';
 
   const refreshDashboardData = useCallback(async () => {
     const { summary: nextSummary, gantt: nextGantt, tasks: nextTasks, diagnostics: nextDiagnostics } = await fetchDashboardData();
@@ -733,7 +731,6 @@ export default function Dashboard() {
           }
         }
       } catch (err) {
-        setScheduling(false);
         setScheduleError(err.response?.data?.detail || err.message || '无法读取排程状态。');
         window.clearInterval(timer);
       }
@@ -741,28 +738,6 @@ export default function Dashboard() {
 
     return () => window.clearInterval(timer);
   }, [scheduleStatus?.state, refreshDashboardData]);
-
-  const handleTriggerSchedule = async () => {
-    setScheduling(true);
-    setScheduleError('');
-    try {
-      const res = await triggerSchedule();
-      setScheduleStatus(res.data);
-      setScheduling(false);
-    } catch (err) {
-      setScheduling(false);
-      if (err.response?.status === 409) {
-        try {
-          const res = await getScheduleStatus();
-          setScheduleStatus(res.data);
-        } catch {
-          setScheduleError('已有排程任务正在运行。');
-        }
-      } else {
-        setScheduleError(err.response?.data?.detail || err.message || '触发排程失败。');
-      }
-    }
-  };
 
   if (!summary || !tasks || !ganttData) return <div className="loading">仪表盘加载中...</div>;
   const visibleDiagnostics = scheduleStatus?.state === 'failed' && scheduleStatus?.diagnostics?.length
@@ -779,9 +754,7 @@ export default function Dashboard() {
     <div>
       <div className="page-header">
         <h2 style={{ fontSize: '24px', fontWeight: 500 }}>仪表盘 (APS)</h2>
-        <button className="btn btn-primary" onClick={handleTriggerSchedule} disabled={scheduleBusy}>
-          {scheduleBusy ? '排程中...' : '运行排程'}
-        </button>
+        <Link className="btn btn-primary" to="/workbench">进入排程工作台</Link>
       </div>
 
       <ScheduleJobPanel job={scheduleStatus} error={scheduleError} activeRun={summary} />

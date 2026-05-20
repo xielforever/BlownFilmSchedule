@@ -21,19 +21,29 @@ class SetupMatricesManager:
     def __init__(self):
         # 原料切换矩阵: (from_material, to_material) -> mins
         self.material_switch_matrix: Dict[Tuple[str, str], int] = {}
+        self.material_switch_scrap_matrix: Dict[Tuple[str, str], float] = {}
         # 同料换批次耗时
         self.same_material_time: int = 30
+        self.same_material_scrap_kg: Optional[float] = None
         # 涉及 Special_Co-PE 的特殊换产
         self.special_to_any_time: int = 150
         self.any_to_special_time: int = 120
+        self.special_to_any_scrap_kg: Optional[float] = None
+        self.any_to_special_scrap_kg: Optional[float] = None
 
         # 规格调机矩阵: list of rules
         self.width_up_rules: List[Tuple[int, int]] = []    # (threshold, mins)
         self.width_down_rules: List[Tuple[int, int]] = []   # (threshold, mins)
+        self.width_up_scrap_rules: List[Tuple[int, Optional[float]]] = []
+        self.width_down_scrap_rules: List[Tuple[int, Optional[float]]] = []
         self.die_change_time: int = 360
+        self.die_change_scrap_kg: Optional[float] = None
         self.thickness_rules: List[Tuple[int, int]] = []    # (threshold, mins)
+        self.thickness_scrap_rules: List[Tuple[int, Optional[float]]] = []
         self.corona_switch_time: int = 20
+        self.corona_switch_scrap_kg: Optional[float] = None
         self.core_size_switch_time: int = 30
+        self.core_size_switch_scrap_kg: Optional[float] = None
 
         # GMP 合规清场矩阵: (from_class, to_class) -> mins
         self.gmp_clearance_matrix: Dict[Tuple[str, str], int] = {}
@@ -101,14 +111,17 @@ class SetupMatricesManager:
             if "Width_Up" in attr:
                 threshold = self._parse_threshold(condition)
                 self.width_up_rules.append((threshold, mins))
+                self.width_up_scrap_rules.append((threshold, None))
             elif "Width_Down" in attr:
                 threshold = self._parse_threshold(condition)
                 self.width_down_rules.append((threshold, mins))
+                self.width_down_scrap_rules.append((threshold, None))
             elif "Die_Change" in attr:
                 self.die_change_time = mins
             elif "Thickness" in attr:
                 threshold = self._parse_threshold(condition)
                 self.thickness_rules.append((threshold, mins))
+                self.thickness_scrap_rules.append((threshold, None))
             elif "Corona" in attr:
                 self.corona_switch_time = mins
             elif "Core_Size" in attr:
@@ -118,6 +131,9 @@ class SetupMatricesManager:
         self.width_up_rules.sort(key=lambda x: x[0])
         self.width_down_rules.sort(key=lambda x: x[0])
         self.thickness_rules.sort(key=lambda x: x[0])
+        self.width_up_scrap_rules.sort(key=lambda x: x[0])
+        self.width_down_scrap_rules.sort(key=lambda x: x[0])
+        self.thickness_scrap_rules.sort(key=lambda x: x[0])
 
     def _load_medical_matrix(self, df: Any) -> None:
         """解析医疗级清场验证矩阵 Sheet"""
@@ -167,6 +183,86 @@ class SetupMatricesManager:
             return "ANY"
         return raw
 
+    @staticmethod
+    def _match_threshold_rule(
+        rules: List[Tuple[int, Optional[float]]],
+        delta: int,
+    ) -> Optional[float]:
+        if delta == 0:
+            return 0.0
+        if not rules:
+            return None
+        abs_delta = abs(delta)
+        for threshold, value in rules:
+            if abs_delta <= threshold:
+                return value
+        return rules[-1][1]
+
+    def iter_spec_rules(self) -> List[Dict[str, Any]]:
+        """按数据库/API字段导出当前规格换产规则。"""
+        rows: List[Dict[str, Any]] = []
+
+        def append_threshold_rules(attribute: str, rules, scrap_rules, unit: str) -> None:
+            for idx, (threshold, mins) in enumerate(rules):
+                prev_threshold = rules[idx - 1][0] if idx else None
+                is_last = idx == len(rules) - 1
+                if idx == 0:
+                    condition_desc = f"<= {threshold}{unit}"
+                    lower = 0
+                    upper = threshold
+                elif is_last:
+                    condition_desc = f"> {prev_threshold}{unit}"
+                    lower = prev_threshold + 1 if prev_threshold is not None else threshold
+                    upper = None
+                else:
+                    condition_desc = f"{prev_threshold + 1}{unit} - {threshold}{unit}"
+                    lower = prev_threshold + 1
+                    upper = threshold
+                scrap = scrap_rules[idx][1] if idx < len(scrap_rules) else None
+                rows.append({
+                    "attribute": attribute,
+                    "condition_desc": condition_desc,
+                    "threshold_lower": lower,
+                    "threshold_upper": upper,
+                    "change_time_mins": mins,
+                    "scrap_weight_kg": scrap,
+                    "description": None,
+                })
+
+        append_threshold_rules("Width_Up", self.width_up_rules, self.width_up_scrap_rules, "mm")
+        append_threshold_rules("Width_Down", self.width_down_rules, self.width_down_scrap_rules, "mm")
+        append_threshold_rules("Thickness", self.thickness_rules, self.thickness_scrap_rules, "um")
+        rows.extend([
+            {
+                "attribute": "Die_Change",
+                "condition_desc": "target width exceeds current die range",
+                "threshold_lower": None,
+                "threshold_upper": None,
+                "change_time_mins": self.die_change_time,
+                "scrap_weight_kg": self.die_change_scrap_kg,
+                "description": None,
+            },
+            {
+                "attribute": "Corona",
+                "condition_desc": "corona requirement changes",
+                "threshold_lower": None,
+                "threshold_upper": None,
+                "change_time_mins": self.corona_switch_time,
+                "scrap_weight_kg": self.corona_switch_scrap_kg,
+                "description": None,
+            },
+            {
+                "attribute": "Core_Size",
+                "condition_desc": "core size changes",
+                "threshold_lower": None,
+                "threshold_upper": None,
+                "change_time_mins": self.core_size_switch_time,
+                "scrap_weight_kg": self.core_size_switch_scrap_kg,
+                "description": None,
+            },
+        ])
+        return rows
+
     # ─── 公开查表接口 ────────────────────────────────────
 
     def get_material_switch_time(self, from_grade: str, to_grade: str) -> int:
@@ -194,6 +290,21 @@ class SetupMatricesManager:
             logger.warning("原料切换矩阵未命中: %s → %s，降级使用默认值 %d min",
                             from_grade, to_grade, DEFAULT_MATERIAL_SWITCH_TIME_MINS)
         return DEFAULT_MATERIAL_SWITCH_TIME_MINS
+
+    def get_material_switch_scrap(self, from_grade: str, to_grade: str) -> Optional[float]:
+        """查询原料切换废料；未配置时返回 None 让算法使用旧默认值。"""
+        if from_grade == to_grade:
+            return self.same_material_scrap_kg
+
+        key = (from_grade, to_grade)
+        if key in self.material_switch_scrap_matrix:
+            return self.material_switch_scrap_matrix[key]
+
+        if from_grade == "Special_Co-PE":
+            return self.special_to_any_scrap_kg
+        if to_grade == "Special_Co-PE":
+            return self.any_to_special_scrap_kg
+        return None
 
     def get_missing_material_switches(self) -> List[Dict[str, Any]]:
         """返回本轮求解中触发默认降级的材料切换组合。"""
@@ -231,6 +342,11 @@ class SetupMatricesManager:
             return rules[-1][1]
         return 0
 
+    def get_width_change_scrap(self, delta_width: int) -> Optional[float]:
+        """查询幅宽变动废料；未配置时返回 None 让算法使用旧默认值。"""
+        rules = self.width_up_scrap_rules if delta_width > 0 else self.width_down_scrap_rules
+        return self._match_threshold_rule(rules, delta_width)
+
     def get_thickness_change_time(self, delta_thickness: int) -> int:
         """查询厚度变动耗时"""
         if delta_thickness == 0:
@@ -244,6 +360,10 @@ class SetupMatricesManager:
         if self.thickness_rules:
             return self.thickness_rules[-1][1]
         return 0
+
+    def get_thickness_change_scrap(self, delta_thickness: int) -> Optional[float]:
+        """查询厚度变动废料；未配置时返回 None 让算法使用旧默认值。"""
+        return self._match_threshold_rule(self.thickness_scrap_rules, delta_thickness)
 
     def get_corona_change_time(self, from_corona: bool, to_corona: bool) -> int:
         """查询电晕切换耗时"""

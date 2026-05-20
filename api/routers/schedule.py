@@ -1,5 +1,5 @@
 """Schedule, run history, and Gantt API."""
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import locale
 from math import ceil
@@ -8,18 +8,24 @@ from pathlib import Path
 import subprocess
 import sys
 import threading
+from typing import Optional
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+from psycopg2.extras import Json
 
 from api.auth import get_current_user, require_role
 from api.deps import get_db
+from src.config import BASELINE_TIME, INPUT_EXCEL_PATH
+from src.data_ingestion import BlownFilmDataIngestionPipeline
 from src.diagnostics import (
     Diagnostic,
     DiagnosticEvidence,
     DiagnosticRecommendation,
     parse_infeasible_log_diagnostics,
 )
+from src.scheduler import AdvancedMedicalAPS, SetupCalculator
 
 router = APIRouter(prefix="/api/schedule", tags=["Schedule"])
 
@@ -107,6 +113,455 @@ def _snapshot_job():
 
 def _iso(value):
     return value.isoformat() if value else None
+
+
+def _as_naive(value):
+    return value.replace(tzinfo=None) if value and value.tzinfo is not None else value
+
+
+class ScheduleSettingsPayload(BaseModel):
+    review_required: Optional[bool] = None
+    manual_adjust_enabled: Optional[bool] = None
+    manual_adjust_reason_required: Optional[bool] = None
+    publish_with_warnings_allowed: Optional[bool] = None
+    auto_release_enabled: Optional[bool] = None
+
+
+class PreplanCreatePayload(BaseModel):
+    order_ids: list[str] = Field(default_factory=list)
+    mode: str = Field(default="AUTO")
+
+
+class ManualAdjustmentPayload(BaseModel):
+    order_id: str
+    machine_id: str
+    start_time: datetime
+    end_time: datetime
+    sequence_index: Optional[int] = None
+    reason_code: str = Field(default="OTHER")
+    reason_text: str = ""
+    lock_machine: bool = True
+    lock_time: bool = True
+
+
+class CancelPreplanPayload(BaseModel):
+    reason: str = ""
+
+
+def _ensure_planning_schema(db):
+    cur = db.cursor()
+    cur.execute("""
+        ALTER TABLE schedule_runs
+            ADD COLUMN IF NOT EXISTS mode VARCHAR(20) DEFAULT 'AUTO',
+            ADD COLUMN IF NOT EXISTS lifecycle_status VARCHAR(30) DEFAULT 'CONFIRMED',
+            ADD COLUMN IF NOT EXISTS confirmed_by VARCHAR(50),
+            ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ,
+            ADD COLUMN IF NOT EXISTS cancelled_by VARCHAR(50),
+            ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ,
+            ADD COLUMN IF NOT EXISTS cancel_reason TEXT
+    """)
+    cur.execute("""
+        ALTER TABLE scheduled_tasks
+            ADD COLUMN IF NOT EXISTS task_source VARCHAR(20) DEFAULT 'AUTO',
+            ADD COLUMN IF NOT EXISTS manual_lock_machine BOOLEAN DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS manual_lock_time BOOLEAN DEFAULT FALSE
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS schedule_settings (
+            id                                  BOOLEAN PRIMARY KEY DEFAULT TRUE,
+            review_required                     BOOLEAN NOT NULL DEFAULT TRUE,
+            manual_adjust_enabled               BOOLEAN NOT NULL DEFAULT TRUE,
+            manual_adjust_reason_required       BOOLEAN NOT NULL DEFAULT TRUE,
+            publish_with_warnings_allowed       BOOLEAN NOT NULL DEFAULT TRUE,
+            auto_release_enabled                BOOLEAN NOT NULL DEFAULT FALSE,
+            updated_at                          TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+    cur.execute("""
+        INSERT INTO schedule_settings (id)
+        VALUES (TRUE)
+        ON CONFLICT (id) DO NOTHING
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS schedule_adjustment_audit (
+            id                  SERIAL       PRIMARY KEY,
+            run_id              INTEGER      NOT NULL REFERENCES schedule_runs(run_id),
+            order_id            VARCHAR(20)  REFERENCES production_orders(order_id),
+            action_type         VARCHAR(30)  NOT NULL,
+            before_state        JSONB,
+            after_state         JSONB,
+            reason_code         VARCHAR(50),
+            reason_text         TEXT,
+            changed_by          VARCHAR(50),
+            changed_at          TIMESTAMPTZ  DEFAULT NOW(),
+            validation_status   VARCHAR(20)  DEFAULT 'PENDING',
+            validation_messages JSONB
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS manufacturing_queue (
+            id                  SERIAL       PRIMARY KEY,
+            run_id              INTEGER      NOT NULL REFERENCES schedule_runs(run_id),
+            scheduled_task_id   INTEGER      REFERENCES scheduled_tasks(id),
+            order_id            VARCHAR(20)  NOT NULL REFERENCES production_orders(order_id),
+            machine_id          VARCHAR(20)  NOT NULL REFERENCES machines(machine_id),
+            sequence_index      INTEGER      NOT NULL,
+            planned_start_time  TIMESTAMPTZ  NOT NULL,
+            planned_end_time    TIMESTAMPTZ  NOT NULL,
+            queue_status        VARCHAR(30)  NOT NULL DEFAULT 'QUEUED',
+            released_by         VARCHAR(50),
+            released_at         TIMESTAMPTZ  DEFAULT NOW(),
+            started_at          TIMESTAMPTZ,
+            completed_at        TIMESTAMPTZ,
+            UNIQUE(run_id, order_id)
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_schedule_runs_lifecycle
+        ON schedule_runs(lifecycle_status, run_id DESC)
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_queue_status
+        ON manufacturing_queue(queue_status, planned_start_time)
+    """)
+    cur.execute("""
+        UPDATE schedule_runs
+        SET lifecycle_status='CONFIRMED'
+        WHERE lifecycle_status IS NULL
+    """)
+    db.commit()
+
+
+def _normalize_json(value, fallback=None):
+    if value is None:
+        return fallback
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _get_schedule_settings(db):
+    _ensure_planning_schema(db)
+    cur = db.cursor()
+    cur.execute("""
+        SELECT review_required, manual_adjust_enabled,
+            manual_adjust_reason_required, publish_with_warnings_allowed,
+            auto_release_enabled
+        FROM schedule_settings WHERE id=TRUE
+    """)
+    row = cur.fetchone()
+    if not row:
+        return {
+            "review_required": True,
+            "manual_adjust_enabled": True,
+            "manual_adjust_reason_required": True,
+            "publish_with_warnings_allowed": True,
+            "auto_release_enabled": False,
+        }
+    return dict(row)
+
+
+def _run_row_to_dict(row):
+    params = _normalize_json(row.get("solver_params"), {}) or {}
+    summary = params.get("summary") or {}
+    return {
+        "run_id": row["run_id"],
+        "run_time": _iso(row.get("run_time")),
+        "baseline_time": _iso(row.get("baseline_time")),
+        "triggered_by": row.get("triggered_by"),
+        "status": row.get("status"),
+        "mode": row.get("mode") or "AUTO",
+        "lifecycle_status": row.get("lifecycle_status") or "CONFIRMED",
+        "total_orders": row.get("total_orders") or 0,
+        "total_machines_used": row.get("total_machines_used") or 0,
+        "total_setup_mins": row.get("total_setup_time_mins") or 0,
+        "total_scrap_kg": float(row.get("total_scrap_kg") or 0),
+        "late_orders": row.get("total_late_orders") or 0,
+        "is_active": bool(row.get("is_active")),
+        "selected_order_ids": params.get("selected_order_ids") or [],
+        "summary": summary,
+        "confirmed_by": row.get("confirmed_by"),
+        "confirmed_at": _iso(row.get("confirmed_at")),
+        "cancelled_by": row.get("cancelled_by"),
+        "cancelled_at": _iso(row.get("cancelled_at")),
+        "cancel_reason": row.get("cancel_reason"),
+    }
+
+
+def _task_row_to_dict(row):
+    return {
+        "id": row["id"],
+        "run_id": row["run_id"],
+        "order_id": row["order_id"],
+        "machine_id": row["machine_id"],
+        "sequence_index": row["sequence_index"],
+        "setup_start_time": _iso(row.get("setup_start_time")),
+        "start_time": _iso(row.get("start_time")),
+        "end_time": _iso(row.get("end_time")),
+        "duration_mins": row.get("duration_mins"),
+        "setup_time_mins": row.get("setup_time_mins") or 0,
+        "scrap_kg": float(row.get("scrap_kg") or 0),
+        "net_weight_kg": row.get("net_weight_kg"),
+        "actual_material_required_kg": float(row.get("actual_material_required_kg") or 0),
+        "is_late": bool(row.get("is_late")),
+        "tardiness_mins": row.get("tardiness_mins") or 0,
+        "task_source": row.get("task_source") or "AUTO",
+        "manual_lock_machine": bool(row.get("manual_lock_machine")),
+        "manual_lock_time": bool(row.get("manual_lock_time")),
+        "product_type": row.get("product_type"),
+        "target_width": row.get("target_width"),
+        "target_thickness": row.get("target_thickness"),
+        "total_quantity_kg": row.get("total_quantity_kg"),
+        "order_class": row.get("order_class"),
+        "due_date": _iso(row.get("due_date")),
+    }
+
+
+def _validation_item(severity, code, message, order_id=None, machine_id=None):
+    return {
+        "severity": severity,
+        "code": code,
+        "message": message,
+        "order_id": order_id,
+        "machine_id": machine_id,
+    }
+
+
+def _task_busy_start(task):
+    return task.get("setup_start_time") or task.get("start_time")
+
+
+def _task_busy_end(task):
+    return task.get("end_time")
+
+
+def _calculate_candidate_setup_start(run_id: int, order_id: str, machine_id: str, start_time: datetime):
+    from src.database import DatabaseManager
+
+    pipeline = BlownFilmDataIngestionPipeline()
+    _, _, _, fallback_setup_mgr = pipeline.load_from_excel(INPUT_EXCEL_PATH)
+    with DatabaseManager() as manager:
+        machines, orders, _, setup_mgr = manager.load_master_data(
+            fallback_setup_mgr=fallback_setup_mgr,
+            order_statuses=("PENDING", "SCHEDULED"),
+        )
+        machine_map = {machine.machine_id: machine for machine in machines}
+        order_map = {order.order_id: order for order in orders}
+        machine = machine_map.get(machine_id)
+        order = order_map.get(order_id)
+        if not machine or not order:
+            return start_time
+
+        with manager.conn.cursor() as cur:
+            cur.execute("""
+                SELECT order_id, start_time, sequence_index, id
+                FROM scheduled_tasks
+                WHERE run_id=%s AND machine_id=%s AND order_id<>%s
+                ORDER BY start_time, sequence_index, id
+            """, (run_id, machine_id, order_id))
+            rows = cur.fetchall()
+
+    prev_order = None
+    naive_start = _as_naive(start_time)
+    for row in rows:
+        row_start = row[1]
+        if _as_naive(row_start) <= naive_start:
+            prev_order = order_map.get(row[0])
+        else:
+            break
+    setup_mins = SetupCalculator(setup_mgr).calculate_setup_time(prev_order, order, machine)
+    return start_time - timedelta(minutes=setup_mins)
+
+
+def _recalculate_machine_setup_fields(db, run_id: int, machine_ids: list[str]):
+    machine_ids = sorted({machine_id for machine_id in machine_ids if machine_id})
+    if not machine_ids:
+        return
+
+    from src.database import DatabaseManager
+
+    pipeline = BlownFilmDataIngestionPipeline()
+    _, _, _, fallback_setup_mgr = pipeline.load_from_excel(INPUT_EXCEL_PATH)
+    with DatabaseManager() as manager:
+        machines, orders, _, setup_mgr = manager.load_master_data(
+            fallback_setup_mgr=fallback_setup_mgr,
+            order_statuses=("PENDING", "SCHEDULED"),
+        )
+    machine_map = {machine.machine_id: machine for machine in machines}
+    order_map = {order.order_id: order for order in orders}
+    setup_calc = SetupCalculator(setup_mgr)
+
+    cur = db.cursor()
+    cur.execute("""
+        SELECT id, order_id, machine_id, start_time, end_time
+        FROM scheduled_tasks
+        WHERE run_id=%s AND machine_id = ANY(%s)
+        ORDER BY machine_id, start_time, sequence_index, id
+    """, (run_id, machine_ids))
+    rows_by_machine = {}
+    for row in cur.fetchall():
+        rows_by_machine.setdefault(row["machine_id"], []).append(row)
+
+    for machine_id, rows in rows_by_machine.items():
+        machine = machine_map.get(machine_id)
+        if not machine:
+            continue
+        prev_order = None
+        prev_order_id = None
+        for sequence, row in enumerate(rows):
+            order = order_map.get(row["order_id"])
+            if not order:
+                prev_order = None
+                prev_order_id = None
+                continue
+            setup_mins = setup_calc.calculate_setup_time(prev_order, order, machine)
+            scrap_kg = setup_calc.calculate_scrap_weight(prev_order, order, machine)
+            setup_start_time = row["start_time"] - timedelta(minutes=setup_mins)
+            cur.execute("""
+                UPDATE scheduled_tasks
+                SET sequence_index=%s,
+                    setup_start_time=%s,
+                    setup_time_mins=%s,
+                    scrap_kg=%s,
+                    actual_material_required_kg=%s,
+                    prev_order_id=%s
+                WHERE id=%s
+            """, (
+                sequence,
+                setup_start_time,
+                setup_mins,
+                scrap_kg,
+                order.total_quantity_kg + scrap_kg,
+                prev_order_id,
+                row["id"],
+            ))
+            prev_order = order
+            prev_order_id = order.order_id
+
+
+def _load_preplan_validation(db, run_id: int):
+    _ensure_planning_schema(db)
+    cur = db.cursor()
+    cur.execute(
+        "SELECT lifecycle_status, status, total_orders, solver_params "
+        "FROM schedule_runs WHERE run_id=%s",
+        (run_id,),
+    )
+    run_row = cur.fetchone()
+    lifecycle_status = run_row["lifecycle_status"] if run_row else "DRAFT"
+    cur.execute("""
+        SELECT t.*, o.status AS order_status, o.target_width, o.target_thickness,
+            o.cleanroom_req, o.material_available_time, o.due_date,
+            m.status AS machine_status, m.min_width, m.max_width,
+            m.min_thickness, m.max_thickness, m.cleanroom_level,
+            m.layer_structure,
+            COALESCE(recipe_layers.layers, 0) AS recipe_layers
+        FROM scheduled_tasks t
+        JOIN production_orders o ON o.order_id=t.order_id
+        JOIN machines m ON m.machine_id=t.machine_id
+        LEFT JOIN (
+            SELECT product_type, COUNT(*) AS layers
+            FROM recipes
+            GROUP BY product_type
+        ) recipe_layers ON recipe_layers.product_type=o.product_type
+        WHERE t.run_id=%s
+        ORDER BY t.machine_id, t.start_time, t.sequence_index
+    """, (run_id,))
+    tasks = cur.fetchall()
+    items = []
+
+    params = _normalize_json(run_row.get("solver_params") if run_row else None, {}) or {}
+    summary = params.get("summary") or {}
+    selected_ids = params.get("selected_order_ids") or []
+    input_count = summary.get("input_order_count")
+    if input_count is None:
+        input_count = len(selected_ids) if selected_ids else (run_row.get("total_orders") if run_row else len(tasks))
+    blocked_count = summary.get("blocked_order_count")
+    if blocked_count is None:
+        blocked_count = max(0, int(input_count or 0) - len(tasks))
+    if (run_row and run_row.get("status") == "PARTIAL") or int(blocked_count or 0) > 0:
+        items.append(_validation_item(
+            "warning",
+            "partial_schedule",
+            f"本轮输入 {int(input_count or 0)} 单，已排 {len(tasks)} 单，"
+            f"{int(blocked_count or 0)} 单未进入草案；发布后未排订单仍保留待排。",
+        ))
+
+    seen_orders = set()
+    for task in tasks:
+        order_id = task["order_id"]
+        machine_id = task["machine_id"]
+        if order_id in seen_orders:
+            items.append(_validation_item("error", "duplicate_order", f"订单 {order_id} 在草案中出现多次。", order_id, machine_id))
+        seen_orders.add(order_id)
+        if task["start_time"] >= task["end_time"]:
+            items.append(_validation_item("error", "invalid_time", f"订单 {order_id} 开始时间必须早于结束时间。", order_id, machine_id))
+        if lifecycle_status in {"DRAFT", "VALIDATED"} and task["order_status"] != "PENDING":
+            items.append(_validation_item("error", "order_status", f"订单 {order_id} 当前状态为 {task['order_status']}，不能发布到制造队列。", order_id, machine_id))
+        if task["machine_status"] != "ACTIVE":
+            items.append(_validation_item("error", "machine_status", f"机台 {machine_id} 当前状态为 {task['machine_status']}。", order_id, machine_id))
+        if not (task["min_width"] <= task["target_width"] <= task["max_width"]):
+            items.append(_validation_item("error", "width_capacity", f"订单 {order_id} 幅宽 {task['target_width']}mm 不在机台 {machine_id} 范围 {task['min_width']}-{task['max_width']}mm。", order_id, machine_id))
+        if not (task["min_thickness"] <= task["target_thickness"] <= task["max_thickness"]):
+            items.append(_validation_item("error", "thickness_capacity", f"订单 {order_id} 厚度 {task['target_thickness']}um 不在机台 {machine_id} 范围 {task['min_thickness']}-{task['max_thickness']}um。", order_id, machine_id))
+        if task["cleanroom_req"] == "Class_10K" and task["cleanroom_level"] != "Class_10K":
+            items.append(_validation_item("error", "cleanroom_capacity", f"订单 {order_id} 需要万级洁净，机台 {machine_id} 不满足。", order_id, machine_id))
+        if task["recipe_layers"] and task["recipe_layers"] > task["layer_structure"]:
+            items.append(_validation_item("error", "layer_capacity", f"订单 {order_id} 配方 {task['recipe_layers']} 层超过机台 {machine_id} {task['layer_structure']} 层能力。", order_id, machine_id))
+        if task["material_available_time"] and task["start_time"] < task["material_available_time"]:
+            items.append(_validation_item("error", "material_not_ready", f"订单 {order_id} 计划开工早于物料齐套时间。", order_id, machine_id))
+        if task["end_time"] > task["due_date"]:
+            items.append(_validation_item("warning", "late_order", f"订单 {order_id} 计划完工晚于交期。", order_id, machine_id))
+        if task.get("task_source") in {"MANUAL", "ADJUSTED"}:
+            items.append(_validation_item("warning", "manual_adjustment", f"订单 {order_id} 由人工调整，需复核换产和现场原因。", order_id, machine_id))
+
+    for task in tasks:
+        busy_start = _task_busy_start(task)
+        busy_end = _task_busy_end(task)
+        cur.execute("""
+            SELECT COUNT(*) AS cnt
+            FROM scheduled_tasks other
+            WHERE other.run_id=%s
+              AND other.machine_id=%s
+              AND other.id<>%s
+              AND COALESCE(other.setup_start_time, other.start_time) < %s
+              AND other.end_time > %s
+        """, (run_id, task["machine_id"], task["id"], busy_end, busy_start))
+        if cur.fetchone()["cnt"]:
+            items.append(_validation_item("error", "task_overlap", f"机台 {task['machine_id']} 存在生产或换产时间重叠。", task["order_id"], task["machine_id"]))
+
+        cur.execute("""
+            SELECT COUNT(*) AS cnt
+            FROM machine_maintenance_calendar m
+            WHERE m.machine_id=%s
+              AND m.start_time < %s
+              AND m.end_time > %s
+        """, (task["machine_id"], busy_end, busy_start))
+        if cur.fetchone()["cnt"]:
+            items.append(_validation_item("error", "maintenance_overlap", f"订单 {task['order_id']} 的生产或换产时间与机台 {task['machine_id']} 维护窗口冲突。", task["order_id"], task["machine_id"]))
+
+        cur.execute("""
+            SELECT COUNT(*) AS cnt
+            FROM machine_downtime_events d
+            WHERE d.machine_id=%s
+              AND d.start_time < %s
+              AND COALESCE(d.end_time, %s) > %s
+        """, (task["machine_id"], busy_end, busy_end, busy_start))
+        if cur.fetchone()["cnt"]:
+            items.append(_validation_item("error", "downtime_overlap", f"订单 {task['order_id']} 的生产或换产时间与机台 {task['machine_id']} 停机事件冲突。", task["order_id"], task["machine_id"]))
+
+    hard_errors = [item for item in items if item["severity"] == "error"]
+    warnings = [item for item in items if item["severity"] == "warning"]
+    return {
+        "run_id": run_id,
+        "status": "FAILED" if hard_errors else ("WARNING" if warnings else "PASSED"),
+        "hard_error_count": len(hard_errors),
+        "warning_count": len(warnings),
+        "items": items,
+    }
 
 
 def _duration_mins(start, end):
@@ -561,14 +1016,14 @@ def _diagnostic_for_idle(
         code = "idle.before_maintenance"
         confidence = "proven"
         recommendations = [
-            DiagnosticRecommendation("review_maintenance", "检查维护窗口", "/config?tab=maintenance"),
+            DiagnosticRecommendation("review_maintenance", "检查维护窗口", "/config?tab=rules&section=maintenance"),
             DiagnosticRecommendation("review_gantt", "查看机台甘特图", f"/gantt?machine={machine_id}"),
         ]
     elif prev_event and prev_event.get("kind") == "maintenance":
         code = "idle.after_maintenance"
         confidence = "proven"
         recommendations = [
-            DiagnosticRecommendation("review_maintenance", "检查维护窗口", "/config?tab=maintenance"),
+            DiagnosticRecommendation("review_maintenance", "检查维护窗口", "/config?tab=rules&section=maintenance"),
             DiagnosticRecommendation("review_orders", "检查后续订单齐套", "/config?tab=orders"),
         ]
     elif next_event and next_event.get("kind") == "downtime":
@@ -685,7 +1140,7 @@ def _event_diagnostic(kind, machine_id, start, end, code, root_cause, evidence=N
         recommendations.append(DiagnosticRecommendation(
             "review_maintenance",
             "检查维护窗口",
-            "/config?tab=maintenance",
+            "/config?tab=rules&section=maintenance",
         ))
     if kind == "downtime":
         recommendations.append(DiagnosticRecommendation(
@@ -1012,8 +1467,23 @@ def get_gantt(run_id: int = None, db=Depends(get_db), _=Depends(get_current_user
         tasks.append(task_event)
 
     cur.execute(
-        "SELECT machine_id, start_time, end_time, reason, maintenance_type "
-        "FROM machine_maintenance_calendar ORDER BY machine_id, start_time"
+        """
+        SELECT machine_id, start_time, end_time, reason, maintenance_type
+        FROM (
+            SELECT DISTINCT ON (
+                machine_id, start_time, end_time, maintenance_type,
+                COALESCE(reason, ''), COALESCE(is_recurring, FALSE),
+                COALESCE(recurrence_rule, '')
+            )
+                machine_id, start_time, end_time, reason, maintenance_type
+            FROM machine_maintenance_calendar
+            ORDER BY
+                machine_id, start_time, end_time, maintenance_type,
+                COALESCE(reason, ''), COALESCE(is_recurring, FALSE),
+                COALESCE(recurrence_rule, ''), id
+        ) deduped
+        ORDER BY machine_id, start_time
+        """
     )
     maintenance = []
     maintenance_events = []
@@ -1266,6 +1736,632 @@ def get_schedule_diagnostics(
     }
 
 
+@router.get("/settings")
+def get_schedule_settings(db=Depends(get_db), _=Depends(get_current_user)):
+    return _get_schedule_settings(db)
+
+
+@router.patch("/settings")
+def update_schedule_settings(
+    payload: ScheduleSettingsPayload,
+    db=Depends(get_db),
+    _=Depends(require_role("admin", "planner")),
+):
+    fields = payload.model_dump(exclude_unset=True)
+    if not fields:
+        raise HTTPException(status_code=400, detail="No settings to update.")
+    allowed = {
+        "review_required",
+        "manual_adjust_enabled",
+        "manual_adjust_reason_required",
+        "publish_with_warnings_allowed",
+        "auto_release_enabled",
+    }
+    assignments = []
+    params = []
+    for key, value in fields.items():
+        if key in allowed:
+            assignments.append(f"{key}=%s")
+            params.append(bool(value))
+    if not assignments:
+        raise HTTPException(status_code=400, detail="No valid settings to update.")
+    _ensure_planning_schema(db)
+    cur = db.cursor()
+    cur.execute(
+        f"UPDATE schedule_settings SET {', '.join(assignments)}, updated_at=NOW() WHERE id=TRUE",
+        params,
+    )
+    db.commit()
+    return _get_schedule_settings(db)
+
+
+@router.post("/preplans")
+def create_preplan(
+    payload: PreplanCreatePayload,
+    db=Depends(get_db),
+    user=Depends(require_role("admin", "planner")),
+):
+    order_ids = [item.strip() for item in payload.order_ids if item and item.strip()]
+    order_ids = list(dict.fromkeys(order_ids))
+    if not order_ids:
+        raise HTTPException(status_code=400, detail="请选择至少一条待排订单。")
+    mode = payload.mode.upper()
+    if mode not in {"AUTO", "MANUAL", "HYBRID"}:
+        raise HTTPException(status_code=400, detail="Invalid preplan mode.")
+
+    _ensure_planning_schema(db)
+    cur = db.cursor()
+    cur.execute(
+        """
+        SELECT order_id, status
+        FROM production_orders
+        WHERE order_id = ANY(%s)
+        """,
+        (order_ids,),
+    )
+    found = {row["order_id"]: row["status"] for row in cur.fetchall()}
+    missing = [order_id for order_id in order_ids if order_id not in found]
+    blocked = [order_id for order_id, status in found.items() if status != "PENDING"]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"订单不存在: {', '.join(missing[:5])}")
+    if blocked:
+        raise HTTPException(status_code=400, detail=f"只有待排订单可以创建预排程: {', '.join(blocked[:5])}")
+
+    settings = _get_schedule_settings(db)
+    from src.database import DatabaseManager
+
+    pipeline = BlownFilmDataIngestionPipeline()
+    _, _, _, fallback_setup_mgr = pipeline.load_from_excel(INPUT_EXCEL_PATH)
+    with DatabaseManager() as manager:
+        manager.ensure_planning_schema()
+        machines, orders, _, setup_mgr = manager.load_master_data(
+            fallback_setup_mgr=fallback_setup_mgr,
+            order_ids=order_ids,
+            order_statuses=("PENDING",),
+        )
+        loaded_ids = {order.order_id for order in orders}
+        not_loaded = [order_id for order_id in order_ids if order_id not in loaded_ids]
+        if not_loaded:
+            raise HTTPException(status_code=400, detail=f"订单未进入排程输入: {', '.join(not_loaded[:5])}")
+        aps = AdvancedMedicalAPS(setup_mgr)
+        result = aps.run(orders, machines)
+        run_id = manager.save_schedule_result(
+            result,
+            triggered_by=user.username,
+            activate=False,
+            allow_invalid=True,
+            publish_orders=False,
+            mode=mode,
+            lifecycle_status="DRAFT",
+            selected_order_ids=order_ids,
+        )
+
+    if settings["auto_release_enabled"] and not settings["review_required"]:
+        confirm_preplan(run_id=run_id, db=db, user=user)
+
+    return get_preplan(run_id=run_id, db=db, _=user)
+
+
+@router.get("/preplans")
+def list_preplans(db=Depends(get_db), _=Depends(get_current_user)):
+    _ensure_planning_schema(db)
+    cur = db.cursor()
+    cur.execute("""
+        SELECT run_id, run_time, baseline_time, triggered_by, status,
+            total_orders, total_machines_used, total_setup_time_mins,
+            total_scrap_kg, total_late_orders, is_active, solver_params,
+            mode, lifecycle_status, confirmed_by, confirmed_at,
+            cancelled_by, cancelled_at, cancel_reason
+        FROM schedule_runs
+        WHERE lifecycle_status IN ('DRAFT', 'VALIDATED', 'CONFIRMED', 'CANCELLED')
+        ORDER BY run_id DESC
+        LIMIT 30
+    """)
+    return [_run_row_to_dict(row) for row in cur.fetchall()]
+
+
+@router.get("/preplans/{run_id}")
+def get_preplan(run_id: int, db=Depends(get_db), _=Depends(get_current_user)):
+    _ensure_planning_schema(db)
+    cur = db.cursor()
+    cur.execute("""
+        SELECT run_id, run_time, baseline_time, triggered_by, status,
+            total_orders, total_machines_used, total_setup_time_mins,
+            total_scrap_kg, total_late_orders, is_active, solver_params,
+            mode, lifecycle_status, confirmed_by, confirmed_at,
+            cancelled_by, cancelled_at, cancel_reason
+        FROM schedule_runs
+        WHERE run_id=%s
+    """, (run_id,))
+    run = cur.fetchone()
+    if not run:
+        raise HTTPException(status_code=404, detail="Preplan not found.")
+    cur.execute("""
+        SELECT t.*, o.product_type, o.target_width, o.target_thickness,
+            o.total_quantity_kg, o.order_class, o.due_date
+        FROM scheduled_tasks t
+        JOIN production_orders o ON o.order_id=t.order_id
+        WHERE t.run_id=%s
+        ORDER BY t.machine_id, t.start_time, t.sequence_index
+    """, (run_id,))
+    tasks = [_task_row_to_dict(row) for row in cur.fetchall()]
+    cur.execute("""
+        SELECT id, order_id, action_type, before_state, after_state,
+            reason_code, reason_text, changed_by, changed_at,
+            validation_status, validation_messages
+        FROM schedule_adjustment_audit
+        WHERE run_id=%s
+        ORDER BY changed_at DESC, id DESC
+        LIMIT 50
+    """, (run_id,))
+    adjustments = []
+    for row in cur.fetchall():
+        adjustments.append({
+            "id": row["id"],
+            "order_id": row["order_id"],
+            "action_type": row["action_type"],
+            "before_state": _normalize_json(row["before_state"], {}),
+            "after_state": _normalize_json(row["after_state"], {}),
+            "reason_code": row["reason_code"],
+            "reason_text": row["reason_text"],
+            "changed_by": row["changed_by"],
+            "changed_at": _iso(row["changed_at"]),
+            "validation_status": row["validation_status"],
+            "validation_messages": _normalize_json(row["validation_messages"], []),
+        })
+    validation = _load_preplan_validation(db, run_id)
+    diagnostics = _load_persisted_diagnostics(cur, run_id)
+    blocked_orders = [
+        item for item in diagnostics
+        if item.get("entity_type") == "order" and item.get("category") == "eligibility"
+    ]
+    return {
+        "run": _run_row_to_dict(run),
+        "tasks": tasks,
+        "validation": validation,
+        "adjustments": adjustments,
+        "diagnostics": diagnostics,
+        "blocked_orders": blocked_orders,
+    }
+
+
+@router.post("/preplans/{run_id}/adjustments")
+def apply_manual_adjustment(
+    run_id: int,
+    payload: ManualAdjustmentPayload,
+    db=Depends(get_db),
+    user=Depends(require_role("admin", "planner")),
+):
+    settings = _get_schedule_settings(db)
+    if not settings["manual_adjust_enabled"]:
+        raise HTTPException(status_code=400, detail="当前系统未开启人工调整。")
+    if settings["manual_adjust_reason_required"] and not payload.reason_text.strip():
+        raise HTTPException(status_code=400, detail="人工调整必须填写原因。")
+    if payload.start_time >= payload.end_time:
+        raise HTTPException(status_code=400, detail="开始时间必须早于结束时间。")
+
+    cur = db.cursor()
+    cur.execute("SELECT run_id, lifecycle_status FROM schedule_runs WHERE run_id=%s", (run_id,))
+    run = cur.fetchone()
+    if not run:
+        raise HTTPException(status_code=404, detail="Preplan not found.")
+    if run["lifecycle_status"] not in {"DRAFT", "VALIDATED"}:
+        raise HTTPException(status_code=400, detail="只有草案状态允许人工调整。")
+
+    cur.execute("""
+        SELECT t.*, o.product_type, o.target_width, o.target_thickness,
+            o.total_quantity_kg, o.order_class, o.due_date
+        FROM scheduled_tasks t
+        JOIN production_orders o ON o.order_id=t.order_id
+        WHERE t.run_id=%s AND t.order_id=%s
+        LIMIT 1
+    """, (run_id, payload.order_id))
+    before = cur.fetchone()
+    before_state = _task_row_to_dict(before) if before else None
+
+    cur.execute("""
+        SELECT o.*, COALESCE(layer_count.layers, 0) AS recipe_layers,
+            m.machine_id, m.status AS machine_status, m.min_width, m.max_width,
+            m.min_thickness, m.max_thickness, m.cleanroom_level,
+            m.layer_structure
+        FROM production_orders o
+        CROSS JOIN machines m
+        LEFT JOIN (
+            SELECT product_type, COUNT(*) AS layers
+            FROM recipes
+            GROUP BY product_type
+        ) layer_count ON layer_count.product_type=o.product_type
+        WHERE o.order_id=%s AND m.machine_id=%s
+    """, (payload.order_id, payload.machine_id))
+    ctx = cur.fetchone()
+    if not ctx:
+        raise HTTPException(status_code=404, detail="订单或机台不存在。")
+
+    messages = []
+    if ctx["status"] != "PENDING":
+        messages.append(_validation_item("error", "order_status", f"订单 {payload.order_id} 当前状态为 {ctx['status']}。", payload.order_id, payload.machine_id))
+    if ctx["machine_status"] != "ACTIVE":
+        messages.append(_validation_item("error", "machine_status", f"机台 {payload.machine_id} 当前状态为 {ctx['machine_status']}。", payload.order_id, payload.machine_id))
+    if not (ctx["min_width"] <= ctx["target_width"] <= ctx["max_width"]):
+        messages.append(_validation_item("error", "width_capacity", "订单幅宽不在机台能力范围。", payload.order_id, payload.machine_id))
+    if not (ctx["min_thickness"] <= ctx["target_thickness"] <= ctx["max_thickness"]):
+        messages.append(_validation_item("error", "thickness_capacity", "订单厚度不在机台能力范围。", payload.order_id, payload.machine_id))
+    if ctx["cleanroom_req"] == "Class_10K" and ctx["cleanroom_level"] != "Class_10K":
+        messages.append(_validation_item("error", "cleanroom_capacity", "机台洁净等级不满足订单要求。", payload.order_id, payload.machine_id))
+    if ctx["recipe_layers"] and ctx["recipe_layers"] > ctx["layer_structure"]:
+        messages.append(_validation_item("error", "layer_capacity", "订单配方层数超过机台能力。", payload.order_id, payload.machine_id))
+    if ctx["material_available_time"] and _as_naive(payload.start_time) < _as_naive(ctx["material_available_time"]):
+        messages.append(_validation_item("error", "material_not_ready", "计划开工早于物料齐套时间。", payload.order_id, payload.machine_id))
+
+    candidate_busy_start = _calculate_candidate_setup_start(
+        run_id,
+        payload.order_id,
+        payload.machine_id,
+        payload.start_time,
+    )
+    cur.execute("""
+        SELECT COUNT(*) AS cnt
+        FROM scheduled_tasks t
+        WHERE t.run_id=%s
+          AND t.machine_id=%s
+          AND t.order_id<>%s
+          AND COALESCE(t.setup_start_time, t.start_time) < %s
+          AND t.end_time > %s
+    """, (run_id, payload.machine_id, payload.order_id, payload.end_time, candidate_busy_start))
+    if cur.fetchone()["cnt"]:
+        messages.append(_validation_item("error", "task_overlap", "该机台在目标生产或换产时间段已有其他任务。", payload.order_id, payload.machine_id))
+    cur.execute("""
+        SELECT COUNT(*) AS cnt
+        FROM machine_maintenance_calendar m
+        WHERE m.machine_id=%s
+          AND m.start_time < %s
+          AND m.end_time > %s
+    """, (payload.machine_id, payload.end_time, candidate_busy_start))
+    if cur.fetchone()["cnt"]:
+        messages.append(_validation_item("error", "maintenance_overlap", "目标生产或换产时间段与维护窗口冲突。", payload.order_id, payload.machine_id))
+    cur.execute("""
+        SELECT COUNT(*) AS cnt
+        FROM machine_downtime_events d
+        WHERE d.machine_id=%s
+          AND d.start_time < %s
+          AND COALESCE(d.end_time, %s) > %s
+    """, (payload.machine_id, payload.end_time, payload.end_time, candidate_busy_start))
+    if cur.fetchone()["cnt"]:
+        messages.append(_validation_item("error", "downtime_overlap", "目标生产或换产时间段与停机事件冲突。", payload.order_id, payload.machine_id))
+
+    after_state = {
+        "order_id": payload.order_id,
+        "machine_id": payload.machine_id,
+        "setup_start_time": candidate_busy_start.isoformat(),
+        "start_time": payload.start_time.isoformat(),
+        "end_time": payload.end_time.isoformat(),
+        "sequence_index": payload.sequence_index,
+        "lock_machine": payload.lock_machine,
+        "lock_time": payload.lock_time,
+    }
+    hard_errors = [item for item in messages if item["severity"] == "error"]
+    if hard_errors:
+        cur.execute("""
+            INSERT INTO schedule_adjustment_audit
+                (run_id, order_id, action_type, before_state, after_state,
+                 reason_code, reason_text, changed_by, validation_status,
+                 validation_messages)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """, (
+            run_id, payload.order_id, "MOVE_TASK", Json(before_state or {}),
+            Json(after_state), payload.reason_code, payload.reason_text,
+            user.username, "FAILED", Json(messages),
+        ))
+        db.commit()
+        raise HTTPException(status_code=400, detail={"message": "人工调整未通过校验。", "items": messages})
+
+    base = datetime.strptime(BASELINE_TIME, "%Y-%m-%d %H:%M")
+    start_mins = int((_as_naive(payload.start_time) - base).total_seconds() / 60)
+    end_mins = int((_as_naive(payload.end_time) - base).total_seconds() / 60)
+    duration_mins = max(1, end_mins - start_mins)
+    sequence_index = payload.sequence_index
+    if sequence_index is None:
+        cur.execute(
+            "SELECT COALESCE(MAX(sequence_index), 0) + 1 AS next_seq FROM scheduled_tasks WHERE run_id=%s AND machine_id=%s",
+            (run_id, payload.machine_id),
+        )
+        sequence_index = cur.fetchone()["next_seq"]
+    tardiness_mins = max(0, int((_as_naive(payload.end_time) - _as_naive(ctx["due_date"])).total_seconds() / 60))
+    task_source = "ADJUSTED" if before else "MANUAL"
+
+    if before:
+        affected_machine_ids = {before["machine_id"], payload.machine_id}
+        cur.execute("""
+            UPDATE scheduled_tasks
+            SET machine_id=%s, sequence_index=%s, setup_start_time=%s,
+                start_time=%s, end_time=%s, start_mins=%s, end_mins=%s,
+                duration_mins=%s, is_late=%s, tardiness_mins=%s,
+                task_source=%s, manual_lock_machine=%s, manual_lock_time=%s
+            WHERE id=%s
+            RETURNING id
+        """, (
+            payload.machine_id, sequence_index, payload.start_time,
+            payload.start_time, payload.end_time, start_mins, end_mins,
+            duration_mins, tardiness_mins > 0, tardiness_mins,
+            task_source, payload.lock_machine, payload.lock_time, before["id"],
+        ))
+    else:
+        affected_machine_ids = {payload.machine_id}
+        cur.execute("""
+            INSERT INTO scheduled_tasks
+                (run_id, order_id, machine_id, sequence_index,
+                 setup_start_time, start_time, end_time, start_mins,
+                 end_mins, duration_mins, setup_time_mins, scrap_kg,
+                 net_weight_kg, actual_material_required_kg, is_late,
+                 tardiness_mins, task_source, manual_lock_machine,
+                 manual_lock_time)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,0,0,%s,%s,%s,%s,%s,%s,%s)
+            RETURNING id
+        """, (
+            run_id, payload.order_id, payload.machine_id, sequence_index,
+            payload.start_time, payload.start_time, payload.end_time,
+            start_mins, end_mins, duration_mins,
+            ctx["total_quantity_kg"], ctx["total_quantity_kg"],
+            tardiness_mins > 0, tardiness_mins, task_source,
+            payload.lock_machine, payload.lock_time,
+        ))
+    task_id = cur.fetchone()["id"]
+    after_state["scheduled_task_id"] = task_id
+    _recalculate_machine_setup_fields(db, run_id, list(affected_machine_ids))
+    cur.execute("""
+        UPDATE schedule_runs
+        SET lifecycle_status='DRAFT'
+        WHERE run_id=%s AND lifecycle_status='VALIDATED'
+    """, (run_id,))
+    cur.execute("""
+        INSERT INTO schedule_adjustment_audit
+            (run_id, order_id, action_type, before_state, after_state,
+             reason_code, reason_text, changed_by, validation_status,
+             validation_messages)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+    """, (
+        run_id, payload.order_id, "MOVE_TASK", Json(before_state or {}),
+        Json(after_state), payload.reason_code, payload.reason_text,
+        user.username, "PASSED", Json(messages),
+    ))
+    db.commit()
+    return get_preplan(run_id=run_id, db=db, _=user)
+
+
+@router.post("/preplans/{run_id}/validate")
+def validate_preplan(run_id: int, db=Depends(get_db), _=Depends(require_role("admin", "planner"))):
+    _ensure_planning_schema(db)
+    cur = db.cursor()
+    cur.execute("SELECT lifecycle_status FROM schedule_runs WHERE run_id=%s", (run_id,))
+    run = cur.fetchone()
+    if not run:
+        raise HTTPException(status_code=404, detail="Preplan not found.")
+    validation = _load_preplan_validation(db, run_id)
+    if validation["hard_error_count"] == 0 and run["lifecycle_status"] in {"DRAFT", "VALIDATED"}:
+        cur.execute("UPDATE schedule_runs SET lifecycle_status='VALIDATED' WHERE run_id=%s", (run_id,))
+        db.commit()
+    return validation
+
+
+@router.post("/preplans/{run_id}/confirm")
+def confirm_preplan(run_id: int, db=Depends(get_db), user=Depends(require_role("admin", "planner"))):
+    settings = _get_schedule_settings(db)
+    cur = db.cursor()
+    cur.execute("SELECT run_id, lifecycle_status FROM schedule_runs WHERE run_id=%s", (run_id,))
+    run = cur.fetchone()
+    if not run:
+        raise HTTPException(status_code=404, detail="Preplan not found.")
+    if run["lifecycle_status"] not in {"DRAFT", "VALIDATED"}:
+        raise HTTPException(status_code=400, detail="只有草案可以确认发布。")
+    validation = _load_preplan_validation(db, run_id)
+    if validation["hard_error_count"]:
+        raise HTTPException(status_code=400, detail={"message": "草案存在阻断错误，不能发布。", "validation": validation})
+    if validation["warning_count"] and not settings["publish_with_warnings_allowed"]:
+        raise HTTPException(status_code=400, detail={"message": "草案存在警告，当前系统不允许带警告发布。", "validation": validation})
+
+    cur.execute("SELECT COUNT(*) AS cnt FROM scheduled_tasks WHERE run_id=%s", (run_id,))
+    if cur.fetchone()["cnt"] == 0:
+        raise HTTPException(status_code=400, detail="草案没有可发布任务。")
+    cur.execute("""
+        SELECT run_id
+        FROM schedule_runs
+        WHERE is_active=TRUE AND run_id<>%s
+    """, (run_id,))
+    previous_run_ids = [row["run_id"] for row in cur.fetchall()]
+    if previous_run_ids:
+        cur.execute("""
+            UPDATE production_orders o
+            SET status='PENDING', updated_at=NOW()
+            FROM scheduled_tasks t
+            LEFT JOIN manufacturing_queue q
+              ON q.run_id=t.run_id
+             AND q.order_id=t.order_id
+            WHERE t.run_id = ANY(%s)
+              AND t.order_id=o.order_id
+              AND o.status='SCHEDULED'
+              AND (q.id IS NULL OR q.queue_status IN ('QUEUED', 'READY'))
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM scheduled_tasks next_task
+                  WHERE next_task.run_id=%s
+                    AND next_task.order_id=o.order_id
+              )
+        """, (previous_run_ids, run_id))
+        cur.execute("""
+            UPDATE manufacturing_queue
+            SET queue_status='CANCELLED'
+            WHERE run_id = ANY(%s)
+              AND queue_status IN ('QUEUED', 'READY')
+        """, (previous_run_ids,))
+    cur.execute("""
+        UPDATE schedule_runs
+        SET is_active=FALSE,
+            lifecycle_status=CASE
+                WHEN lifecycle_status='CONFIRMED' THEN 'SUPERSEDED'
+                ELSE lifecycle_status
+            END
+        WHERE is_active=TRUE AND run_id<>%s
+    """, (run_id,))
+    cur.execute("""
+        UPDATE schedule_runs
+        SET lifecycle_status='CONFIRMED', is_active=TRUE,
+            confirmed_by=%s, confirmed_at=NOW()
+        WHERE run_id=%s
+    """, (user.username, run_id))
+    cur.execute("""
+        UPDATE production_orders o
+        SET status='SCHEDULED', updated_at=NOW()
+        FROM scheduled_tasks t
+        WHERE t.run_id=%s
+          AND t.order_id=o.order_id
+          AND o.status='PENDING'
+    """, (run_id,))
+    cur.execute("""
+        INSERT INTO manufacturing_queue
+            (run_id, scheduled_task_id, order_id, machine_id, sequence_index,
+             planned_start_time, planned_end_time, queue_status, released_by)
+        SELECT run_id, id, order_id, machine_id, sequence_index,
+            start_time, end_time, 'QUEUED', %s
+        FROM scheduled_tasks
+        WHERE run_id=%s
+        ON CONFLICT (run_id, order_id) DO UPDATE SET
+            scheduled_task_id=EXCLUDED.scheduled_task_id,
+            machine_id=EXCLUDED.machine_id,
+            sequence_index=EXCLUDED.sequence_index,
+            planned_start_time=EXCLUDED.planned_start_time,
+            planned_end_time=EXCLUDED.planned_end_time,
+            queue_status='QUEUED',
+            released_by=EXCLUDED.released_by,
+            released_at=NOW()
+    """, (user.username, run_id))
+    db.commit()
+    return {"run_id": run_id, "status": "CONFIRMED", "validation": validation}
+
+
+@router.post("/preplans/{run_id}/cancel")
+def cancel_preplan(
+    run_id: int,
+    payload: CancelPreplanPayload,
+    db=Depends(get_db),
+    user=Depends(require_role("admin", "planner")),
+):
+    _ensure_planning_schema(db)
+    cur = db.cursor()
+    cur.execute("SELECT lifecycle_status FROM schedule_runs WHERE run_id=%s", (run_id,))
+    run = cur.fetchone()
+    if not run:
+        raise HTTPException(status_code=404, detail="Preplan not found.")
+    if run["lifecycle_status"] not in {"DRAFT", "VALIDATED"}:
+        raise HTTPException(status_code=400, detail="只有草案可以废弃。")
+    cur.execute("""
+        UPDATE schedule_runs
+        SET lifecycle_status='CANCELLED', cancelled_by=%s,
+            cancelled_at=NOW(), cancel_reason=%s
+        WHERE run_id=%s
+    """, (user.username, payload.reason, run_id))
+    db.commit()
+    return {"run_id": run_id, "status": "CANCELLED"}
+
+
+@router.get("/manufacturing-queue")
+def get_manufacturing_queue(db=Depends(get_db), _=Depends(get_current_user)):
+    _ensure_planning_schema(db)
+    cur = db.cursor()
+    cur.execute("""
+        SELECT q.*, o.product_type, o.target_width, o.target_thickness,
+            o.total_quantity_kg, o.order_class
+        FROM manufacturing_queue q
+        JOIN production_orders o ON o.order_id=q.order_id
+        JOIN schedule_runs r ON r.run_id=q.run_id
+        WHERE r.is_active=TRUE
+          AND r.lifecycle_status='CONFIRMED'
+          AND q.queue_status<>'CANCELLED'
+        ORDER BY q.planned_start_time, q.machine_id, q.sequence_index
+        LIMIT 500
+    """)
+    rows = []
+    for row in cur.fetchall():
+        rows.append({
+            "id": row["id"],
+            "run_id": row["run_id"],
+            "scheduled_task_id": row["scheduled_task_id"],
+            "order_id": row["order_id"],
+            "machine_id": row["machine_id"],
+            "sequence_index": row["sequence_index"],
+            "planned_start_time": _iso(row["planned_start_time"]),
+            "planned_end_time": _iso(row["planned_end_time"]),
+            "queue_status": row["queue_status"],
+            "released_by": row["released_by"],
+            "released_at": _iso(row["released_at"]),
+            "product_type": row["product_type"],
+            "target_width": row["target_width"],
+            "target_thickness": row["target_thickness"],
+            "total_quantity_kg": row["total_quantity_kg"],
+            "order_class": row["order_class"],
+        })
+    return rows
+
+
+@router.post("/clear-active")
+def clear_active_schedule(
+    db=Depends(get_db),
+    user=Depends(require_role("admin", "planner")),
+):
+    _ensure_planning_schema(db)
+    cur = db.cursor()
+    cur.execute("""
+        SELECT run_id
+        FROM schedule_runs
+        WHERE is_active=TRUE
+        ORDER BY run_id DESC
+        LIMIT 1
+    """)
+    row = cur.fetchone()
+    if not row:
+        return {"cleared": False, "run_id": None, "cancelled_queue_count": 0}
+    run_id = row["run_id"]
+    cur.execute("""
+        UPDATE production_orders o
+        SET status='PENDING', updated_at=NOW()
+        FROM scheduled_tasks t
+        LEFT JOIN manufacturing_queue q
+            ON q.run_id=t.run_id
+           AND q.order_id=t.order_id
+        WHERE t.run_id=%s
+          AND t.order_id=o.order_id
+          AND o.status='SCHEDULED'
+          AND (q.id IS NULL OR q.queue_status IN ('QUEUED', 'READY'))
+    """, (run_id,))
+    restored_order_count = cur.rowcount
+    cur.execute("""
+        UPDATE schedule_runs
+        SET is_active=FALSE,
+            lifecycle_status=CASE
+                WHEN lifecycle_status IN ('DRAFT', 'VALIDATED', 'CONFIRMED')
+                THEN 'CANCELLED'
+                ELSE lifecycle_status
+            END,
+            cancelled_by=%s,
+            cancelled_at=NOW(),
+            cancel_reason='撤销当前正式排程，返回待排订单池'
+        WHERE run_id=%s
+    """, (user.username, run_id))
+    cur.execute("""
+        UPDATE manufacturing_queue
+        SET queue_status='CANCELLED'
+        WHERE run_id=%s
+          AND queue_status IN ('QUEUED', 'READY')
+    """, (run_id,))
+    cancelled_queue_count = cur.rowcount
+    db.commit()
+    return {
+        "cleared": True,
+        "run_id": run_id,
+        "cancelled_queue_count": cancelled_queue_count,
+        "restored_order_count": restored_order_count,
+    }
+
+
 @router.get("/runs")
 def get_runs(db=Depends(get_db), _=Depends(get_current_user)):
     cur = db.cursor()
@@ -1300,7 +2396,13 @@ def get_schedule_status(_=Depends(get_current_user)):
 
 
 @router.post("/trigger")
-def trigger_schedule(user=Depends(require_role("admin", "planner"))):
+def trigger_schedule(db=Depends(get_db), user=Depends(require_role("admin", "planner"))):
+    settings = _get_schedule_settings(db)
+    if settings["review_required"]:
+        raise HTTPException(
+            status_code=400,
+            detail="当前系统启用了预排程人工复核，请在排程工作台选择订单并确认进入制造队列。",
+        )
     with _JOB_LOCK:
         if _CURRENT_JOB.get("state") == "running":
             raise HTTPException(status_code=409, detail="A schedule job is already running.")

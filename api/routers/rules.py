@@ -86,6 +86,7 @@ def get_rules_summary(db=Depends(get_db), _=Depends(get_current_user)):
         "gmp_clearance": list_gmp_rules(db, _),
         "spec_change": list_spec_rules(db, _),
         "maintenance": list_maintenance_windows(db, _),
+        "maintenance_duplicate_summary": get_maintenance_duplicate_summary(db, _),
     }
 
 
@@ -260,16 +261,122 @@ def delete_spec_rule(
 def list_maintenance_windows(db=Depends(get_db), _=Depends(get_current_user)):
     cur = db.cursor()
     cur.execute("""
+        SELECT * FROM (
+            SELECT DISTINCT ON (
+                machine_id, start_time, end_time, maintenance_type,
+                COALESCE(reason, ''), COALESCE(is_recurring, FALSE),
+                COALESCE(recurrence_rule, '')
+            )
+                id, machine_id, start_time, end_time, maintenance_type,
+                reason, is_recurring, recurrence_rule
+            FROM machine_maintenance_calendar
+            ORDER BY
+                machine_id, start_time, end_time, maintenance_type,
+                COALESCE(reason, ''), COALESCE(is_recurring, FALSE),
+                COALESCE(recurrence_rule, ''), id
+        ) deduped
+        ORDER BY start_time, machine_id
+    """)
+    return [_maintenance_row_to_dict(r) for r in cur.fetchall()]
+
+
+@router.get("/maintenance/duplicates")
+def get_maintenance_duplicate_summary(db=Depends(get_db), _=Depends(get_current_user)):
+    cur = db.cursor()
+    cur.execute("""
         SELECT id, machine_id, start_time, end_time, maintenance_type,
             reason, is_recurring, recurrence_rule
         FROM machine_maintenance_calendar
-        ORDER BY start_time, machine_id
+        WHERE id IN (
+            SELECT UNNEST(ids) FROM (
+                SELECT ARRAY_AGG(id ORDER BY id) AS ids
+                FROM machine_maintenance_calendar
+                GROUP BY
+                    machine_id, start_time, end_time, maintenance_type,
+                    COALESCE(reason, ''), COALESCE(is_recurring, FALSE),
+                    COALESCE(recurrence_rule, '')
+                HAVING COUNT(*) > 1
+            ) groups
+        )
+        ORDER BY machine_id, start_time, id
     """)
-    return [{
-        **dict(r),
-        "start_time": r["start_time"].isoformat(),
-        "end_time": r["end_time"].isoformat(),
-    } for r in cur.fetchall()]
+    rows = [_maintenance_row_to_dict(r) for r in cur.fetchall()]
+    groups = {}
+    for row in rows:
+        key = (
+            row["machine_id"],
+            row["start_time"],
+            row["end_time"],
+            row["maintenance_type"],
+            row.get("reason") or "",
+            bool(row.get("is_recurring")),
+            row.get("recurrence_rule") or "",
+        )
+        groups.setdefault(key, []).append(row)
+
+    duplicate_groups = []
+    for items in groups.values():
+        keep = min(items, key=lambda item: item["id"])
+        duplicate_groups.append({
+            "machine_id": keep["machine_id"],
+            "start_time": keep["start_time"],
+            "end_time": keep["end_time"],
+            "maintenance_type": keep["maintenance_type"],
+            "reason": keep.get("reason"),
+            "keep_id": keep["id"],
+            "ids": [item["id"] for item in sorted(items, key=lambda item: item["id"])],
+            "duplicate_count": len(items),
+            "duplicate_row_count": len(items) - 1,
+        })
+
+    duplicate_groups.sort(key=lambda item: (
+        -item["duplicate_row_count"],
+        item["start_time"],
+        item["machine_id"],
+    ))
+    return {
+        "group_count": len(duplicate_groups),
+        "duplicate_row_count": sum(item["duplicate_row_count"] for item in duplicate_groups),
+        "groups": duplicate_groups,
+    }
+
+
+@router.post("/maintenance/dedupe")
+def dedupe_maintenance_windows(
+    db=Depends(get_db),
+    _=Depends(require_role("admin", "planner")),
+):
+    before = get_maintenance_duplicate_summary(db, _)
+    cur = db.cursor()
+    cur.execute("""
+        WITH ranked AS (
+            SELECT
+                id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY
+                        machine_id, start_time, end_time, maintenance_type,
+                        COALESCE(reason, ''), COALESCE(is_recurring, FALSE),
+                        COALESCE(recurrence_rule, '')
+                    ORDER BY id
+                ) AS rn
+            FROM machine_maintenance_calendar
+        ),
+        deleted AS (
+            DELETE FROM machine_maintenance_calendar m
+            USING ranked r
+            WHERE m.id = r.id AND r.rn > 1
+            RETURNING m.id
+        )
+        SELECT COUNT(*) AS deleted_count FROM deleted
+    """)
+    deleted_count = cur.fetchone()["deleted_count"]
+    db.commit()
+    after = get_maintenance_duplicate_summary(db, _)
+    return {
+        "deleted_count": deleted_count,
+        "before": before,
+        "after": after,
+    }
 
 
 @router.post("/maintenance")
@@ -280,6 +387,28 @@ def create_maintenance_window(
 ):
     _validate_maintenance_type(payload.maintenance_type)
     cur = db.cursor()
+    cur.execute("""
+        SELECT id
+        FROM machine_maintenance_calendar
+        WHERE machine_id=%s
+          AND start_time=%s::timestamptz
+          AND end_time=%s::timestamptz
+          AND COALESCE(maintenance_type, '')=COALESCE(%s, '')
+          AND COALESCE(reason, '')=COALESCE(%s, '')
+          AND COALESCE(is_recurring, FALSE)=%s
+          AND COALESCE(recurrence_rule, '')=COALESCE(%s, '')
+        ORDER BY id
+        LIMIT 1
+    """, (
+        payload.machine_id, payload.start_time, payload.end_time,
+        payload.maintenance_type, payload.reason, bool(payload.is_recurring),
+        payload.recurrence_rule,
+    ))
+    existing = cur.fetchone()
+    if existing:
+        db.commit()
+        return {"id": existing["id"], "created": False, "deduped": True}
+
     cur.execute("""
         INSERT INTO machine_maintenance_calendar
             (machine_id, start_time, end_time, maintenance_type,
@@ -293,7 +422,7 @@ def create_maintenance_window(
     ))
     window_id = cur.fetchone()["id"]
     db.commit()
-    return {"id": window_id}
+    return {"id": window_id, "created": True}
 
 
 @router.patch("/maintenance/{window_id}")
@@ -327,6 +456,14 @@ def delete_maintenance_window(
 def _validate_maintenance_type(value: str):
     if value not in {"ROUTINE", "EMERGENCY", "GMP_CLEANING", "OVERHAUL"}:
         raise HTTPException(status_code=400, detail="Invalid maintenance type.")
+
+
+def _maintenance_row_to_dict(row):
+    return {
+        **dict(row),
+        "start_time": row["start_time"].isoformat(),
+        "end_time": row["end_time"].isoformat(),
+    }
 
 
 def _update_by_id(db, table: str, row_id: int, fields: dict):

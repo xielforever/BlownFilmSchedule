@@ -22,7 +22,7 @@ class OrderUpdate(BaseModel):
     due_date: Optional[str] = None
     material_available_time: Optional[str] = None
     status: Optional[str] = None
-    priority_override: Optional[int] = None
+    priority_override: Optional[int] = Field(default=None, ge=0)
 
 
 @router.get("")
@@ -105,6 +105,30 @@ def list_orders(
     """, params)
     total = cur.fetchone()["cnt"]
     return {"items": items, "total": total, "page": page, "size": size}
+
+
+@router.post("/reset-to-pending")
+def reset_orders_to_pending(
+    db=Depends(get_db),
+    _=Depends(require_role("admin", "planner")),
+):
+    cur = db.cursor()
+    cur.execute("""
+        UPDATE production_orders
+        SET status='PENDING', updated_at=NOW()
+        WHERE status='SCHEDULED'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM manufacturing_queue q
+              WHERE q.order_id=production_orders.order_id
+                AND q.queue_status IN ('IN_PRODUCTION', 'COMPLETED')
+          )
+    """)
+    updated = cur.rowcount
+    cur.execute("SELECT COUNT(*) AS cnt FROM production_orders")
+    total = cur.fetchone()["cnt"]
+    db.commit()
+    return {"updated_count": updated, "total_orders": total}
 
 
 @router.patch("/{order_id}")

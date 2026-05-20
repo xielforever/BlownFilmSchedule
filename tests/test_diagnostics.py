@@ -78,6 +78,51 @@ class TestDiagnostics(unittest.TestCase):
         self.assertTrue(diagnostic["evidence"])
         self.assertTrue(diagnostic["recommendations"])
 
+    def test_infeasible_order_uses_combined_constraint_when_fleet_range_covers_specs(self):
+        order = make_order(
+            "ORD-COMBO",
+            targetWidth=1004,
+            targetThickness=46,
+            cleanroomReq="Class_10K",
+            recipeMaterialsSequence=["A"] * 5,
+        )
+        machines = [
+            make_machine(
+                machineId="LINE-01",
+                cleanroomLevel="Class_10K",
+                layerStructure=5,
+                minWidth=150,
+                maxWidth=450,
+                minThickness=30,
+                maxThickness=80,
+            ),
+            make_machine(
+                machineId="LINE-02",
+                cleanroomLevel="Class_10K",
+                layerStructure=5,
+                minWidth=250,
+                maxWidth=600,
+                minThickness=30,
+                maxThickness=100,
+            ),
+            make_machine(
+                machineId="LINE-09",
+                cleanroomLevel="Class_100K",
+                layerStructure=3,
+                minWidth=800,
+                maxWidth=1500,
+                minThickness=50,
+                maxThickness=200,
+            ),
+        ]
+
+        diagnostic = build_infeasible_order_diagnostic(order, machines).to_dict()
+
+        self.assertEqual(diagnostic["code"], "eligibility.combined_constraint_mismatch")
+        self.assertIn("没有单台机同时满足", diagnostic["root_cause"])
+        self.assertIn("宽幅可覆盖", diagnostic["root_cause"])
+        self.assertNotIn("不在可用机台范围 150-1500mm 内", diagnostic["root_cause"])
+
     def test_parse_infeasible_log_diagnostics(self):
         text = "07:05:11 [ERROR] src.scheduler: 订单 ORD-062 无可用机台: width=1718, thickness=80"
 

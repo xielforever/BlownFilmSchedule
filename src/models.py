@@ -10,6 +10,14 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 
 
+def _parse_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().upper() in {"YES", "TRUE", "1", "Y"}
+
+
 @dataclass
 class ProductionOrderModel:
     """生产订单内存规范模型类"""
@@ -34,6 +42,7 @@ class ProductionOrderModel:
     order_date_mins: int = 0
     due_date_mins: int = 0
     material_available_mins: int = 0    # 原料齐套时点
+    priority_override: Optional[int] = None
 
     # 运行时注入的配方信息
     recipe_materials: List[str] = field(default_factory=list)
@@ -57,11 +66,20 @@ class ProductionOrderModel:
             cleanroom_req=str(d["cleanroomReq"]),
             customer_class=str(d["customerClass"]),
             order_class=str(d["orderClass"]),
-            corona_req=(str(d["coronaReq"]).upper() == "YES"),
+            corona_req=_parse_bool(d["coronaReq"]),
             core_size_inch=int(d["coreSizeInch"]),
             order_date_mins=int(d.get("orderDateMins", 0)),
             due_date_mins=int(d.get("dueDateMins", 0)),
             material_available_mins=int(d.get("materialAvailableMins", 0)),
+            priority_override=(
+                int(d.get("priorityOverride"))
+                if d.get("priorityOverride") is not None
+                else (
+                    int(d.get("priority_override"))
+                    if d.get("priority_override") is not None
+                    else None
+                )
+            ),
             recipe_materials=list(d.get("recipeMaterialsSequence", [])),
         )
 
@@ -97,6 +115,9 @@ class BlownFilmMachineModel:
     initial_material_lanes: List[str] = field(default_factory=list)  # 广播后的多螺杆挂料数组
     initial_width: int = 0     # mm
     initial_thickness: int = 0 # um
+    initial_corona: bool = False
+    initial_core_size: int = 3
+    initial_continuous_run_mins: int = 0
 
     # 合规约束
     forbidden_calendar: List[ForbiddenWindow] = field(default_factory=list)
@@ -128,6 +149,9 @@ class BlownFilmMachineModel:
             initial_material_lanes=list(d.get("initialMaterialLanes", [])),
             initial_width=int(d.get("initialWidth", 0)),
             initial_thickness=int(d.get("initialThickness", 0)),
+            initial_corona=_parse_bool(d.get("initialCorona"), False),
+            initial_core_size=int(d.get("initialCoreSize", 3)),
+            initial_continuous_run_mins=int(d.get("initialContinuousRunMins", 0) or 0),
             forbidden_calendar=calendar,
         )
 

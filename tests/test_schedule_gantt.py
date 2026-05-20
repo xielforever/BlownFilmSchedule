@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timezone
 
-from api.routers.schedule import _build_idle_windows, _decode_child_output
+from api.routers.schedule import _build_idle_windows, _decode_child_output, _task_busy_end, _task_busy_start
 
 
 def dt(hour):
@@ -41,6 +41,10 @@ class TestScheduleGanttHelpers(unittest.TestCase):
         self.assertEqual(line_01[1]["code"], "idle.before_maintenance")
         self.assertEqual(line_01[1]["confidence"], "proven")
         self.assertIn("diagnostic", line_01[1])
+        self.assertEqual(
+            line_01[1]["diagnostic"]["recommendations"][0]["href"],
+            "/config?tab=rules&section=maintenance",
+        )
         self.assertEqual(len(line_02), 1)
         self.assertEqual(line_02[0]["duration_mins"], 360)
         self.assertEqual(line_02[0]["reason"], "No scheduled work in active run")
@@ -139,6 +143,25 @@ class TestScheduleGanttHelpers(unittest.TestCase):
 
         self.assertEqual(_decode_child_output(message.encode("utf-8")), message)
         self.assertEqual(_decode_child_output(message.encode("gbk")), message)
+
+    def test_task_busy_window_uses_setup_start_when_available(self):
+        task = {
+            "setup_start_time": dt(8),
+            "start_time": dt(9),
+            "end_time": dt(10),
+        }
+
+        self.assertEqual(_task_busy_start(task), dt(8))
+        self.assertEqual(_task_busy_end(task), dt(10))
+
+    def test_task_busy_window_falls_back_to_production_start(self):
+        task = {
+            "setup_start_time": None,
+            "start_time": dt(9),
+            "end_time": dt(10),
+        }
+
+        self.assertEqual(_task_busy_start(task), dt(9))
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ export default function Layout() {
 
   const links = [
     { to: '/', icon: '仪', label: '仪表盘' },
+    { to: '/workbench', icon: '排', label: '排程工作台' },
     { to: '/gantt', icon: '甘', label: 'Gantt 图' },
     { to: '/orders', icon: '单', label: '订单' },
     { to: '/machines', icon: '机', label: '机台' },

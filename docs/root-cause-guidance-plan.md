@@ -33,10 +33,11 @@
 
 ### Infeasible Orders
 
-- `eligibility.width_out_of_range`: 订单目标幅宽超出所有候选机台边界。
-- `eligibility.thickness_out_of_range`: 订单厚度超出机台能力。
-- `eligibility.cleanroom_mismatch`: Class_10K 订单只能上更高洁净能力机台。
-- `eligibility.layer_mismatch`: 配方层数超过机台层数。
+- `eligibility.width_out_of_range`: 订单目标幅宽超出全厂候选机台幅宽边界。
+- `eligibility.thickness_out_of_range`: 订单厚度超出全厂候选机台厚度边界。
+- `eligibility.cleanroom_mismatch`: 订单洁净度要求没有任何候选机台可满足。
+- `eligibility.layer_mismatch`: 配方层数超过全厂候选机台最高层数。
+- `eligibility.combined_constraint_mismatch`: 幅宽、厚度、洁净度、层数等单项能力可能分别存在覆盖，但没有任何单台机同时满足组合约束。
 - `eligibility.machine_unavailable`: 机台 `OFFLINE`、非 active，或排程窗口内完全被禁排覆盖。
 - `eligibility.no_capacity`: 有能力机台，但可用产能无法在计划域内承接。
 - `material.not_available`: 原料齐套时间晚于可接受开工或交期。

@@ -172,6 +172,35 @@ class TestSchedulerSequencing(unittest.TestCase):
         self.assertEqual(diagnostic.category, "setup")
         self.assertTrue(any(item.metric == "fallback_lookup_count" and item.actual == 2 for item in diagnostic.evidence))
 
+    def test_priority_override_replaces_default_tardiness_weight(self):
+        order = _make_order(
+            "ORD-PRIORITY",
+            customerClass="VIP",
+            orderClass="URGENT",
+            priorityOverride=7,
+        )
+        aps = AdvancedMedicalAPS(_make_setup_mgr())
+
+        self.assertEqual(aps._tardiness_weight(order), 7)
+
+    def test_continuous_run_diagnostic_flags_cleaning_need(self):
+        result = ScheduleResult()
+        machine = _make_machine(initialContinuousRunMins=4300)
+        order = _make_order("ORD-CLEAN")
+        result.add_task(ScheduledTask(order, machine, 30, 90, 30, 0, 0))
+        aps = AdvancedMedicalAPS(_make_setup_mgr())
+
+        aps._append_continuous_run_diagnostics(result)
+
+        self.assertEqual(len(result.diagnostics), 1)
+        diagnostic = result.diagnostics[0]
+        self.assertEqual(diagnostic.code, "maintenance.continuous_run_cleaning_required")
+        self.assertEqual(diagnostic.entity_id, machine.machine_id)
+        self.assertTrue(any(
+            item.metric == "continuous_run_mins" and item.actual > 4320
+            for item in diagnostic.evidence
+        ))
+
     def test_decode_child_output_handles_gbk_logs(self):
         text = "订单 ORD-062 无可用机台: width=1718, thickness=80"
         self.assertEqual(_decode_child_output(text.encode("gbk")), text)

@@ -25,6 +25,8 @@ class MachineUpdate(BaseModel):
     current_width: Optional[int] = Field(default=None, ge=0)
     current_thickness: Optional[int] = Field(default=None, ge=0)
     current_materials: Optional[List[str]] = None
+    current_corona: Optional[bool] = None
+    current_core_size: Optional[int] = Field(default=None, ge=0)
 
 
 @router.get("")
@@ -56,10 +58,91 @@ def list_machines(db=Depends(get_db), _=Depends(get_current_user)):
             "current_width": r["current_width"],
             "current_thickness": r["current_thickness"],
             "current_materials": r["current_material_lanes"],
+            "current_corona": r["current_corona"],
+            "current_core_size": r["current_core_size"],
             "last_order_id": r["last_order_id"],
             "continuous_run_mins": r["continuous_run_mins"] or 0,
         })
     return machines
+
+
+@router.post("/apply-schedule-end-state")
+def apply_schedule_end_state(
+    run_id: Optional[int] = None,
+    db=Depends(get_db),
+    _=Depends(require_role("admin", "planner")),
+):
+    cur = db.cursor()
+    if run_id is None:
+        cur.execute(
+            "SELECT run_id FROM schedule_runs "
+            "WHERE is_active=TRUE ORDER BY run_id DESC LIMIT 1"
+        )
+    else:
+        cur.execute("SELECT run_id FROM schedule_runs WHERE run_id=%s", (run_id,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Schedule run not found.")
+
+    resolved_run_id = row["run_id"]
+    cur.execute("""
+        WITH recipe_materials AS (
+            SELECT product_type, ARRAY_AGG(material_grade ORDER BY layer) AS materials
+            FROM recipes
+            GROUP BY product_type
+        ),
+        latest_task AS (
+            SELECT DISTINCT ON (t.machine_id)
+                t.machine_id,
+                t.order_id,
+                o.product_type,
+                o.target_width,
+                o.target_thickness,
+                o.corona_req,
+                o.core_size_inch
+            FROM scheduled_tasks t
+            JOIN production_orders o ON o.order_id = t.order_id
+            WHERE t.run_id = %s
+            ORDER BY t.machine_id, t.end_time DESC, t.id DESC
+        ),
+        state_rows AS (
+            SELECT
+                lt.machine_id,
+                COALESCE(rm.materials, s.current_material_lanes, ARRAY[]::TEXT[]) AS current_material_lanes,
+                lt.target_width AS current_width,
+                lt.target_thickness AS current_thickness,
+                lt.corona_req AS current_corona,
+                COALESCE(lt.core_size_inch, 3) AS current_core_size,
+                lt.order_id AS last_order_id
+            FROM latest_task lt
+            LEFT JOIN recipe_materials rm ON rm.product_type = lt.product_type
+            LEFT JOIN machine_current_state s ON s.machine_id = lt.machine_id
+        )
+        INSERT INTO machine_current_state
+            (machine_id, current_material_lanes, current_width,
+             current_thickness, current_corona, current_core_size, last_order_id)
+        SELECT
+            machine_id, current_material_lanes, current_width,
+            current_thickness, current_corona, current_core_size, last_order_id
+        FROM state_rows
+        ON CONFLICT (machine_id) DO UPDATE SET
+            current_material_lanes=EXCLUDED.current_material_lanes,
+            current_width=EXCLUDED.current_width,
+            current_thickness=EXCLUDED.current_thickness,
+            current_corona=EXCLUDED.current_corona,
+            current_core_size=EXCLUDED.current_core_size,
+            last_order_id=EXCLUDED.last_order_id,
+            updated_at=NOW()
+        RETURNING machine_id, current_material_lanes, current_width,
+            current_thickness, current_corona, current_core_size, last_order_id
+    """, (resolved_run_id,))
+    rows = cur.fetchall()
+    db.commit()
+    return {
+        "run_id": resolved_run_id,
+        "applied_count": len(rows),
+        "machines": [dict(r) for r in rows],
+    }
 
 
 @router.patch("/{machine_id}")
@@ -96,6 +179,8 @@ def update_machine(
         "current_width": "current_width",
         "current_thickness": "current_thickness",
         "current_materials": "current_material_lanes",
+        "current_corona": "current_corona",
+        "current_core_size": "current_core_size",
     }
 
     cur = db.cursor()
@@ -132,14 +217,17 @@ def update_machine(
             cur.execute(
                 """
                 INSERT INTO machine_current_state
-                    (machine_id, current_width, current_thickness, current_material_lanes)
-                VALUES (%s, %s, %s, %s)
+                    (machine_id, current_width, current_thickness,
+                     current_material_lanes, current_corona, current_core_size)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                 (
                     machine_id,
                     fields.get("current_width", 0),
                     fields.get("current_thickness", 0),
                     fields.get("current_materials", []),
+                    fields.get("current_corona", False),
+                    fields.get("current_core_size", 3),
                 ),
             )
 
@@ -164,7 +252,24 @@ def get_timeline(machine_id: str, db=Depends(get_db), _=Depends(get_current_user
              for r in cur.fetchall()]
 
     # 维保
-    cur.execute("SELECT start_time, end_time, reason FROM machine_maintenance_calendar WHERE machine_id=%s", (machine_id,))
+    cur.execute("""
+        SELECT start_time, end_time, reason
+        FROM (
+            SELECT DISTINCT ON (
+                machine_id, start_time, end_time, maintenance_type,
+                COALESCE(reason, ''), COALESCE(is_recurring, FALSE),
+                COALESCE(recurrence_rule, '')
+            )
+                machine_id, start_time, end_time, reason
+            FROM machine_maintenance_calendar
+            WHERE machine_id=%s
+            ORDER BY
+                machine_id, start_time, end_time, maintenance_type,
+                COALESCE(reason, ''), COALESCE(is_recurring, FALSE),
+                COALESCE(recurrence_rule, ''), id
+        ) deduped
+        ORDER BY start_time
+    """, (machine_id,))
     maint = [{"type": "maintenance", "start": r["start_time"].isoformat(),
               "end": r["end_time"].isoformat(), "reason": r["reason"]} for r in cur.fetchall()]
 

@@ -131,8 +131,8 @@ export default function OrdersPage() {
                 <td>{o.total_quantity_kg} kg</td>
                 <td>
                   {o.customer_class === 'VIP' && <span className="badge badge-vip" style={{ marginRight: 4 }}>VIP</span>}
-                  {o.order_class === 'URGENT' && <span className="badge badge-urgent">URGENT</span>}
-                  {o.order_class === 'SAMPLE' && <span className="badge badge-urgent">SAMPLE</span>}
+                  {o.order_class === 'URGENT' && <span className="badge badge-urgent">加急</span>}
+                  {o.order_class === 'SAMPLE' && <span className="badge badge-urgent">样品</span>}
                   {o.order_class === 'NORMAL' && o.customer_class !== 'VIP' && <span style={{ color: 'var(--text-muted)' }}>标准</span>}
                 </td>
                 <td style={{ fontSize: 12 }}>{o.due_date ? new Date(o.due_date).toLocaleDateString('zh-CN') : '-'}</td>
