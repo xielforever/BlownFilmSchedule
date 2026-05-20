@@ -27,7 +27,7 @@
 - [x] Show structured failed-trigger diagnostics before raw logs.
 - [x] Add Gantt event detail panel for clicked events.
 - [x] Add order configuration warning panel for `?order=...` diagnostics.
-- [ ] Add machine-level diagnostic cards to `MachinesPage`.
+- [x] Add machine-level diagnostic cards to `MachinesPage`.
 
 ## Phase 4: Real Data Regression
 
