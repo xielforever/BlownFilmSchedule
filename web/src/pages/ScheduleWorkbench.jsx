@@ -59,6 +59,7 @@ const reasonOptions = [
   ['DUE_DATE_NEGOTIATED', '交期协商结果'],
   ['OTHER', '其他'],
 ];
+const ORDER_PAGE_SIZE = 500;
 
 function formatTime(value) {
   return value ? new Date(value).toLocaleString('zh-CN') : '-';
@@ -81,6 +82,29 @@ function formatError(err, fallback) {
 function asNumber(value, fallback = 0) {
   const next = Number(value);
   return Number.isFinite(next) ? next : fallback;
+}
+
+async function loadPendingOrders() {
+  const first = await getOrders({ status: 'PENDING', page: 1, size: ORDER_PAGE_SIZE });
+  const firstItems = first.data.items || [];
+  const total = asNumber(first.data.total, firstItems.length);
+  const pageCount = Math.ceil(total / ORDER_PAGE_SIZE);
+  if (pageCount <= 1) {
+    return { items: firstItems, total };
+  }
+
+  const rest = await Promise.all(
+    Array.from({ length: pageCount - 1 }, (_, index) =>
+      getOrders({ status: 'PENDING', page: index + 2, size: ORDER_PAGE_SIZE }),
+    ),
+  );
+  return {
+    items: [
+      ...firstItems,
+      ...rest.flatMap(response => response.data.items || []),
+    ],
+    total,
+  };
 }
 
 function planCounts(plan, taskCount = null) {
@@ -116,6 +140,7 @@ function SettingsSwitch({ label, checked, onChange }) {
 
 export default function ScheduleWorkbench() {
   const [orders, setOrders] = useState([]);
+  const [pendingOrderTotal, setPendingOrderTotal] = useState(0);
   const [machines, setMachines] = useState([]);
   const [preplans, setPreplans] = useState([]);
   const [activePlan, setActivePlan] = useState(null);
@@ -184,15 +209,16 @@ export default function ScheduleWorkbench() {
 
   const loadAll = useCallback(async (openDraft = false) => {
     const [ordersRes, machinesRes, settingsRes, preplansRes, queueRes] = await Promise.all([
-      getOrders({ status: 'PENDING', size: 500 }),
+      loadPendingOrders(),
       getMachines(),
       getScheduleSettings(),
       getPreplans(),
       getManufacturingQueue(),
     ]);
-    const nextOrders = ordersRes.data.items || [];
+    const nextOrders = ordersRes.items || [];
     const availableOrderIds = new Set(nextOrders.map(order => order.order_id));
     setOrders(nextOrders);
+    setPendingOrderTotal(ordersRes.total || nextOrders.length);
     setSelected(prev => prev.filter(orderId => availableOrderIds.has(orderId)));
     setMachines(machinesRes.data || []);
     setSettings(settingsRes.data);
@@ -241,9 +267,9 @@ export default function ScheduleWorkbench() {
       await loadAll();
       setSelected([]);
       setResetConfirming(false);
-      setStatus({ tone: 'ok', message: `已将 ${res.data.updated_count} 条未开工已排订单恢复为待排，共 ${res.data.total_orders} 条订单。` });
+      setStatus({ tone: 'ok', message: `已清理 ${res.data.updated_count} 条孤立已排订单，共 ${res.data.total_orders} 条订单。` });
     } catch (err) {
-      setStatus({ tone: 'error', message: formatError(err, '重置订单状态失败。') });
+      setStatus({ tone: 'error', message: formatError(err, '清理孤立已排订单失败。') });
     } finally {
       setBusy(false);
     }
@@ -361,7 +387,16 @@ export default function ScheduleWorkbench() {
     setBusy(true);
     try {
       await confirmPreplan(activePlan.run.run_id);
-      const [preplansRes, queueRes] = await Promise.all([getPreplans(), getManufacturingQueue()]);
+      const [ordersRes, preplansRes, queueRes] = await Promise.all([
+        loadPendingOrders(),
+        getPreplans(),
+        getManufacturingQueue(),
+      ]);
+      const nextOrders = ordersRes.items || [];
+      const availableOrderIds = new Set(nextOrders.map(order => order.order_id));
+      setOrders(nextOrders);
+      setPendingOrderTotal(ordersRes.total || nextOrders.length);
+      setSelected(prev => prev.filter(orderId => availableOrderIds.has(orderId)));
       setPreplans(preplansRes.data || []);
       setQueue(queueRes.data || []);
       const detail = await getPreplan(activePlan.run.run_id);
@@ -411,7 +446,7 @@ export default function ScheduleWorkbench() {
         <div className="page-toolbar">
           <button className="btn btn-ghost" onClick={() => loadAll()} disabled={busy}>刷新</button>
           <button className="btn btn-danger" onClick={handleResetOrders} disabled={busy}>
-            {resetConfirming ? '确认重置全部订单' : '重置全部为待排'}
+            {resetConfirming ? '确认清理孤立订单' : '清理孤立已排订单'}
           </button>
           {resetConfirming && (
             <button className="btn btn-ghost" onClick={() => setResetConfirming(false)} disabled={busy}>取消</button>
@@ -446,7 +481,7 @@ export default function ScheduleWorkbench() {
         <section className="workbench-panel order-pool">
           <div className="workbench-panel-head">
             <h3>待排订单池</h3>
-            <span>已选 {selected.length} / 当前 {filteredOrders.length} / 共 {orders.length} 单</span>
+            <span>已选 {selected.length} / 当前 {filteredOrders.length} / 共 {pendingOrderTotal} 单</span>
           </div>
           <div className="workbench-order-tools">
             <input

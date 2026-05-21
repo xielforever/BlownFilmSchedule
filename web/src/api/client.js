@@ -38,7 +38,7 @@ export const adjustPreplanTask = (runId, payload) => api.post(`/schedule/preplan
 export const validatePreplan = (runId) => api.post(`/schedule/preplans/${runId}/validate`);
 export const confirmPreplan = (runId) => api.post(`/schedule/preplans/${runId}/confirm`);
 export const cancelPreplan = (runId, payload = {}) => api.post(`/schedule/preplans/${runId}/cancel`, payload);
-export const getManufacturingQueue = () => api.get('/schedule/manufacturing-queue');
+export const getManufacturingQueue = (params) => api.get('/schedule/manufacturing-queue', { params });
 export const clearActiveSchedule = () => api.post('/schedule/clear-active');
 export const getOrders = (params) => api.get('/orders', { params });
 export const updateOrder = (id, payload) => api.patch(`/orders/${id}`, payload);

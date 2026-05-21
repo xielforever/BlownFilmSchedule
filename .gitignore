@@ -8,4 +8,5 @@ output/schedule_report.md
 
 web/dist/
 web/.vite/
+web/.playwright-cli/
 web/node_modules/

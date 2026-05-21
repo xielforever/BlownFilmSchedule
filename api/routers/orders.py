@@ -114,21 +114,38 @@ def reset_orders_to_pending(
 ):
     cur = db.cursor()
     cur.execute("""
-        UPDATE production_orders
-        SET status='PENDING', updated_at=NOW()
-        WHERE status='SCHEDULED'
-          AND NOT EXISTS (
-              SELECT 1
-              FROM manufacturing_queue q
-              WHERE q.order_id=production_orders.order_id
-                AND q.queue_status IN ('IN_PRODUCTION', 'COMPLETED')
-          )
+        WITH active_queue_orders AS (
+            SELECT DISTINCT q.order_id
+            FROM manufacturing_queue q
+            JOIN schedule_runs r ON r.run_id=q.run_id
+            WHERE r.is_active=TRUE
+              AND r.lifecycle_status='CONFIRMED'
+              AND q.queue_status IN ('QUEUED', 'READY', 'ON_HOLD', 'IN_PRODUCTION', 'COMPLETED')
+        ),
+        reset_rows AS (
+            UPDATE production_orders o
+            SET status='PENDING', updated_at=NOW()
+            WHERE o.status='SCHEDULED'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM active_queue_orders aq
+                  WHERE aq.order_id=o.order_id
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM manufacturing_queue q
+                  WHERE q.order_id=o.order_id
+                    AND q.queue_status IN ('IN_PRODUCTION', 'COMPLETED')
+              )
+            RETURNING o.order_id
+        )
+        SELECT COUNT(*) AS updated_count FROM reset_rows
     """)
-    updated = cur.rowcount
+    updated = cur.fetchone()["updated_count"]
     cur.execute("SELECT COUNT(*) AS cnt FROM production_orders")
     total = cur.fetchone()["cnt"]
     db.commit()
-    return {"updated_count": updated, "total_orders": total}
+    return {"scope": "orphaned_scheduled_orders", "updated_count": updated, "total_orders": total}
 
 
 @router.patch("/{order_id}")

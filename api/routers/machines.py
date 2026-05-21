@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from api.deps import get_db
 from api.auth import get_current_user, require_role
+from src.config import MANDATORY_CLEANING_DURATION_MINUTES
 
 router = APIRouter(prefix="/api/machines", tags=["Machines"])
 
@@ -27,6 +28,39 @@ class MachineUpdate(BaseModel):
     current_materials: Optional[List[str]] = None
     current_corona: Optional[bool] = None
     current_core_size: Optional[int] = Field(default=None, ge=0)
+
+
+def _continuous_run_mins_after_schedule(initial_mins, tasks):
+    ordered = sorted(
+        tasks,
+        key=lambda item: (
+            item.get("setup_start_time") or item.get("start_time"),
+            item.get("end_time"),
+        ),
+    )
+    if not ordered:
+        return max(0, int(initial_mins or 0))
+
+    segment_anchor = None
+    segment_initial = max(0, int(initial_mins or 0))
+    last_end = None
+    elapsed = segment_initial
+    for task in ordered:
+        setup_start = task.get("setup_start_time") or task.get("start_time")
+        end_time = task.get("end_time")
+        if not setup_start or not end_time:
+            continue
+        if segment_anchor is None:
+            segment_anchor = setup_start
+        elif last_end is not None:
+            gap_mins = int((setup_start - last_end).total_seconds() / 60)
+            if gap_mins >= MANDATORY_CLEANING_DURATION_MINUTES:
+                segment_anchor = setup_start
+                segment_initial = 0
+
+        elapsed = segment_initial + int((end_time - segment_anchor).total_seconds() / 60)
+        last_end = end_time
+    return max(0, elapsed)
 
 
 @router.get("")
@@ -86,6 +120,12 @@ def apply_schedule_end_state(
 
     resolved_run_id = row["run_id"]
     cur.execute("""
+        SELECT machine_id, COALESCE(continuous_run_mins, 0) AS continuous_run_mins,
+            last_order_id
+        FROM machine_current_state
+    """)
+    previous_state = {r["machine_id"]: dict(r) for r in cur.fetchall()}
+    cur.execute("""
         WITH recipe_materials AS (
             SELECT product_type, ARRAY_AGG(material_grade ORDER BY layer) AS materials
             FROM recipes
@@ -137,11 +177,45 @@ def apply_schedule_end_state(
             current_thickness, current_corona, current_core_size, last_order_id
     """, (resolved_run_id,))
     rows = cur.fetchall()
+    state_rows = [dict(r) for r in rows]
+    cur.execute("""
+        SELECT t.machine_id, t.setup_start_time, t.start_time, t.end_time
+        FROM scheduled_tasks t
+        WHERE t.run_id=%s
+        ORDER BY t.machine_id, t.start_time, t.id
+    """, (resolved_run_id,))
+    tasks_by_machine = {}
+    for task in cur.fetchall():
+        machine_id = task["machine_id"]
+        tasks_by_machine.setdefault(machine_id, []).append(task)
+
+    continuous_by_machine = {}
+    for row in state_rows:
+        machine_id = row["machine_id"]
+        previous = previous_state.get(machine_id, {})
+        if previous.get("last_order_id") == row["last_order_id"]:
+            continuous_by_machine[machine_id] = previous.get("continuous_run_mins", 0)
+            continue
+        continuous_by_machine[machine_id] = _continuous_run_mins_after_schedule(
+            previous.get("continuous_run_mins", 0),
+            tasks_by_machine.get(machine_id, []),
+        )
+    for machine_id, continuous_run_mins in continuous_by_machine.items():
+        cur.execute(
+            """
+            UPDATE machine_current_state
+            SET continuous_run_mins=%s, updated_at=NOW()
+            WHERE machine_id=%s
+            """,
+            (continuous_run_mins, machine_id),
+        )
+    for row in state_rows:
+        row["continuous_run_mins"] = continuous_by_machine.get(row["machine_id"], 0)
     db.commit()
     return {
         "run_id": resolved_run_id,
-        "applied_count": len(rows),
-        "machines": [dict(r) for r in rows],
+        "applied_count": len(state_rows),
+        "machines": state_rows,
     }
 
 

@@ -11,7 +11,7 @@ import threading
 from typing import Optional
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from psycopg2.extras import Json
 
@@ -2264,21 +2264,42 @@ def cancel_preplan(
 
 
 @router.get("/manufacturing-queue")
-def get_manufacturing_queue(db=Depends(get_db), _=Depends(get_current_user)):
+def get_manufacturing_queue(
+    include_history: bool = False,
+    status: Optional[str] = None,
+    limit: int = Query(default=500, ge=1, le=1000),
+    db=Depends(get_db),
+    _=Depends(get_current_user),
+):
     _ensure_planning_schema(db)
     cur = db.cursor()
-    cur.execute("""
+    where_clauses = []
+    params = []
+    if include_history:
+        if status:
+            where_clauses.append("q.queue_status=%s")
+            params.append(status)
+    else:
+        where_clauses.extend([
+            "r.is_active=TRUE",
+            "r.lifecycle_status='CONFIRMED'",
+        ])
+        if status:
+            where_clauses.append("q.queue_status=%s")
+            params.append(status)
+        else:
+            where_clauses.append("q.queue_status<>'CANCELLED'")
+    where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+    cur.execute(f"""
         SELECT q.*, o.product_type, o.target_width, o.target_thickness,
             o.total_quantity_kg, o.order_class
         FROM manufacturing_queue q
         JOIN production_orders o ON o.order_id=q.order_id
         JOIN schedule_runs r ON r.run_id=q.run_id
-        WHERE r.is_active=TRUE
-          AND r.lifecycle_status='CONFIRMED'
-          AND q.queue_status<>'CANCELLED'
+        {where_sql}
         ORDER BY q.planned_start_time, q.machine_id, q.sequence_index
-        LIMIT 500
-    """)
+        LIMIT %s
+    """, params + [limit])
     rows = []
     for row in cur.fetchall():
         rows.append({
