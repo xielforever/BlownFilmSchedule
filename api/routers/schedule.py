@@ -320,6 +320,227 @@ def _task_row_to_dict(row):
     }
 
 
+def _as_int(value, fallback=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _as_number(value, fallback=0):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _order_id_from_diagnostic(item):
+    return item.get("entity_id") or item.get("order_id")
+
+
+def _first_order_diagnostics(diagnostics):
+    result = {}
+    for item in diagnostics or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("entity_type") != "order" and not item.get("order_id"):
+            continue
+        order_id = _order_id_from_diagnostic(item)
+        if order_id and order_id not in result:
+            result[order_id] = item
+    return result
+
+
+def _count_eligible_machines(order, machines):
+    if not order:
+        return 0
+    recipe_layers = _as_int(order.get("recipe_layers"), 1)
+    count = 0
+    for machine in machines or []:
+        if machine.get("status", "ACTIVE") != "ACTIVE":
+            continue
+        if order.get("cleanroom_req") == "Class_10K" and machine.get("cleanroom_level") == "Class_100K":
+            continue
+        width = order.get("target_width")
+        if width is not None and not (_as_number(machine.get("min_width")) <= _as_number(width) <= _as_number(machine.get("max_width"))):
+            continue
+        thickness = order.get("target_thickness")
+        if thickness is not None and not (_as_number(machine.get("min_thickness")) <= _as_number(thickness) <= _as_number(machine.get("max_thickness"))):
+            continue
+        if recipe_layers > _as_int(machine.get("layer_structure")):
+            continue
+        count += 1
+    return count
+
+
+def _preplan_order_base(order_id, order=None):
+    source = order or {}
+    return {
+        "order_id": order_id,
+        "product_type": source.get("product_type"),
+        "target_width": source.get("target_width"),
+        "target_thickness": source.get("target_thickness"),
+        "total_quantity_kg": source.get("total_quantity_kg"),
+        "cleanroom_req": source.get("cleanroom_req"),
+        "customer_class": source.get("customer_class"),
+        "order_class": source.get("order_class"),
+        "due_date": _iso(source.get("due_date")),
+        "material_available_time": _iso(source.get("material_available_time")),
+        "status": source.get("status"),
+        "recipe_layers": source.get("recipe_layers"),
+    }
+
+
+def _preplan_order_bucket_row(order_id, order=None, task=None, diagnostic=None, bucket="input", bucket_reason=""):
+    row = _preplan_order_base(order_id, order)
+    candidate_machine_count = _as_int((order or {}).get("candidate_machine_count"))
+    eligible_machine_count = _as_int((order or {}).get("eligible_machine_count"))
+    row.update({
+        "bucket": bucket,
+        "placement_status": bucket.upper(),
+        "bucket_reason": bucket_reason,
+        "candidate_machine_count": candidate_machine_count,
+        "eligible_machine_count": eligible_machine_count,
+    })
+    if task:
+        row.update({
+            "scheduled_task_id": task.get("id"),
+            "machine_id": task.get("machine_id"),
+            "sequence_index": task.get("sequence_index"),
+            "setup_start_time": task.get("setup_start_time"),
+            "start_time": task.get("start_time"),
+            "end_time": task.get("end_time"),
+            "is_late": task.get("is_late"),
+            "tardiness_mins": task.get("tardiness_mins"),
+            "task_source": task.get("task_source"),
+        })
+    if diagnostic:
+        row.update({
+            "entity_type": diagnostic.get("entity_type", "order"),
+            "entity_id": diagnostic.get("entity_id") or order_id,
+            "severity": diagnostic.get("severity"),
+            "category": diagnostic.get("category"),
+            "code": diagnostic.get("code"),
+            "display_title": diagnostic.get("display_title") or order_id,
+            "confidence": diagnostic.get("confidence"),
+            "root_cause": diagnostic.get("root_cause"),
+            "evidence": diagnostic.get("evidence") or [],
+            "recommendations": diagnostic.get("recommendations") or [],
+            "diagnostic": diagnostic,
+        })
+    return row
+
+
+def _build_preplan_order_buckets(order_rows, machines, tasks, diagnostics, selected_order_ids):
+    orders_by_id = {row["order_id"]: dict(row) for row in order_rows or []}
+    task_by_order = {}
+    for task in tasks or []:
+        task_by_order.setdefault(task.get("order_id"), task)
+
+    diagnostics_by_order = _first_order_diagnostics(diagnostics)
+    ordered_ids = []
+    for source in (selected_order_ids or []):
+        if source and source not in ordered_ids:
+            ordered_ids.append(source)
+    for source in list(task_by_order) + list(diagnostics_by_order):
+        if source and source not in ordered_ids:
+            ordered_ids.append(source)
+
+    input_orders = []
+    scheduled_orders = []
+    schedulable_orders = []
+    unplaced_schedulable_orders = []
+    blocked_orders = []
+    late_orders = []
+    candidate_machine_count = len(machines or [])
+
+    for order_id in ordered_ids:
+        order = orders_by_id.get(order_id, {"order_id": order_id})
+        order["candidate_machine_count"] = candidate_machine_count
+        order["eligible_machine_count"] = _count_eligible_machines(order, machines)
+        task = task_by_order.get(order_id)
+        diagnostic = diagnostics_by_order.get(order_id)
+        diagnostic_blocks = diagnostic and diagnostic.get("category") == "eligibility"
+
+        if diagnostic_blocks or order["eligible_machine_count"] == 0:
+            bucket = "blocked"
+            reason = (
+                (diagnostic or {}).get("root_cause")
+                or "订单没有满足硬能力约束的可用机台。"
+            )
+        elif task:
+            bucket = "scheduled"
+            reason = "已落位到预排程任务。"
+        else:
+            bucket = "unplaced_schedulable"
+            reason = "订单满足硬能力约束，但当前草案未生成落位任务。"
+
+        input_orders.append(_preplan_order_bucket_row(order_id, order, task, diagnostic, bucket, reason))
+
+        if bucket == "blocked":
+            blocked_orders.append(_preplan_order_bucket_row(order_id, order, task, diagnostic, bucket, reason))
+            continue
+
+        if order["eligible_machine_count"] > 0:
+            schedulable_orders.append(_preplan_order_bucket_row(order_id, order, task, diagnostic, bucket, reason))
+
+        if task:
+            scheduled_row = _preplan_order_bucket_row(order_id, order, task, diagnostic, "scheduled", "已落位到预排程任务。")
+            scheduled_orders.append(scheduled_row)
+            if task.get("is_late") or _as_int(task.get("tardiness_mins")) > 0:
+                late_orders.append(_preplan_order_bucket_row(order_id, order, task, diagnostic, "late", "计划完工时间晚于订单交期。"))
+        else:
+            unplaced_schedulable_orders.append(_preplan_order_bucket_row(order_id, order, task, diagnostic, bucket, reason))
+
+    return {
+        "input_orders": input_orders,
+        "scheduled_orders": scheduled_orders,
+        "schedulable_orders": schedulable_orders,
+        "unplaced_schedulable_orders": unplaced_schedulable_orders,
+        "blocked_orders": blocked_orders,
+        "late_orders": late_orders,
+    }
+
+
+def _load_preplan_order_context(cur, run, tasks, diagnostics):
+    params = _normalize_json(run.get("solver_params"), {}) or {}
+    selected_ids = params.get("selected_order_ids") or []
+    diagnostics_by_order = _first_order_diagnostics(diagnostics)
+    order_ids = []
+    for source in selected_ids + [task.get("order_id") for task in tasks] + list(diagnostics_by_order):
+        if source and source not in order_ids:
+            order_ids.append(source)
+
+    order_rows = []
+    if order_ids:
+        cur.execute("""
+            SELECT o.order_id, o.product_type, o.target_width, o.target_thickness,
+                o.total_quantity_kg, o.cleanroom_req, o.order_class, o.due_date,
+                o.material_available_time, o.status,
+                COALESCE(c.customer_class, 'STANDARD') AS customer_class,
+                COALESCE(recipe_layers.layers, 1) AS recipe_layers
+            FROM production_orders o
+            LEFT JOIN customers c ON c.customer_id=o.customer_id
+            LEFT JOIN (
+                SELECT product_type, COUNT(*) AS layers
+                FROM recipes
+                GROUP BY product_type
+            ) recipe_layers ON recipe_layers.product_type=o.product_type
+            WHERE o.order_id = ANY(%s)
+        """, (order_ids,))
+        order_rows = cur.fetchall()
+
+    cur.execute("""
+        SELECT machine_id, status, cleanroom_level, layer_structure,
+            min_width, max_width, min_thickness, max_thickness
+        FROM machines
+        WHERE status='ACTIVE'
+        ORDER BY machine_id
+    """)
+    machines = cur.fetchall()
+    return _build_preplan_order_buckets(order_rows, machines, tasks, diagnostics, selected_ids)
+
+
 def _validation_item(severity, code, message, order_id=None, machine_id=None):
     return {
         "severity": severity,
@@ -1911,17 +2132,14 @@ def get_preplan(run_id: int, db=Depends(get_db), _=Depends(get_current_user)):
         })
     validation = _load_preplan_validation(db, run_id)
     diagnostics = _load_persisted_diagnostics(cur, run_id)
-    blocked_orders = [
-        item for item in diagnostics
-        if item.get("entity_type") == "order" and item.get("category") == "eligibility"
-    ]
+    order_buckets = _load_preplan_order_context(cur, run, tasks, diagnostics)
     return {
         "run": _run_row_to_dict(run),
         "tasks": tasks,
         "validation": validation,
         "adjustments": adjustments,
         "diagnostics": diagnostics,
-        "blocked_orders": blocked_orders,
+        **order_buckets,
     }
 
 
