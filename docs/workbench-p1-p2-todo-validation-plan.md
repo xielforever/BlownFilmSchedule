@@ -35,6 +35,39 @@ The layout redesign is also part of this plan. The workbench should move from a 
 - Cancelled draft history chips and active draft details now show `cancel_reason`, `cancelled_by`, and `cancelled_at` where available.
 - Validation completed with `npm run lint`, `npm run build`, and Playwright CLI smoke using temporary draft #23. The API returned `lifecycle_status=CANCELLED` and `cancel_reason=UI二次确认验证`.
 
+## Progress Update - 2026-05-22 Final
+
+- Completed Task 1.3, Task 3.1 through Task 3.6, Task 4.1 through Task 4.3, Task 5.1 through Task 5.6, and Sprint 6 verification.
+- Added `tests/test_preplan_contract.py` for gated live HTTP coverage of `GET /api/schedule/preplans/{run_id}` bucket fields and row contracts.
+- `/workbench` now defaults active drafts into an order-review workspace with a sticky inspector, collapses the pending order pool into a reversible drawer rail after draft activation, and keeps the resource view behind the workspace tab.
+- The inspector now prioritizes current-order review, root cause, and adjustment entry before the longer draft validation list.
+- Manufacturing queue is collapsed by default, shows a compact summary, and expands automatically after a successful publish.
+- Workbench system switches show lightweight save feedback, disable the active switch while saving, and roll back the local value on API failure.
+- Added stable `data-testid` hooks for workbench controls, order bucket rows, draft history rows, layout regions, inspector, adjustment form, and queue controls.
+- Added Playwright e2e harness under `web/e2e/` with `npm run e2e`; the suite covers search, filters, draft creation, validation, order selection, cancellation safety, manual adjustment entry, publish interception, and successful publish with queue verification.
+- Validation completed with:
+  - `python -m py_compile api\routers\schedule.py`
+  - `python -m pytest tests/test_scheduler_validation.py tests/test_dashboard_summary.py tests/test_preplan_order_buckets.py`
+  - `$env:APS_RUN_HTTP_TESTS='1'; python -m pytest tests/test_preplan_contract.py tests/test_api.py`
+  - `cd web && npm run lint`
+  - `cd web && npm run build`
+  - `cd web && npm run e2e`
+- `npm run build` still reports the existing Vite large-chunk warning; no functional regression was found.
+
+## Progress Update - 2026-05-22 Final Verification Correction
+
+- Fixed the remaining workbench e2e instability in Task 5.3.
+- Root cause: the workbench shell was interactive while its initial `loadAll(true)` request could still reset the active draft, selected tab, selected order, and adjustment form. In addition, the order table used a clickable `<tr>` as the test target, which was brittle under table scrolling and hit testing.
+- `/workbench` now exposes `data-loading`/`aria-busy` on `workbench-main-workspace`, disables key draft interactions while the initial load is in progress, and uses a real focusable row action button for `workbench-plan-order-{order_id}`.
+- Final verification passed with:
+  - `python -m py_compile api\routers\schedule.py`
+  - `python -m pytest tests/test_scheduler_validation.py tests/test_dashboard_summary.py tests/test_preplan_order_buckets.py`
+  - `$env:APS_RUN_HTTP_TESTS='1'; python -m pytest tests/test_preplan_contract.py tests/test_api.py`
+  - `cd web && npm run lint`
+  - `cd web && npm run build`
+  - `cd web && npm run e2e`
+- Browser smoke on `http://localhost:3000/workbench` confirmed the page loads without framework overlay or console errors, releases `data-loading=false`, selects a scheduled order, and opens the manual adjustment form.
+
 ## Prerequisites
 
 - Backend server can run on `http://localhost:8000`.
