@@ -238,12 +238,30 @@ test.describe.serial('schedule workbench closed loop', () => {
     cleanupRunIds.push(runId);
 
     await expect(page.getByTestId('workbench-workflow-stepper')).toBeVisible();
-    await expect(page.getByTestId('workbench-workflow-step-draft_review')).toHaveAttribute('aria-current', 'step');
+    await expect(page.getByTestId('workbench-stage-draft_review')).toHaveAttribute('aria-current', 'step');
+    await expect(page.getByTestId('workbench-stage-canvas')).toContainText('草案复核');
+    await expect(page.getByTestId('workbench-draft-review-stage')).toBeVisible();
     await expect(page.getByTestId('workbench-command-bar')).toContainText(`#${runId}`);
     await expect(page.getByTestId('workbench-command-bar')).toContainText('待复核');
     await expect(page.getByTestId('workbench-primary-action')).toContainText('校验方案');
     await expect(page.getByTestId('workbench-order-tab-needs-action')).toBeVisible();
     await expect(page.getByTestId('workbench-version-drawer-toggle')).toBeVisible();
+
+    await page.getByTestId('workbench-stage-order_pool').click();
+    await expect(page.getByTestId('workbench-stage-canvas')).toContainText('订单池');
+    await expect(page.getByTestId('workbench-order-pool-stage')).toBeVisible();
+
+    await page.getByTestId('workbench-stage-validate_publish').click();
+    await expect(page.getByTestId('workbench-stage-canvas')).toContainText('校验发布');
+    await expect(page.getByTestId('workbench-validate-publish-stage')).toBeVisible();
+    await expect(page.getByTestId('workbench-publish-checklist')).toBeVisible();
+
+    await page.getByTestId('workbench-stage-manufacturing_queue').click();
+    await expect(page.getByTestId('workbench-stage-canvas')).toContainText('制造队列');
+    await expect(page.getByTestId('workbench-manufacturing-queue-stage')).toBeVisible();
+
+    await page.getByTestId('workbench-stage-draft_review').click();
+    await expect(page.getByTestId('workbench-draft-review-stage')).toBeVisible();
 
     await expect(page.getByTestId('workbench-order-pool-toggle')).toHaveAttribute('aria-expanded', 'false');
     await page.setViewportSize({ width: 1265, height: 720 });
@@ -272,10 +290,11 @@ test.describe.serial('schedule workbench closed loop', () => {
     await firstPlanOrder.click();
     await expect(page.getByTestId('workbench-selected-order-review')).toContainText(selectedOrderId);
 
+    await page.getByTestId('workbench-stage-draft_review').click();
     await expect(page.getByTestId('workbench-resource-view')).toBeHidden();
-    await page.getByTestId('workbench-view-resource').click();
+    await page.getByTestId('workbench-draft-view-resource').click();
     await expect(page.getByTestId('workbench-resource-view')).toBeVisible();
-    await page.getByTestId('workbench-view-order-review').click();
+    await page.getByTestId('workbench-draft-view-orders').click();
     await expect(page.getByTestId('workbench-resource-view')).toBeHidden();
     await page.getByTestId('workbench-version-drawer-toggle').click();
     await expect(page.getByTestId('workbench-version-drawer')).toBeVisible();
@@ -360,7 +379,9 @@ test.describe.serial('schedule workbench closed loop', () => {
     await expect(page.getByTestId('workbench-inspector')).toContainText('发布成功');
     await expect(page.getByTestId('workbench-inspector')).not.toContainText('PUBLISH');
     await expect(page.getByTestId('workbench-primary-action')).toContainText('查看制造队列');
-    await page.getByTestId('workbench-view-queue').click();
+    await expect(page.getByTestId('workbench-stage-manufacturing_queue')).toHaveAttribute('aria-current', 'step');
+    await expect(page.getByTestId('workbench-stage-canvas')).toContainText('制造队列');
+    await expect(page.getByTestId('workbench-manufacturing-queue-stage')).toBeVisible();
     await expect(page.getByTestId('workbench-queue-panel')).toHaveClass(/expanded/);
     await expect(page.getByTestId('workbench-queue-table')).toBeVisible();
 

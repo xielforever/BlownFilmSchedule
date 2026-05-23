@@ -433,3 +433,22 @@ stageOverride = null | activeStage
 采用阶段驱动主内容区后，工作台的信息架构从“一个页面堆多个能力”变成“每个阶段只展示当前最重要的任务”。这更符合订单入库、订单初筛、订单预排程、订单修订、排程发布、制造队列推进的实际流程。
 
 本设计适合当前项目阶段：既保留系统辅助排程和人工复核的现实场景，也避免过早拆成多页面或重构后端契约。下一步应先执行 P0 和 P1，让主区真正跟随 4 阶段切换，再逐步做 Inspector 阶段化和视觉细化。
+
+## 16. 实施验证记录
+
+完成日期：2026-05-23
+
+- `cd web; npm run lint`：通过。
+- `cd web; npm run build`：通过；仍有既有 chunk-size warning。
+- `cd web; npm run e2e -- workbench.spec.js`：5 passed, 1 skipped。
+- `cd web; npm run e2e -- smoke-routes.spec.js`：1 passed。
+- `python -m pytest tests/test_order_flow_sprint1.py tests/test_publish_audit.py tests/test_queue_transitions.py tests/test_policy_settings.py -q`：29 passed。
+- Playwright 响应式检查：`1440x900` 和 `1280x720` 下主区与 Inspector 同行，`1024x768` 下堆叠；三种视口均无横向滚动，无框架错误覆盖。
+
+已落地：
+
+- Stepper 支持点击并切换阶段主内容区，点击阶段只改变查看内容，不改变草案状态。
+- 主区按订单池、草案复核、校验发布、制造队列渲染不同内容。
+- 资源视图保留在草案复核阶段，作为订单维度复核后的辅助视角。
+- 制造队列作为第四阶段主内容展示，发布成功后默认进入制造队列阶段。
+- Inspector 根据当前阶段突出对应上下文：订单池初筛、发布判断、队列状态和草案复核。

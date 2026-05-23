@@ -16,6 +16,17 @@ export const draftVersionTones = {
   confirmed: 'success',
 };
 
+export const workbenchStages = [
+  { key: 'order_pool', label: '订单池', description: '选择 PENDING 订单' },
+  { key: 'draft_review', label: '草案复核', description: '处理阻断、延期和调整' },
+  { key: 'validate_publish', label: '校验发布', description: '校验后进入制造队列' },
+  { key: 'manufacturing_queue', label: '制造队列', description: '推进开工和完工' },
+];
+
+export const workbenchStageLabels = Object.fromEntries(
+  workbenchStages.map(stage => [stage.key, stage.label]),
+);
+
 export function deriveDraftVersionState(activePlan) {
   const lifecycle = activePlan?.run?.lifecycle_status;
   if (!activePlan) return 'none';
@@ -107,4 +118,33 @@ export function summarizeQueue(queue = [], activeRunId = null) {
     total: rows.length,
     counts,
   };
+}
+
+export function derivePublishChecklist({
+  activePlan,
+  counts,
+  validation,
+  draftVersionLabel = '尚无草案',
+  publishBlockReason = '',
+  canConfirm = false,
+  queueCount = 0,
+}) {
+  if (!activePlan) {
+    return [
+      { key: 'draft', label: '预排程草案', status: 'waiting', detail: '尚未创建草案' },
+      { key: 'orders', label: '订单选择', status: 'waiting', detail: '请选择待排订单' },
+    ];
+  }
+
+  const hardErrors = Number(validation?.hard_error_count || 0);
+  const warnings = Number(validation?.warning_count || 0);
+  const snapshotBlocked = publishBlockReason.includes('快照') || publishBlockReason.includes('变化');
+  return [
+    { key: 'draft', label: '草案生命周期', status: 'ready', detail: activePlan.run?.lifecycle_status || '-' },
+    { key: 'snapshot', label: '快照状态', status: snapshotBlocked ? 'blocked' : 'ready', detail: draftVersionLabel },
+    { key: 'validation', label: '校验状态', status: hardErrors ? 'blocked' : validation ? 'ready' : 'waiting', detail: validation ? `阻断 ${hardErrors} · 警告 ${warnings}` : '尚未校验' },
+    { key: 'scheduled', label: '已排订单', status: counts.scheduled > 0 ? 'ready' : 'blocked', detail: `${counts.scheduled} 单` },
+    { key: 'blocked', label: '未排订单', status: counts.blocked > 0 ? 'warning' : 'ready', detail: `${counts.blocked} 单` },
+    { key: 'queue', label: '发布后队列', status: canConfirm || queueCount > 0 ? 'ready' : 'waiting', detail: queueCount > 0 ? `${queueCount} 项` : `${counts.scheduled} 单将进入队列` },
+  ];
 }
