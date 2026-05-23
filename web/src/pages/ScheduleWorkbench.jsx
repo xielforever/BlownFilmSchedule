@@ -22,6 +22,7 @@ import {
   derivePublishChecklist,
   derivePrimaryAction,
   deriveReviewTabs,
+  deriveWorkbenchStageStates,
   deriveWorkflowStep,
   draftVersionLabels,
   draftVersionTones,
@@ -141,6 +142,16 @@ const queueActionLabels = {
 };
 
 const queueActionReasonRequired = new Set(['ON_HOLD', 'CANCELLED']);
+const WORKBENCH_PAGE_SIZE = 10;
+
+const primaryActionTestIds = {
+  validate: 'workbench-validate-preplan',
+  confirm: 'workbench-confirm-preplan',
+  queue: 'workbench-view-queue',
+  blockers: 'workbench-view-blockers',
+  version: 'workbench-view-versions',
+  orders: 'workbench-view-orders',
+};
 
 const reasonOptions = [
   ['CUSTOMER_REQUEST', '客户临时要求'],
@@ -301,6 +312,52 @@ function Badge({ children, tone = 'neutral' }) {
   return <span className={`workbench-badge ${tone}`}>{children}</span>;
 }
 
+function pageCount(total, pageSize = WORKBENCH_PAGE_SIZE) {
+  return Math.max(1, Math.ceil(total / pageSize));
+}
+
+function pageSlice(rows, page, pageSize = WORKBENCH_PAGE_SIZE) {
+  const safePage = Math.min(Math.max(1, page), pageCount(rows.length, pageSize));
+  const start = (safePage - 1) * pageSize;
+  return rows.slice(start, start + pageSize);
+}
+
+function PaginationControls({ label, page, total, onPageChange, testIdBase, pageSize = WORKBENCH_PAGE_SIZE }) {
+  const totalPages = pageCount(total, pageSize);
+  if (total <= pageSize) return null;
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const start = (safePage - 1) * pageSize + 1;
+  const end = Math.min(total, safePage * pageSize);
+  return (
+    <div className="workbench-pagination" data-testid={`${testIdBase}-pagination`}>
+      <div>
+        <strong>{label}</strong>
+        <span data-testid={`${testIdBase}-page-info`}>第 {safePage} / {totalPages} 页 · {start}-{end} / {total}</span>
+      </div>
+      <div className="config-actions">
+        <button
+          type="button"
+          className="btn btn-ghost btn-small"
+          disabled={safePage <= 1}
+          data-testid={`${testIdBase}-prev`}
+          onClick={() => onPageChange(safePage - 1)}
+        >
+          上一页
+        </button>
+        <button
+          type="button"
+          className="btn btn-ghost btn-small"
+          disabled={safePage >= totalPages}
+          data-testid={`${testIdBase}-next`}
+          onClick={() => onPageChange(safePage + 1)}
+        >
+          下一页
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function PolicySummary({ settings }) {
   if (!settings) return null;
   const keys = Object.keys(policySummaryLabels);
@@ -322,25 +379,33 @@ function PolicySummary({ settings }) {
   );
 }
 
-function WorkflowStepper({ activeStage, recommendedStage, onStageChange }) {
+function WorkflowStepper({ activeStage, recommendedStage, stageStates, onStageChange }) {
   return (
     <div className="workbench-workflow-stepper" data-testid="workbench-workflow-stepper">
-      {workbenchStages.map(({ key, label, description }, index) => (
-        <button
-          key={key}
-          type="button"
-          className={`workbench-workflow-step ${activeStage === key ? 'active' : ''} ${recommendedStage === key ? 'recommended' : ''}`.trim()}
-          aria-current={activeStage === key ? 'step' : undefined}
-          data-testid={`workbench-stage-${key}`}
-          onClick={() => onStageChange(key)}
-        >
-          <span>{index + 1}</span>
-          <div>
-            <strong>{label}</strong>
-            <small>{description}</small>
-          </div>
-        </button>
-      ))}
+      {workbenchStages.map(({ key, label, description }, index) => {
+        const state = stageStates?.[key] || { status: activeStage === key ? 'current' : 'available', locked: false, lockReason: '' };
+        return (
+          <button
+            key={key}
+            type="button"
+            className={`workbench-workflow-step ${state.status} ${activeStage === key ? 'active' : ''} ${recommendedStage === key ? 'recommended' : ''}`.trim()}
+            aria-current={activeStage === key ? 'step' : undefined}
+            aria-disabled={state.locked ? 'true' : undefined}
+            disabled={state.locked}
+            title={state.lockReason || description}
+            data-testid={`workbench-stage-${key}`}
+            onClick={() => onStageChange(key)}
+          >
+            <span>{index + 1}</span>
+            <div>
+              <strong>{label}</strong>
+              <small data-testid={state.locked ? `workbench-stage-${key}-lock-reason` : undefined}>
+                {state.locked ? state.lockReason : description}
+              </small>
+            </div>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -358,6 +423,8 @@ function ActiveDraftCommandBar({
   onRefresh,
 }) {
   const lifecycle = activePlan?.run?.lifecycle_status;
+  const showPrimaryAction = primaryAction.target !== 'create';
+  const primaryActionTestId = primaryActionTestIds[primaryAction.target];
   return (
     <section className={`workbench-command-bar ${publishBlockReason ? 'blocked' : ''}`} data-testid="workbench-command-bar">
       <div className="workbench-command-main">
@@ -378,20 +445,24 @@ function ActiveDraftCommandBar({
         {activePlan && <Badge tone={draftVersionTones[versionState] || 'neutral'}>{draftVersionLabels[versionState] || '尚无草案'}</Badge>}
       </div>
       <div className="workbench-command-actions">
-        <button
-          type="button"
-          className="btn btn-primary"
-          data-testid="workbench-primary-action"
-          disabled={workbenchBusy || primaryAction.disabled}
-          onClick={onPrimaryAction}
-        >
-          {primaryAction.label}
-        </button>
+        {showPrimaryAction && (
+          <div className="workbench-primary-action-wrap" data-testid="workbench-primary-action">
+            <button
+              type="button"
+              className="btn btn-primary"
+              data-testid={primaryActionTestId}
+              disabled={workbenchBusy || primaryAction.disabled}
+              onClick={onPrimaryAction}
+            >
+              {primaryAction.label}
+            </button>
+          </div>
+        )}
         <button type="button" className="btn btn-ghost btn-small" data-testid="workbench-version-drawer-toggle" onClick={onOpenVersions}>
           草案版本
         </button>
         {activePlan && ['DRAFT', 'VALIDATED'].includes(lifecycle) && (
-          <button type="button" className="btn btn-danger btn-small" onClick={onCancel}>
+          <button type="button" className="btn btn-danger btn-small" data-testid="workbench-cancel-preplan" onClick={onCancel}>
             废弃草案
           </button>
         )}
@@ -434,6 +505,7 @@ function DraftVersionDrawer({ open, filter, onFilterChange, activePlan, preplans
             key={value}
             type="button"
             className={filter === value ? 'active' : ''}
+            aria-current={filter === value ? 'true' : undefined}
             data-testid={`workbench-version-filter-${String(value).toLowerCase()}`}
             onClick={() => onFilterChange(value)}
           >
@@ -450,6 +522,7 @@ function DraftVersionDrawer({ open, filter, onFilterChange, activePlan, preplans
               key={plan.run_id}
               type="button"
               className={isActive ? 'active' : ''}
+              aria-current={isActive ? 'true' : undefined}
               data-testid={`workbench-version-run-${plan.run_id}`}
               onClick={() => onOpenPlan(plan.run_id)}
             >
@@ -485,17 +558,21 @@ export default function ScheduleWorkbench() {
   const [cancelReason, setCancelReason] = useState('');
   const [resetConfirming, setResetConfirming] = useState(false);
   const [clearConfirming, setClearConfirming] = useState(false);
+  const [maintenanceOpen, setMaintenanceOpen] = useState(false);
   const [orderQuery, setOrderQuery] = useState('');
   const [orderClassFilter, setOrderClassFilter] = useState('');
   const [cleanroomFilter, setCleanroomFilter] = useState('');
   const [screeningFilter, setScreeningFilter] = useState('');
   const [orderScreening, setOrderScreening] = useState({ summary: null, items: [], error: '' });
-  const [orderPoolCollapsed, setOrderPoolCollapsed] = useState(false);
   const [queueExpanded, setQueueExpanded] = useState(false);
   const [queueAction, setQueueAction] = useState({ queueId: null, targetStatus: '', reason: '' });
   const [versionDrawerOpen, setVersionDrawerOpen] = useState(false);
   const [versionFilter, setVersionFilter] = useState('active');
   const [stageOverride, setStageOverride] = useState(null);
+  const [selectedContext, setSelectedContext] = useState(null);
+  const [orderPoolPage, setOrderPoolPage] = useState(1);
+  const [draftOrdersPage, setDraftOrdersPage] = useState(1);
+  const [queuePage, setQueuePage] = useState(1);
 
   const selectedSet = useMemo(() => new Set(selected), [selected]);
   const screeningByOrderId = useMemo(
@@ -520,13 +597,24 @@ export default function ScheduleWorkbench() {
       ].some(value => String(value ?? '').toLowerCase().includes(query));
     });
   }, [orders, orderQuery, orderClassFilter, cleanroomFilter, screeningByOrderId, screeningFilter]);
+  const filteredOrderPageCount = pageCount(filteredOrders.length);
+  const pagedFilteredOrders = useMemo(
+    () => pageSlice(filteredOrders, orderPoolPage),
+    [filteredOrders, orderPoolPage],
+  );
   const selectedFilteredCount = useMemo(
     () => filteredOrders.filter(order => selectedSet.has(order.order_id)).length,
     [filteredOrders, selectedSet],
   );
   const selectedPendingOrder = useMemo(
-    () => orders.find(order => selectedSet.has(order.order_id)) || filteredOrders[0] || null,
-    [filteredOrders, orders, selectedSet],
+    () => {
+      if (selectedContext?.type === 'pending_order') {
+        const contextualOrder = orders.find(order => order.order_id === selectedContext.id);
+        if (contextualOrder) return contextualOrder;
+      }
+      return orders.find(order => selectedSet.has(order.order_id)) || filteredOrders[0] || null;
+    },
+    [filteredOrders, orders, selectedContext, selectedSet],
   );
   const selectedPendingScreening = selectedPendingOrder ? screeningByOrderId.get(selectedPendingOrder.order_id) : null;
   const planTasks = useMemo(() => activePlan?.tasks || [], [activePlan]);
@@ -786,6 +874,11 @@ export default function ScheduleWorkbench() {
     () => planOrderRows[planOrderTab] || [],
     [planOrderRows, planOrderTab],
   );
+  const draftOrderPageCount = pageCount(visiblePlanOrderRows.length);
+  const pagedVisiblePlanOrderRows = useMemo(
+    () => pageSlice(visiblePlanOrderRows, draftOrdersPage),
+    [draftOrdersPage, visiblePlanOrderRows],
+  );
   const activePlanOrderTab = planOrderTabs.find(tab => tab.key === planOrderTab) || planOrderTabs[0];
   const selectedOrderInCurrentTab = Boolean(
     selectedPlanOrderId && visiblePlanOrderRows.some(row => row.order_id === selectedPlanOrderId),
@@ -804,6 +897,23 @@ export default function ScheduleWorkbench() {
     () => summarizeQueue(queue, activePlan?.run?.run_id || null),
     [activePlan, queue],
   );
+  const activeQueuePageCount = pageCount(activeQueueSummary.rows.length);
+  const pagedQueueRows = useMemo(
+    () => pageSlice(activeQueueSummary.rows, queuePage),
+    [activeQueueSummary.rows, queuePage],
+  );
+  const latestQueueTransition = useMemo(() => {
+    return activeQueueSummary.rows
+      .filter(item => item.last_transition)
+      .sort((a, b) => new Date(b.last_transition.created_at || 0) - new Date(a.last_transition.created_at || 0))[0] || null;
+  }, [activeQueueSummary.rows]);
+  const selectedValidationItem = selectedContext?.type === 'validation_item' ? selectedContext.item : null;
+  const selectedQueueItem = useMemo(
+    () => (selectedContext?.type === 'queue_item'
+      ? activeQueueSummary.rows.find(item => String(item.id) === String(selectedContext.id)) || selectedContext.item || null
+      : null),
+    [activeQueueSummary.rows, selectedContext],
+  );
   const workflowStep = useMemo(
     () => deriveWorkflowStep({
       activePlan,
@@ -814,7 +924,43 @@ export default function ScheduleWorkbench() {
     [activePlan, activeQueueSummary.rows, draftVersionState, hasHardErrors],
   );
   const recommendedStage = workflowStep;
-  const activeStage = stageOverride || recommendedStage;
+  const requestedStage = stageOverride || recommendedStage;
+  const requestedStageStates = useMemo(
+    () => deriveWorkbenchStageStates({
+      activePlan,
+      activeStage: requestedStage,
+      recommendedStage,
+      queueCount: activeQueueSummary.total,
+      validation,
+      canConfirm,
+      canEditDraft,
+      reviewValidationPending,
+      draftVersionState,
+      hasHardErrors,
+    }),
+    [activePlan, activeQueueSummary.total, canConfirm, canEditDraft, draftVersionState, hasHardErrors, recommendedStage, requestedStage, reviewValidationPending, validation],
+  );
+  const activeStage = requestedStageStates[requestedStage]?.locked ? recommendedStage : requestedStage;
+  const stageStates = useMemo(
+    () => deriveWorkbenchStageStates({
+      activePlan,
+      activeStage,
+      recommendedStage,
+      queueCount: activeQueueSummary.total,
+      validation,
+      canConfirm,
+      canEditDraft,
+      reviewValidationPending,
+      draftVersionState,
+      hasHardErrors,
+    }),
+    [activePlan, activeQueueSummary.total, activeStage, canConfirm, canEditDraft, draftVersionState, hasHardErrors, recommendedStage, reviewValidationPending, validation],
+  );
+  const activeStageIndex = workbenchStages.findIndex(stage => stage.key === activeStage);
+  const previousStage = activeStageIndex > 0 ? workbenchStages[activeStageIndex - 1] : null;
+  const nextStage = activeStageIndex >= 0 && activeStageIndex < workbenchStages.length - 1
+    ? workbenchStages[activeStageIndex + 1]
+    : null;
   const primaryAction = useMemo(
     () => derivePrimaryAction({
       activePlan,
@@ -847,8 +993,34 @@ export default function ScheduleWorkbench() {
   }, [activePlan, selectedPlanOrderId, visiblePlanOrderRows, workspaceView]);
 
   useEffect(() => {
-    if (!activePlan) setOrderPoolCollapsed(false);
-  }, [activePlan]);
+    setOrderPoolPage(1);
+  }, [cleanroomFilter, orderClassFilter, orderQuery, screeningFilter]);
+
+  useEffect(() => {
+    setOrderPoolPage(prev => Math.min(prev, filteredOrderPageCount));
+  }, [filteredOrderPageCount]);
+
+  useEffect(() => {
+    setDraftOrdersPage(1);
+  }, [activePlan?.run?.run_id, planOrderTab]);
+
+  useEffect(() => {
+    setDraftOrdersPage(prev => Math.min(prev, draftOrderPageCount));
+  }, [draftOrderPageCount]);
+
+  useEffect(() => {
+    setQueuePage(1);
+  }, [activePlan?.run?.run_id]);
+
+  useEffect(() => {
+    setQueuePage(prev => Math.min(prev, activeQueuePageCount));
+  }, [activeQueuePageCount]);
+
+  useEffect(() => {
+    if (stageOverride && stageStates[stageOverride]?.locked) {
+      setStageOverride(null);
+    }
+  }, [stageOverride, stageStates]);
 
   const loadAll = useCallback(async (openDraft = false) => {
     const [ordersRes, machinesRes, settingsRes, preplansRes, queueRes] = await Promise.all([
@@ -894,10 +1066,10 @@ export default function ScheduleWorkbench() {
       setActivePlan(detail.data);
       setSelectedPlanOrderId('');
       setAdjustment(null);
+      setSelectedContext(null);
       setPlanOrderTab(preferredPlanOrderTab(detail.data));
       setWorkspaceView('orders');
       setStageOverride(null);
-      setOrderPoolCollapsed(true);
       setCancelConfirming(false);
       setCancelReason('');
     }
@@ -920,6 +1092,7 @@ export default function ScheduleWorkbench() {
 
   const toggleOrder = (orderId) => {
     setSelected(prev => prev.includes(orderId) ? prev.filter(id => id !== orderId) : [...prev, orderId]);
+    setSelectedContext({ type: 'pending_order', id: orderId, sourceStage: 'order_pool' });
   };
 
   const selectFilteredOrders = () => {
@@ -929,6 +1102,7 @@ export default function ScheduleWorkbench() {
 
   const clearSelectedOrders = () => {
     setSelected([]);
+    if (selectedContext?.type === 'pending_order') setSelectedContext(null);
   };
 
   const handleResetOrders = async () => {
@@ -961,6 +1135,7 @@ export default function ScheduleWorkbench() {
       await loadAll();
       setActivePlan(null);
       setSelectedPlanOrderId('');
+      setSelectedContext(null);
       setStageOverride(null);
       setClearConfirming(false);
       setStatus({
@@ -985,10 +1160,10 @@ export default function ScheduleWorkbench() {
       setSelected([]);
       setSelectedPlanOrderId('');
       setAdjustment(null);
+      setSelectedContext(null);
       setPlanOrderTab(preferredPlanOrderTab(res.data));
       setWorkspaceView('orders');
       setStageOverride(null);
-      setOrderPoolCollapsed(true);
       setCancelConfirming(false);
       setCancelReason('');
       const preplansRes = await getPreplans();
@@ -1012,13 +1187,14 @@ export default function ScheduleWorkbench() {
       setActivePlan(res.data);
       setAdjustment(null);
       setSelectedPlanOrderId('');
+      setSelectedContext(null);
       setPlanOrderTab(preferredPlanOrderTab(res.data));
       setWorkspaceView('orders');
       setStageOverride(null);
-      setOrderPoolCollapsed(true);
       setCancelConfirming(false);
       setCancelReason('');
       setVersionDrawerOpen(false);
+      setStatus({ tone: 'ok', message: `已打开草案 #${runId}。` });
     } catch (err) {
       setStatus({ tone: 'error', message: formatError(err, '读取草案失败。') });
     } finally {
@@ -1032,6 +1208,7 @@ export default function ScheduleWorkbench() {
       return;
     }
     setSelectedPlanOrderId(task.order_id);
+    setSelectedContext({ type: 'draft_order', id: task.order_id, sourceStage: 'draft_review' });
     setCancelConfirming(false);
     setAdjustment({
       order_id: task.order_id,
@@ -1051,6 +1228,7 @@ export default function ScheduleWorkbench() {
       const res = await adjustPreplanTask(activePlan.run.run_id, adjustment);
       setActivePlan(res.data);
       setSelectedPlanOrderId(adjustment.order_id);
+      setSelectedContext({ type: 'draft_order', id: adjustment.order_id, sourceStage: 'draft_review' });
       setAdjustment(null);
       setStatus({ tone: 'ok', message: '人工调整已记录，并已重新校验草案。' });
     } catch (err) {
@@ -1073,6 +1251,7 @@ export default function ScheduleWorkbench() {
       setPlanOrderTab(preferredPlanOrderTab(detail.data));
       setWorkspaceView('orders');
       setStageOverride(null);
+      setSelectedContext(null);
       setStatus({ tone: res.data.hard_error_count ? 'error' : 'ok', message: res.data.hard_error_count ? '草案存在阻断错误。' : '草案校验完成。' });
     } catch (err) {
       setStatus({ tone: 'error', message: formatError(err, '校验草案失败。') });
@@ -1100,6 +1279,7 @@ export default function ScheduleWorkbench() {
       setQueue(queueRes.data || []);
       const detail = await getPreplan(activePlan.run.run_id);
       setActivePlan(detail.data);
+      setSelectedContext(null);
       setQueueExpanded(true);
       setStageOverride(null);
       setCancelConfirming(false);
@@ -1127,22 +1307,36 @@ export default function ScheduleWorkbench() {
   const handleCancel = async () => {
     if (!activePlan || !canCancel) return;
     setBusy(true);
-    try {
-      const reason = cancelReason.trim() || '人工废弃草案';
-      await cancelPreplan(activePlan.run.run_id, { reason });
-      const [detail, preplansRes] = await Promise.all([
-        getPreplan(activePlan.run.run_id),
-        getPreplans(),
-      ]);
-      setActivePlan(detail.data);
+    const runId = activePlan.run.run_id;
+    const reason = cancelReason.trim() || '人工废弃草案';
+    const applyCancelledDetail = async (detailData, preplansData = null) => {
+      setActivePlan(detailData);
       setSelectedPlanOrderId('');
       setAdjustment(null);
+      setSelectedContext(null);
       setCancelConfirming(false);
       setCancelReason('');
-      setPreplans(preplansRes.data || []);
+      if (preplansData) setPreplans(preplansData);
       setStageOverride(null);
-      setStatus({ tone: 'ok', message: `草案 #${activePlan.run.run_id} 已废弃，订单状态未改变。` });
+      setStatus({ tone: 'ok', message: `草案 #${runId} 已废弃，订单状态未改变。` });
+    };
+    try {
+      await cancelPreplan(runId, { reason });
+      const [detail, preplansRes] = await Promise.all([
+        getPreplan(runId),
+        getPreplans(),
+      ]);
+      await applyCancelledDetail(detail.data, preplansRes.data || []);
     } catch (err) {
+      try {
+        const detail = await getPreplan(runId);
+        if (detail.data?.run?.lifecycle_status === 'CANCELLED') {
+          await applyCancelledDetail(detail.data);
+          return;
+        }
+      } catch {
+        // Keep the original error below so the user sees the operation that failed.
+      }
       setStatus({ tone: 'error', message: formatError(err, '废弃草案失败。') });
     } finally {
       setBusy(false);
@@ -1151,6 +1345,7 @@ export default function ScheduleWorkbench() {
 
   const selectPlanOrder = (orderId) => {
     setSelectedPlanOrderId(orderId);
+    setSelectedContext({ type: 'draft_order', id: orderId, sourceStage: 'draft_review' });
     setAdjustment(null);
     setCancelConfirming(false);
   };
@@ -1162,7 +1357,9 @@ export default function ScheduleWorkbench() {
     setCancelConfirming(false);
     setAdjustment(null);
     if (!nextRows.some(row => row.order_id === selectedPlanOrderId)) {
-      setSelectedPlanOrderId(nextRows[0]?.order_id || '');
+      const nextOrderId = nextRows[0]?.order_id || '';
+      setSelectedPlanOrderId(nextOrderId);
+      setSelectedContext(nextOrderId ? { type: 'draft_order', id: nextOrderId, sourceStage: 'draft_review' } : null);
     }
   };
 
@@ -1175,27 +1372,29 @@ export default function ScheduleWorkbench() {
   };
 
   const selectStage = (stage) => {
+    const stageState = stageStates[stage];
+    if (stageState?.locked) {
+      setStatus({ tone: 'error', message: stageState.lockReason || '当前阶段尚未解锁。' });
+      return;
+    }
     setStageOverride(stage);
     setCancelConfirming(false);
     setAdjustment(null);
+    setSelectedContext(null);
     if (stage === 'order_pool') {
-      setOrderPoolCollapsed(false);
       return;
     }
     if (stage === 'draft_review') {
       setWorkspaceView('orders');
       setQueueExpanded(false);
-      setOrderPoolCollapsed(Boolean(activePlan));
       return;
     }
     if (stage === 'validate_publish') {
-      setOrderPoolCollapsed(Boolean(activePlan));
       setQueueExpanded(false);
       return;
     }
     if (stage === 'manufacturing_queue') {
-      setOrderPoolCollapsed(Boolean(activePlan));
-      setQueueExpanded(true);
+      setQueueExpanded(activeQueueSummary.total > 0);
     }
   };
 
@@ -1252,12 +1451,14 @@ export default function ScheduleWorkbench() {
     if (primaryAction.target === 'queue') {
       setStageOverride('manufacturing_queue');
       setQueueExpanded(true);
+      setSelectedContext(null);
       return null;
     }
     if (primaryAction.target === 'blockers') {
       setStageOverride('draft_review');
       setWorkspaceView('orders');
       setPlanOrderTab('needs_action');
+      setSelectedContext(null);
       return null;
     }
     if (primaryAction.target === 'version') {
@@ -1266,11 +1467,115 @@ export default function ScheduleWorkbench() {
     }
     if (primaryAction.target === 'orders') {
       setStageOverride('order_pool');
-      setOrderPoolCollapsed(false);
+      setSelectedContext(null);
       return null;
     }
     return null;
   };
+
+  const renderOrderPoolBrowser = (className = '') => (
+    <div className={`workbench-order-pool-browser ${className}`.trim()} data-testid="workbench-order-pool-browser">
+      <div className="workbench-order-tools">
+        <input
+          className="search-input workbench-order-search"
+          value={orderQuery}
+          placeholder="搜索订单、产品、客户、规格"
+          data-testid="workbench-search"
+          onChange={event => setOrderQuery(event.target.value)}
+        />
+        <div className="workbench-filter-row">
+          <select value={orderClassFilter} data-testid="workbench-filter-order-class" onChange={event => setOrderClassFilter(event.target.value)}>
+            <option value="">全部类型</option>
+            {Object.entries(orderClassLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+          <select value={cleanroomFilter} data-testid="workbench-filter-cleanroom" onChange={event => setCleanroomFilter(event.target.value)}>
+            <option value="">全部洁净等级</option>
+            {Object.entries(cleanroomLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+          <select value={screeningFilter} data-testid="workbench-filter-screening" onChange={event => setScreeningFilter(event.target.value)}>
+            <option value="">全部初筛</option>
+            {Object.entries(screeningLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </div>
+        <div className="workbench-select-actions">
+          <button className="btn btn-ghost btn-small" type="button" disabled={!filteredOrders.length} data-testid="workbench-select-filtered" onClick={selectFilteredOrders}>
+            全选当前筛选
+          </button>
+          <button className="btn btn-ghost btn-small" type="button" disabled={!selected.length} data-testid="workbench-clear-selected" onClick={clearSelectedOrders}>
+            清空已选
+          </button>
+          <span>{selectedFilteredCount} 单已在当前筛选中</span>
+        </div>
+        {orderScreening.summary && (
+          <div className="workbench-select-actions">
+            <Badge tone="success">可排 {orderScreening.summary.ready_count}</Badge>
+            <Badge tone="warning">风险 {orderScreening.summary.risk_count}</Badge>
+            <Badge tone="danger">阻断 {orderScreening.summary.blocked_count}</Badge>
+          </div>
+        )}
+        {orderScreening.error && <div className="config-status error">{orderScreening.error}</div>}
+      </div>
+      <div className="workbench-order-list">
+        {pagedFilteredOrders.map(order => {
+          const screening = screeningByOrderId.get(order.order_id);
+          return (
+            <div
+              key={order.order_id}
+              role="button"
+              tabIndex={0}
+              className={`workbench-order ${selectedSet.has(order.order_id) ? 'selected' : ''}`}
+              data-testid={`workbench-pending-order-${testIdPart(order.order_id)}`}
+              onClick={() => toggleOrder(order.order_id)}
+              onKeyDown={event => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  toggleOrder(order.order_id);
+                }
+              }}
+            >
+              <div>
+                <strong>{order.order_id}</strong>
+                <span>{order.product_type}</span>
+              </div>
+              <small>{order.target_width}mm x {order.target_thickness}um · {order.total_quantity_kg}kg</small>
+              <div className="workbench-order-meta">
+                <Badge tone={order.order_class === 'URGENT' ? 'danger' : 'neutral'}>{orderClassLabels[order.order_class] || order.order_class}</Badge>
+                {screening && <Badge tone={screeningTones[screening.screening_status] || 'neutral'}>{screeningLabels[screening.screening_status] || screening.screening_status}</Badge>}
+                <span>{formatTime(order.due_date)}</span>
+              </div>
+              {screening && screening.screening_status !== 'ready' && <small>{screening.root_cause}</small>}
+              {!!screening?.recommendations?.length && screening.screening_status !== 'ready' && (
+                <div className="workbench-screening-actions">
+                  <small className="workbench-screening-guidance">{screening.recommendations[0].guidance}</small>
+                  <div>
+                    {screening.recommendations.slice(0, 2).map(action => (
+                      <a
+                        key={action.action}
+                        href={action.href}
+                        data-testid={`workbench-screening-action-${testIdPart(order.order_id)}-${testIdPart(action.action)}`}
+                        onClick={event => event.stopPropagation()}
+                      >
+                        {action.label}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {!orders.length && <div className="config-empty">当前没有待排订单。</div>}
+        {orders.length > 0 && !filteredOrders.length && <div className="config-empty">当前筛选条件下没有待排订单。</div>}
+      </div>
+      <PaginationControls
+        label="待排订单分页"
+        page={orderPoolPage}
+        total={filteredOrders.length}
+        onPageChange={setOrderPoolPage}
+        testIdBase="workbench-order-pool"
+      />
+    </div>
+  );
 
   return (
     <div className={`workbench-page ${activePlan ? 'has-active-plan' : ''}`}>
@@ -1280,7 +1585,24 @@ export default function ScheduleWorkbench() {
           <p className="page-subtitle">系统生成预排程，人负责复核和必要调整；所有人工改动都会进入审计记录。</p>
         </div>
         <div className="page-toolbar">
-          <button className="btn btn-ghost" onClick={() => loadAll()} disabled={workbenchBusy} data-testid="workbench-refresh">刷新</button>
+          <button
+            className="btn btn-ghost"
+            type="button"
+            aria-expanded={maintenanceOpen}
+            data-testid="workbench-maintenance-toggle"
+            onClick={() => setMaintenanceOpen(prev => !prev)}
+          >
+            高级维护
+          </button>
+        </div>
+      </div>
+
+      <section className="workbench-maintenance-panel" data-testid="workbench-maintenance-panel" hidden={!maintenanceOpen}>
+        <div>
+          <h3>高级维护</h3>
+          <p>这些操作会影响正式排程或订单状态，只用于演示数据恢复和异常清理。</p>
+        </div>
+        <div className="config-actions">
           <button className="btn btn-danger" onClick={handleResetOrders} disabled={workbenchBusy}>
             {resetConfirming ? '确认清理孤立订单' : '清理孤立已排订单'}
           </button>
@@ -1293,17 +1615,14 @@ export default function ScheduleWorkbench() {
           {clearConfirming && (
             <button className="btn btn-ghost" onClick={() => setClearConfirming(false)} disabled={workbenchBusy}>取消</button>
           )}
-          <button className="btn btn-primary" disabled={workbenchBusy || selected.length === 0} onClick={handleCreatePreplan} data-testid="workbench-create-preplan">
-            {workbenchBusy ? '处理中...' : `创建预排程 (${selected.length})`}
-          </button>
         </div>
-      </div>
+      </section>
 
       {status.message && <div className={`config-status ${status.tone === 'error' ? 'error' : 'ok'}`} data-testid="workbench-status">{status.message}</div>}
 
       <PolicySummary settings={settings} />
 
-      <WorkflowStepper activeStage={activeStage} recommendedStage={recommendedStage} onStageChange={selectStage} />
+      <WorkflowStepper activeStage={activeStage} recommendedStage={recommendedStage} stageStates={stageStates} onStageChange={selectStage} />
       <ActiveDraftCommandBar
         activePlan={activePlan}
         counts={activePlan ? planOrderCounts : { input: selected.length, scheduled: 0, schedulable: 0, blocked: 0, late: 0 }}
@@ -1326,131 +1645,9 @@ export default function ScheduleWorkbench() {
         onClose={() => setVersionDrawerOpen(false)}
       />
 
-      <div className={`workbench-grid ${activePlan && orderPoolCollapsed ? 'order-pool-collapsed' : ''}`}>
-        <section className={`workbench-panel order-pool ${activePlan && orderPoolCollapsed ? 'collapsed' : ''}`} data-testid="workbench-order-pool">
-          <div className="workbench-panel-head">
-            <div className="workbench-order-pool-title">
-              <h3>{activePlan && orderPoolCollapsed ? '订单池' : '待排订单池'}</h3>
-              <span>{activePlan && orderPoolCollapsed ? `${pendingOrderTotal} 单` : `已选 ${selected.length} / 当前 ${filteredOrders.length} / 共 ${pendingOrderTotal} 单`}</span>
-            </div>
-            {activePlan && (
-              <button
-                className="btn btn-ghost btn-small"
-                type="button"
-                aria-expanded={!orderPoolCollapsed}
-                data-testid="workbench-order-pool-toggle"
-                onClick={() => setOrderPoolCollapsed(prev => !prev)}
-              >
-                {orderPoolCollapsed ? '展开' : '收起'}
-              </button>
-            )}
-          </div>
-          {activePlan && orderPoolCollapsed ? (
-            <div className="workbench-order-pool-rail">
-              <strong>{pendingOrderTotal}</strong>
-              <span>待排订单</span>
-              <small>已选 {selected.length}</small>
-            </div>
-          ) : (
-            <>
-              <div className="workbench-order-tools">
-                <input
-                  className="search-input workbench-order-search"
-                  value={orderQuery}
-                  placeholder="搜索订单、产品、客户、规格"
-                  data-testid="workbench-search"
-                  onChange={event => setOrderQuery(event.target.value)}
-                />
-                <div className="workbench-filter-row">
-                  <select value={orderClassFilter} data-testid="workbench-filter-order-class" onChange={event => setOrderClassFilter(event.target.value)}>
-                    <option value="">全部类型</option>
-                    {Object.entries(orderClassLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                  </select>
-                  <select value={cleanroomFilter} data-testid="workbench-filter-cleanroom" onChange={event => setCleanroomFilter(event.target.value)}>
-                    <option value="">全部洁净等级</option>
-                    {Object.entries(cleanroomLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                  </select>
-                  <select value={screeningFilter} data-testid="workbench-filter-screening" onChange={event => setScreeningFilter(event.target.value)}>
-                    <option value="">全部初筛</option>
-                    {Object.entries(screeningLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                  </select>
-                </div>
-                <div className="workbench-select-actions">
-                  <button className="btn btn-ghost btn-small" type="button" disabled={!filteredOrders.length} data-testid="workbench-select-filtered" onClick={selectFilteredOrders}>
-                    全选当前筛选
-                  </button>
-                  <button className="btn btn-ghost btn-small" type="button" disabled={!selected.length} data-testid="workbench-clear-selected" onClick={clearSelectedOrders}>
-                    清空已选
-                  </button>
-                  <span>{selectedFilteredCount} 单已在当前筛选中</span>
-                </div>
-                {orderScreening.summary && (
-                  <div className="workbench-select-actions">
-                    <Badge tone="success">可排 {orderScreening.summary.ready_count}</Badge>
-                    <Badge tone="warning">风险 {orderScreening.summary.risk_count}</Badge>
-                    <Badge tone="danger">阻断 {orderScreening.summary.blocked_count}</Badge>
-                  </div>
-                )}
-                {orderScreening.error && <div className="config-status error">{orderScreening.error}</div>}
-              </div>
-              <div className="workbench-order-list">
-                {filteredOrders.map(order => {
-                  const screening = screeningByOrderId.get(order.order_id);
-                  return (
-                    <div
-                      key={order.order_id}
-                      role="button"
-                      tabIndex={0}
-                      className={`workbench-order ${selectedSet.has(order.order_id) ? 'selected' : ''}`}
-                      data-testid={`workbench-pending-order-${testIdPart(order.order_id)}`}
-                      onClick={() => toggleOrder(order.order_id)}
-                      onKeyDown={event => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault();
-                          toggleOrder(order.order_id);
-                        }
-                      }}
-                    >
-                      <div>
-                        <strong>{order.order_id}</strong>
-                        <span>{order.product_type}</span>
-                      </div>
-                      <small>{order.target_width}mm x {order.target_thickness}um · {order.total_quantity_kg}kg</small>
-                      <div className="workbench-order-meta">
-                        <Badge tone={order.order_class === 'URGENT' ? 'danger' : 'neutral'}>{orderClassLabels[order.order_class] || order.order_class}</Badge>
-                        {screening && <Badge tone={screeningTones[screening.screening_status] || 'neutral'}>{screeningLabels[screening.screening_status] || screening.screening_status}</Badge>}
-                        <span>{formatTime(order.due_date)}</span>
-                      </div>
-                      {screening && screening.screening_status !== 'ready' && <small>{screening.root_cause}</small>}
-                      {!!screening?.recommendations?.length && screening.screening_status !== 'ready' && (
-                        <div className="workbench-screening-actions">
-                          <small className="workbench-screening-guidance">{screening.recommendations[0].guidance}</small>
-                          <div>
-                            {screening.recommendations.slice(0, 2).map(action => (
-                              <a
-                                key={action.action}
-                                href={action.href}
-                                data-testid={`workbench-screening-action-${testIdPart(order.order_id)}-${testIdPart(action.action)}`}
-                                onClick={event => event.stopPropagation()}
-                              >
-                                {action.label}
-                              </a>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-                {!orders.length && <div className="config-empty">当前没有待排订单。</div>}
-                {orders.length > 0 && !filteredOrders.length && <div className="config-empty">当前筛选条件下没有待排订单。</div>}
-              </div>
-            </>
-          )}
-        </section>
-
+      <div className="workbench-wizard" data-testid="workbench-wizard-shell">
         <section
-          className="workbench-panel plan-board"
+          className="workbench-panel plan-board workbench-wizard-main"
           data-testid="workbench-main-workspace"
           data-loading={loadingWorkbench ? 'true' : 'false'}
           aria-busy={loadingWorkbench}
@@ -1463,11 +1660,6 @@ export default function ScheduleWorkbench() {
                   ? `#${activePlan.run.run_id} · ${lifecycleLabels[activePlan.run.lifecycle_status] || activePlan.run.lifecycle_status} · ${runStatusLabels[activePlan.run.status] || activePlan.run.status}`
                   : '尚未选择草案'}
               </span>
-            </div>
-            <div className="config-actions">
-              <button className="btn btn-ghost" disabled={!canEditDraft || workbenchBusy} data-testid="workbench-validate-preplan" onClick={handleValidate}>校验方案</button>
-              <button className="btn btn-primary" disabled={!canConfirm || workbenchBusy} data-testid="workbench-confirm-preplan" onClick={handleConfirm}>确认进入制造队列</button>
-              <button className="btn btn-danger" disabled={!canCancel || workbenchBusy} data-testid="workbench-cancel-preplan" onClick={openCancelConfirm}>废弃草案</button>
             </div>
           </div>
 
@@ -1545,14 +1737,19 @@ export default function ScheduleWorkbench() {
             )}
 
             {activeStage === 'order_pool' && (
-              <section className="workbench-stage-panel" data-testid="workbench-order-pool-stage">
+              <section className="workbench-stage-panel workbench-order-pool-stage" data-testid="workbench-order-pool-stage">
                 <div className="workbench-stage-head">
                   <div>
                     <h3>订单池</h3>
                     <p>选择待排订单后创建预排程草案。创建草案不会改变订单状态，只有发布后才进入制造队列。</p>
                   </div>
-                  <button className="btn btn-primary" disabled={workbenchBusy || selected.length === 0} onClick={handleCreatePreplan}>
-                    {selected.length ? `创建预排程 (${selected.length})` : '选择订单后创建'}
+                  <button
+                    className="btn btn-primary"
+                    disabled={workbenchBusy || selected.length === 0}
+                    data-testid="workbench-create-preplan"
+                    onClick={handleCreatePreplan}
+                  >
+                    {selected.length ? `创建预排程 (${selected.length})` : '先选择订单'}
                   </button>
                 </div>
                 <div className="workbench-plan-summary">
@@ -1578,12 +1775,7 @@ export default function ScheduleWorkbench() {
                   </div>
                 </div>
                 <div className="workbench-stage-body">
-                  <div className="workbench-context-note">
-                    订单池的搜索、筛选和选择操作在左侧面板完成；本阶段主区保留订单初筛摘要和创建草案入口，避免和草案复核混在一起。
-                  </div>
-                  {orderScreening.error && <div className="config-status error">{orderScreening.error}</div>}
-                  {!orders.length && <div className="config-empty">当前没有待排订单。可到订单页面导入或创建订单。</div>}
-                  {orders.length > 0 && !filteredOrders.length && <div className="config-empty">当前筛选条件下没有待排订单。</div>}
+                  {renderOrderPoolBrowser('main')}
                 </div>
               </section>
             )}
@@ -1615,13 +1807,14 @@ export default function ScheduleWorkbench() {
                     </div>
                     {workspaceView === 'orders' && (
                       <div className="workbench-order-review">
-                  <div className="workbench-plan-tabs">
+                  <div className="workbench-plan-tabs compact" aria-label="订单复核筛选">
                     {planOrderTabs.map(tab => (
                       <button
                         key={tab.key}
                         type="button"
-                        className={`${planOrderTab === tab.key ? 'active' : ''} ${tab.tone || ''}`.trim()}
+                        className={`${planOrderTab === tab.key ? 'active' : ''} ${tab.tone || ''} ${tab.key === 'needs_action' ? 'primary' : ''}`.trim()}
                         data-testid={planOrderTabTestIds[tab.key]}
+                        aria-current={planOrderTab === tab.key ? 'true' : undefined}
                         disabled={loadingWorkbench}
                         onClick={() => selectPlanOrderTab(tab.key)}
                       >
@@ -1649,7 +1842,7 @@ export default function ScheduleWorkbench() {
                         </tr>
                       </thead>
                       <tbody>
-                        {visiblePlanOrderRows.map(row => (
+                        {pagedVisiblePlanOrderRows.map(row => (
                           <tr
                             key={row.key}
                             className={selectedPlanOrderId === row.order_id ? 'selected' : ''}
@@ -1684,6 +1877,13 @@ export default function ScheduleWorkbench() {
                       </tbody>
                     </table>
                     {!visiblePlanOrderRows.length && <div className="config-empty">当前分类没有订单。</div>}
+                    <PaginationControls
+                      label={`${activePlanOrderTab.label}分页`}
+                      page={draftOrdersPage}
+                      total={visiblePlanOrderRows.length}
+                      onPageChange={setDraftOrdersPage}
+                      testIdBase="workbench-draft-orders"
+                    />
                   </div>
                 </div>
                     )}
@@ -1743,10 +1943,13 @@ export default function ScheduleWorkbench() {
                     <h3>校验发布</h3>
                     <p>发布前集中查看校验结果、快照状态、发布阻断和进入制造队列的订单数量。</p>
                   </div>
-                  <div className="config-actions">
-                    <button className="btn btn-ghost" disabled={!canEditDraft || workbenchBusy} onClick={handleValidate}>校验方案</button>
-                    <button className="btn btn-primary" disabled={!canConfirm || workbenchBusy} onClick={handleConfirm}>确认进入制造队列</button>
-                  </div>
+                  {canConfirm ? (
+                    <Badge tone="success">可发布</Badge>
+                  ) : (
+                    <div className="config-actions">
+                      <button className="btn btn-primary" disabled data-testid="workbench-confirm-preplan">确认进入制造队列</button>
+                    </div>
+                  )}
                 </div>
                 <div className="workbench-publish-checklist" data-testid="workbench-publish-checklist">
                   {publishChecklist.map(item => (
@@ -1773,7 +1976,16 @@ export default function ScheduleWorkbench() {
                           key={`${item.code}-${item.order_id}-${index}`}
                           type="button"
                           className={`validation-item ${item.severity}`}
-                          onClick={() => item.order_id && selectPlanOrder(item.order_id)}
+                          data-testid={`workbench-validation-item-${index}`}
+                          onClick={() => {
+                            if (item.order_id) setSelectedPlanOrderId(item.order_id);
+                            setSelectedContext({
+                              type: 'validation_item',
+                              id: `${item.code}-${item.order_id || 'global'}-${index}`,
+                              sourceStage: 'validate_publish',
+                              item,
+                            });
+                          }}
                         >
                           <strong>{item.severity === 'error' ? '阻断' : '警告'} · {validationCodeLabel(item.code)}</strong>
                           <span>{item.message}</span>
@@ -1798,6 +2010,7 @@ export default function ScheduleWorkbench() {
                   </div>
                   <Badge tone={activeQueueSummary.total ? 'success' : 'neutral'}>{activeQueueSummary.total} 项</Badge>
                 </div>
+                {activeQueueSummary.total > 0 ? (
                 <section className={`queue-panel ${queueExpanded ? 'expanded' : 'collapsed'}`} data-testid="workbench-queue-panel">
                   <div className="workbench-panel-head">
                     <div>
@@ -1816,7 +2029,7 @@ export default function ScheduleWorkbench() {
                   </div>
                   <div className="workbench-queue-summary">
                     <strong>{activeQueueSummary.total}</strong>
-                    <span>{activeQueueSummary.total ? '已进入制造队列，展开查看前 20 项。' : '当前草案尚未进入制造队列。'}</span>
+                    <span>{activeQueueSummary.total ? '已进入制造队列，按页查看队列项。' : '当前草案尚未进入制造队列。'}</span>
                   </div>
                   {queueExpanded && (
                     <div className="queue-table" data-testid="workbench-queue-table">
@@ -1832,12 +2045,16 @@ export default function ScheduleWorkbench() {
                           </tr>
                         </thead>
                         <tbody>
-                          {activeQueueSummary.rows.slice(0, 20).map(item => {
+                          {pagedQueueRows.map(item => {
                             const actions = nextQueueActions(item.queue_status);
                             const activeQueueAction = queueAction.queueId === item.id ? queueAction : null;
                             const lastReason = item.last_transition?.details?.reason;
                             return (
-                              <tr key={item.id} data-testid={`workbench-queue-row-${item.id}`}>
+                              <tr
+                                key={item.id}
+                                data-testid={`workbench-queue-row-${item.id}`}
+                                onClick={() => setSelectedContext({ type: 'queue_item', id: item.id, sourceStage: 'manufacturing_queue', item })}
+                              >
                                 <td>{item.order_id}</td>
                                 <td>{item.machine_id}</td>
                                 <td>{formatTime(item.planned_start_time)} - {formatTime(item.planned_end_time)}</td>
@@ -1852,7 +2069,10 @@ export default function ScheduleWorkbench() {
                                         className={`btn ${targetStatus === 'CANCELLED' ? 'btn-danger' : 'btn-ghost'} btn-small`}
                                         disabled={workbenchBusy}
                                         data-testid={`workbench-queue-action-${item.id}-${targetStatus}`}
-                                        onClick={() => startQueueTransition(item, targetStatus)}
+                                        onClick={event => {
+                                          event.stopPropagation();
+                                          startQueueTransition(item, targetStatus);
+                                        }}
                                       >
                                         {queueActionLabels[targetStatus] || targetStatus}
                                       </button>
@@ -1874,7 +2094,10 @@ export default function ScheduleWorkbench() {
                                           className="btn btn-primary btn-small"
                                           disabled={workbenchBusy}
                                           data-testid={`workbench-queue-submit-${item.id}`}
-                                          onClick={() => submitQueueTransition(item, activeQueueAction.targetStatus, activeQueueAction.reason)}
+                                          onClick={event => {
+                                            event.stopPropagation();
+                                            submitQueueTransition(item, activeQueueAction.targetStatus, activeQueueAction.reason);
+                                          }}
                                         >
                                           确认
                                         </button>
@@ -1882,7 +2105,10 @@ export default function ScheduleWorkbench() {
                                           type="button"
                                           className="btn btn-ghost btn-small"
                                           disabled={workbenchBusy}
-                                          onClick={() => setQueueAction({ queueId: null, targetStatus: '', reason: '' })}
+                                          onClick={event => {
+                                            event.stopPropagation();
+                                            setQueueAction({ queueId: null, targetStatus: '', reason: '' });
+                                          }}
                                         >
                                           取消
                                         </button>
@@ -1897,23 +2123,110 @@ export default function ScheduleWorkbench() {
                         </tbody>
                       </table>
                       {!activeQueueSummary.rows.length && <div className="config-empty">当前草案尚未进入制造队列。</div>}
+                      <PaginationControls
+                        label="制造队列分页"
+                        page={queuePage}
+                        total={activeQueueSummary.rows.length}
+                        onPageChange={setQueuePage}
+                        testIdBase="workbench-queue"
+                      />
                     </div>
                   )}
                 </section>
+                ) : (
+                  <div className="workbench-empty-state" data-testid="workbench-queue-empty-state">
+                    <h4>当前草案尚未进入制造队列</h4>
+                    <p>{activePlan ? '需要先完成草案校验，并确认进入制造队列后，才会生成可推进的队列项。' : '请先选择订单并创建预排程草案。'}</p>
+                    <div className="config-actions">
+                      <button type="button" className="btn btn-primary" data-testid="workbench-queue-empty-validate" onClick={() => setStageOverride(activePlan ? 'validate_publish' : 'order_pool')}>
+                        {activePlan ? '返回校验发布' : '返回订单池'}
+                      </button>
+                      {publishBlockReason && <span>{publishBlockReason}</span>}
+                    </div>
+                  </div>
+                )}
               </section>
             )}
           </div>
+          <div className="workbench-stage-footer" data-testid="workbench-stage-footer">
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={!previousStage || stageStates[previousStage.key]?.locked}
+              data-testid="workbench-stage-previous"
+              onClick={() => previousStage && selectStage(previousStage.key)}
+            >
+              上一步{previousStage ? `：${previousStage.label}` : ''}
+            </button>
+            <span>
+              当前阶段：{workbenchStageLabels[activeStage]}
+              {nextStage && stageStates[nextStage.key]?.locked ? ` · 下一步锁定：${stageStates[nextStage.key].lockReason}` : ''}
+            </span>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={!nextStage || stageStates[nextStage.key]?.locked}
+              title={nextStage ? stageStates[nextStage.key]?.lockReason || nextStage.description : ''}
+              data-testid="workbench-stage-next"
+              onClick={() => nextStage && selectStage(nextStage.key)}
+            >
+              下一步{nextStage ? `：${nextStage.label}` : ''}
+            </button>
+          </div>
         </section>
+      </div>
 
-        <aside className="workbench-panel review-panel" data-testid="workbench-inspector">
+      {selectedContext && (
+        <>
+        <button
+          type="button"
+          className="workbench-inspector-backdrop"
+          aria-label="关闭复核抽屉"
+          data-testid="workbench-inspector-backdrop"
+          onClick={() => setSelectedContext(null)}
+        />
+        <aside className="workbench-panel review-panel workbench-inspector-drawer" data-testid="workbench-inspector-drawer">
           <div className="workbench-panel-head">
             <h3>{workbenchStageLabels[activeStage] || '草案校验与复核'}</h3>
-            {validation && (
-              <Badge tone={validation.hard_error_count ? 'danger' : validation.warning_count ? 'warning' : 'success'}>
-                {validationStatusLabels[validation.status] || validation.status}
-              </Badge>
-            )}
+            <div className="config-actions">
+              {validation && (
+                <Badge tone={validation.hard_error_count ? 'danger' : validation.warning_count ? 'warning' : 'success'}>
+                  {validationStatusLabels[validation.status] || validation.status}
+                </Badge>
+              )}
+              <button type="button" className="btn btn-ghost btn-small" data-testid="workbench-inspector-close" onClick={() => setSelectedContext(null)}>
+                关闭
+              </button>
+            </div>
           </div>
+
+          {selectedValidationItem && (
+            <div className="selected-order-review" data-testid="workbench-validation-inspector">
+              <h4>校验项证据</h4>
+              <div className={`validation-item ${selectedValidationItem.severity}`}>
+                <strong>{selectedValidationItem.severity === 'error' ? '阻断' : '警告'} · {validationCodeLabel(selectedValidationItem.code)}</strong>
+                <span>{selectedValidationItem.message}</span>
+                {selectedValidationItem.order_id && <small>关联订单：{selectedValidationItem.order_id}</small>}
+              </div>
+            </div>
+          )}
+
+          {selectedQueueItem && (
+            <div className="selected-order-review" data-testid="workbench-queue-item-inspector">
+              <h4>队列项详情</h4>
+              <div className="selected-order-card">
+                <div>
+                  <strong>{selectedQueueItem.order_id}</strong>
+                  <Badge tone={queueStatusTones[selectedQueueItem.queue_status] || 'neutral'}>
+                    {queueStatusLabels[selectedQueueItem.queue_status] || selectedQueueItem.queue_status}
+                  </Badge>
+                </div>
+                <span>{selectedQueueItem.machine_id} · #{selectedQueueItem.run_id}</span>
+                <small>{formatTime(selectedQueueItem.planned_start_time)} - {formatTime(selectedQueueItem.planned_end_time)}</small>
+                {selectedQueueItem.last_transition?.details?.reason && <small>最近原因：{selectedQueueItem.last_transition.details.reason}</small>}
+              </div>
+            </div>
+          )}
 
           {activeStage === 'order_pool' && (
             <div className="selected-order-review" data-testid="workbench-order-pool-inspector">
@@ -1973,10 +2286,20 @@ export default function ScheduleWorkbench() {
                   完工 {activeQueueSummary.counts.COMPLETED || 0} ·
                   取消 {activeQueueSummary.counts.CANCELLED || 0}
                 </small>
+                {latestQueueTransition ? (
+                  <small>
+                    最近变更 {latestQueueTransition.order_id} ·
+                    {formatTime(latestQueueTransition.last_transition.created_at)} ·
+                    {latestQueueTransition.last_transition.details?.reason || '未填写原因'}
+                  </small>
+                ) : (
+                  <small>发布后显示最近队列状态变更和原因。</small>
+                )}
               </div>
             </div>
           )}
 
+          {activeStage !== 'order_pool' && (
           <div className="selected-order-review" data-testid="workbench-draft-state-card">
             <h4>当前草案状态</h4>
             {activePlan ? (
@@ -1994,8 +2317,9 @@ export default function ScheduleWorkbench() {
               <div className="config-empty">选择订单并创建草案后显示复核状态。</div>
             )}
           </div>
+          )}
 
-          {activePlan?.latest_publish_audit && (
+          {activeStage !== 'order_pool' && activePlan?.latest_publish_audit && (
             <div className="selected-order-review">
               <h4>发布审计</h4>
               <div className="selected-order-card">
@@ -2013,6 +2337,7 @@ export default function ScheduleWorkbench() {
             </div>
           )}
 
+          {activeStage === 'draft_review' && (
           <div className="selected-order-review" data-testid="workbench-selected-order-review">
             <h4>当前订单复核</h4>
             {selectedPlanOrderId ? (
@@ -2070,8 +2395,9 @@ export default function ScheduleWorkbench() {
               <div className="config-empty">从订单表或资源视图选择订单。</div>
             )}
           </div>
+          )}
 
-          {adjustment && canAdjust && (
+          {activeStage === 'draft_review' && adjustment && canAdjust && (
             <div className="adjustment-form">
               <h4>记录一次人工调整</h4>
               <label>订单<input value={adjustment.order_id} disabled /></label>
@@ -2098,6 +2424,7 @@ export default function ScheduleWorkbench() {
             </div>
           )}
 
+          {['draft_review', 'validate_publish'].includes(activeStage) && (
           <div className="validation-list">
             <h4>草案校验</h4>
             {validation && (
@@ -2115,8 +2442,9 @@ export default function ScheduleWorkbench() {
             {validation && !validation.items.length && <div className="workbench-ok">当前草案无阻断错误。</div>}
             {!validation && <div className="config-empty">选择草案后显示校验结果。</div>}
           </div>
+          )}
 
-          {activePlan && planOrderCounts.blocked > 0 && (
+          {activeStage === 'draft_review' && activePlan && planOrderCounts.blocked > 0 && (
             <div className="blocked-list">
               <h4>未排订单根因摘要</h4>
               <div className="workbench-risk-summary">
@@ -2133,6 +2461,7 @@ export default function ScheduleWorkbench() {
             </div>
           )}
 
+          {activeStage === 'draft_review' && (
           <div className="audit-list">
             <h4>调整记录</h4>
             {(activePlan?.adjustments || []).slice(0, 8).map(item => (
@@ -2144,8 +2473,10 @@ export default function ScheduleWorkbench() {
             ))}
             {activePlan && !activePlan.adjustments.length && <div className="config-empty">暂无人工调整。</div>}
           </div>
+          )}
         </aside>
-      </div>
+        </>
+      )}
 
     </div>
   );

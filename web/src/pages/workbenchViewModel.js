@@ -54,6 +54,72 @@ export function deriveWorkflowStep({ activePlan, queue = [], draftVersionState =
   return 'draft_review';
 }
 
+export function deriveWorkbenchStageStates({
+  activePlan,
+  activeStage = 'order_pool',
+  recommendedStage = 'order_pool',
+  queueCount = 0,
+  validation = null,
+  canConfirm = false,
+  canEditDraft = false,
+  reviewValidationPending = false,
+  draftVersionState = 'none',
+  hasHardErrors = false,
+} = {}) {
+  const lifecycle = activePlan?.run?.lifecycle_status;
+  const hasActiveDraft = Boolean(activePlan && lifecycle !== 'CANCELLED');
+  const draftReviewUnlocked = hasActiveDraft;
+  const validateUnlocked = hasActiveDraft && (
+    canEditDraft
+    || Boolean(validation)
+    || lifecycle === 'VALIDATED'
+    || canConfirm
+  );
+  const queueUnlocked = lifecycle === 'CONFIRMED' || queueCount > 0;
+  const validationComplete = Boolean(validation) || lifecycle === 'VALIDATED' || canConfirm;
+  const stale = isDraftStale(draftVersionState);
+
+  const stageMeta = {
+    order_pool: {
+      unlocked: true,
+      done: Boolean(activePlan),
+      lockReason: '',
+    },
+    draft_review: {
+      unlocked: draftReviewUnlocked,
+      done: validationComplete && !reviewValidationPending && !hasHardErrors && !stale,
+      lockReason: '请先从订单池创建预排程草案。',
+    },
+    validate_publish: {
+      unlocked: validateUnlocked,
+      done: queueUnlocked,
+      lockReason: hasActiveDraft ? '请先完成草案复核后再校验发布。' : '请先创建草案并完成复核。',
+    },
+    manufacturing_queue: {
+      unlocked: queueUnlocked,
+      done: false,
+      lockReason: '草案尚未发布，不能进入制造队列。',
+    },
+  };
+
+  return Object.fromEntries(workbenchStages.map(stage => {
+    const meta = stageMeta[stage.key] || {};
+    const locked = !meta.unlocked;
+    let status = locked ? 'locked' : 'available';
+    if (!locked && meta.done) status = 'done';
+    if (activeStage === stage.key) status = 'current';
+    return [
+      stage.key,
+      {
+        status,
+        locked,
+        recommended: recommendedStage === stage.key,
+        lockReason: locked ? meta.lockReason : '',
+      },
+    ];
+  }));
+}
+
 export function derivePrimaryAction({
   activePlan,
   selectedCount = 0,
@@ -67,7 +133,7 @@ export function derivePrimaryAction({
   if (!activePlan) {
     return {
       key: 'create',
-      label: selectedCount ? `创建预排程 (${selectedCount})` : '选择订单后创建',
+      label: selectedCount ? `创建预排程 (${selectedCount})` : '先选择订单',
       disabled: selectedCount === 0,
       target: 'create',
     };
