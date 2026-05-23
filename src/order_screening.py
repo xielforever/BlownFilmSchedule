@@ -1,0 +1,413 @@
+"""Computed-only order screening before schedule preplanning."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Iterable, Optional
+
+from src.diagnostics import (
+    Diagnostic,
+    DiagnosticEvidence,
+    build_infeasible_order_diagnostic,
+    evaluate_machine_fit,
+)
+from src.models import BlownFilmMachineModel, ProductionOrderModel
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _action(action: str, label: str, href: str, category: str, guidance: str) -> dict:
+    return {
+        "action": action,
+        "label": label,
+        "href": href,
+        "category": category,
+        "guidance": guidance,
+    }
+
+
+def _order_edit_action(order_id: str, *, label: str = "打开订单修订", guidance: str) -> dict:
+    return _action(
+        "review_order",
+        label,
+        f"/config?tab=orders&order={order_id}",
+        "order",
+        guidance,
+    )
+
+
+def _machine_action(*, action: str = "review_machine_capacity", label: str, guidance: str) -> dict:
+    return _action(action, label, "/config?tab=machines", "machine", guidance)
+
+
+def _rules_action(*, action: str = "review_rules", label: str, guidance: str) -> dict:
+    return _action(action, label, "/config?tab=rules", "rules", guidance)
+
+
+def _screening_recommendations(order_id: str, code: str, diagnostic_code: Optional[str] = None) -> list[dict]:
+    if code == "status_not_pending":
+        return [
+            _action(
+                "release_or_reopen_order",
+                "确认订单是否应回到待排",
+                f"/config?tab=orders&order={order_id}",
+                "order",
+                "若订单需要重新预排，先撤销相关正式排程或取消未开工队列项，再把订单状态恢复为待排。",
+            ),
+        ]
+
+    if code == "missing_product":
+        return [
+            _rules_action(
+                action="configure_product",
+                label="补齐产品主数据",
+                guidance="先补齐产品类型及配方入口，否则求解器无法计算材料、层数和换产约束。",
+            ),
+            _order_edit_action(
+                order_id,
+                label="修正订单产品类型",
+                guidance="如果订单产品类型录入错误，在订单配置中修正后重新初筛。",
+            ),
+        ]
+
+    if code == "missing_recipe":
+        return [
+            _rules_action(
+                action="configure_recipe",
+                label="补齐产品配方",
+                guidance="补齐配方层数和材料结构后再预排，避免后续机台层数和材料切换规则失真。",
+            ),
+            _order_edit_action(
+                order_id,
+                label="核对订单产品类型",
+                guidance="如果产品类型选错，先修订订单产品类型并记录原因。",
+            ),
+        ]
+
+    if code == "no_eligible_machine":
+        if diagnostic_code == "eligibility.cleanroom_mismatch":
+            primary = _machine_action(
+                action="align_cleanroom_capacity",
+                label="调整洁净机台能力",
+                guidance="确认是否有满足洁净等级的机台可开放，或修订订单洁净等级要求。",
+            )
+        elif diagnostic_code == "eligibility.layer_mismatch":
+            primary = _machine_action(
+                action="align_layer_capacity",
+                label="调整机台层数能力",
+                guidance="确认是否存在满足配方层数的机台，或补齐/修订产品配方。",
+            )
+        elif diagnostic_code == "eligibility.combined_constraint_mismatch":
+            primary = _machine_action(
+                action="review_machine_constraint_mix",
+                label="复核机台组合能力",
+                guidance="单台机未同时满足洁净、层数、幅宽和厚度要求；需调整机台能力、订单规格或配方。",
+            )
+        else:
+            primary = _machine_action(
+                action="expand_machine_capability",
+                label="调整机台规格能力",
+                guidance="订单规格超出当前可用机台范围；需扩展机台能力配置，或修订订单幅宽/厚度。",
+            )
+        return [
+            primary,
+            _order_edit_action(
+                order_id,
+                label="修订订单规格",
+                guidance="如果订单规格录入错误，在订单配置中修正幅宽、厚度、洁净等级或产品类型。",
+            ),
+        ]
+
+    if code == "material_not_ready":
+        return [
+            _action(
+                "update_material_or_due_date",
+                "更新物料齐套或交期",
+                f"/config?tab=orders&order={order_id}",
+                "material",
+                "确认真实到料时间；若无法提前齐套，需要协商交期或拆分订单后重新预排。",
+            ),
+        ]
+
+    if code == "due_risk":
+        return [
+            _action(
+                "relieve_due_risk",
+                "缓解交期风险",
+                f"/config?tab=orders&order={order_id}",
+                "schedule",
+                "优先核对交期、数量和物料时间；必要时拆分订单、协商交期或提高排程优先级。",
+            ),
+            _machine_action(
+                label="复核可用产能",
+                guidance="检查是否有更高产能或更早可用机台，减少理论完工时间。",
+            ),
+            _rules_action(
+                label="复核换产约束",
+                guidance="检查材料、幅宽、厚度和清场规则是否过严或缺失。",
+            ),
+        ]
+
+    return [
+        _order_edit_action(
+            order_id,
+            guidance="先检查订单调度关键字段，再重新运行初筛和预排。",
+        ),
+    ]
+
+
+def _evidence(**values) -> list[dict]:
+    return [
+        DiagnosticEvidence(metric, actual).to_dict()
+        for metric, actual in values.items()
+        if actual is not None
+    ]
+
+
+def _item(
+    order: ProductionOrderModel,
+    *,
+    screening_status: str,
+    code: str,
+    severity: str,
+    root_cause: str,
+    candidate_machine_count: int,
+    eligible_machine_count: int,
+    evidence: Optional[list[dict]] = None,
+    recommendations: Optional[list[dict]] = None,
+    diagnostic_code: Optional[str] = None,
+    best_duration_mins: Optional[int] = None,
+    slack_mins: Optional[int] = None,
+) -> dict:
+    return {
+        "order_id": order.order_id,
+        "screening_status": screening_status,
+        "code": code,
+        "severity": severity,
+        "root_cause": root_cause,
+        "product_type": order.product_type,
+        "target_width": order.target_width,
+        "target_thickness": order.target_thickness,
+        "total_quantity_kg": order.total_quantity_kg,
+        "cleanroom_req": order.cleanroom_req,
+        "order_class": order.order_class,
+        "candidate_machine_count": candidate_machine_count,
+        "eligible_machine_count": eligible_machine_count,
+        "recipe_layers": len(order.recipe_materials),
+        "best_duration_mins": best_duration_mins,
+        "slack_mins": slack_mins,
+        "diagnostic_code": diagnostic_code,
+        "evidence": evidence or [],
+        "recommendations": recommendations or _screening_recommendations(order.order_id, code, diagnostic_code),
+    }
+
+
+def _best_duration(order: ProductionOrderModel, machines: list[BlownFilmMachineModel]) -> Optional[int]:
+    if not machines:
+        return None
+    return min(machine.calculate_duration(order) for machine in machines)
+
+
+def _due_risk_item(
+    order: ProductionOrderModel,
+    *,
+    candidate_machine_count: int,
+    eligible_machine_count: int,
+    best_duration_mins: int,
+    blocked: bool,
+) -> dict:
+    earliest_start = max(order.order_date_mins or 0, order.material_available_mins or 0)
+    earliest_finish = earliest_start + best_duration_mins
+    slack = order.due_date_mins - earliest_finish
+    root = (
+        f"订单 {order.order_id} 最短理论完工时间仍晚于交期。"
+        if blocked
+        else f"订单 {order.order_id} 理论交期余量仅 {slack} 分钟，排程风险较高。"
+    )
+    return _item(
+        order,
+        screening_status="blocked" if blocked else "risk",
+        code="due_risk",
+        severity="critical" if blocked else "warning",
+        root_cause=root,
+        candidate_machine_count=candidate_machine_count,
+        eligible_machine_count=eligible_machine_count,
+        best_duration_mins=best_duration_mins,
+        slack_mins=slack,
+        evidence=_evidence(
+            earliest_start_mins=earliest_start,
+            best_duration_mins=best_duration_mins,
+            earliest_finish_mins=earliest_finish,
+            due_date_mins=order.due_date_mins,
+            slack_mins=slack,
+        ),
+        recommendations=_screening_recommendations(order.order_id, "due_risk"),
+    )
+
+
+def screen_order(
+    order: ProductionOrderModel,
+    machines: Iterable[BlownFilmMachineModel],
+    *,
+    status: str = "PENDING",
+    product_exists: bool = True,
+) -> dict:
+    machine_list = list(machines)
+    candidate_machine_count = len(machine_list)
+    fit_results = [evaluate_machine_fit(order, machine) for machine in machine_list]
+    eligible_machines = [
+        machine
+        for machine, fit in zip(machine_list, fit_results)
+        if fit.eligible
+    ]
+    eligible_machine_count = len(eligible_machines)
+
+    if status != "PENDING":
+        return _item(
+            order,
+            screening_status="blocked",
+            code="status_not_pending",
+            severity="critical",
+            root_cause=f"订单 {order.order_id} 当前状态为 {status}，只有待排订单可以进入预排。",
+            candidate_machine_count=candidate_machine_count,
+            eligible_machine_count=eligible_machine_count,
+            evidence=_evidence(order_status=status),
+        )
+
+    if not product_exists:
+        return _item(
+            order,
+            screening_status="blocked",
+            code="missing_product",
+            severity="critical",
+            root_cause=f"订单 {order.order_id} 的产品类型 {order.product_type} 不存在。",
+            candidate_machine_count=candidate_machine_count,
+            eligible_machine_count=0,
+            evidence=_evidence(product_type=order.product_type),
+            recommendations=_screening_recommendations(order.order_id, "missing_product"),
+        )
+
+    if not order.recipe_materials:
+        return _item(
+            order,
+            screening_status="blocked",
+            code="missing_recipe",
+            severity="critical",
+            root_cause=f"订单 {order.order_id} 的产品 {order.product_type} 没有可用配方。",
+            candidate_machine_count=candidate_machine_count,
+            eligible_machine_count=0,
+            evidence=_evidence(product_type=order.product_type, recipe_layers=0),
+            recommendations=_screening_recommendations(order.order_id, "missing_recipe"),
+        )
+
+    if eligible_machine_count == 0:
+        diagnostic: Diagnostic = build_infeasible_order_diagnostic(order, machine_list, fit_results)
+        diagnostic_dict = diagnostic.to_dict()
+        return _item(
+            order,
+            screening_status="blocked",
+            code="no_eligible_machine",
+            severity="critical",
+            root_cause=diagnostic.root_cause,
+            candidate_machine_count=candidate_machine_count,
+            eligible_machine_count=0,
+            evidence=diagnostic_dict["evidence"],
+            recommendations=_screening_recommendations(order.order_id, "no_eligible_machine", diagnostic.code),
+            diagnostic_code=diagnostic.code,
+        )
+
+    if order.material_available_mins and order.material_available_mins > order.due_date_mins:
+        return _item(
+            order,
+            screening_status="blocked",
+            code="material_not_ready",
+            severity="critical",
+            root_cause=f"订单 {order.order_id} 物料齐套时间晚于交期，不能直接进入有效预排。",
+            candidate_machine_count=candidate_machine_count,
+            eligible_machine_count=eligible_machine_count,
+            evidence=_evidence(
+                material_available_mins=order.material_available_mins,
+                due_date_mins=order.due_date_mins,
+            ),
+            recommendations=_screening_recommendations(order.order_id, "material_not_ready"),
+        )
+
+    best_duration_mins = _best_duration(order, eligible_machines)
+    if best_duration_mins is not None:
+        earliest_start = max(order.order_date_mins or 0, order.material_available_mins or 0)
+        slack = order.due_date_mins - (earliest_start + best_duration_mins)
+        if slack < 0:
+            return _due_risk_item(
+                order,
+                candidate_machine_count=candidate_machine_count,
+                eligible_machine_count=eligible_machine_count,
+                best_duration_mins=best_duration_mins,
+                blocked=True,
+            )
+        risk_threshold = max(240, int(best_duration_mins * 1.5))
+        if slack <= risk_threshold:
+            return _due_risk_item(
+                order,
+                candidate_machine_count=candidate_machine_count,
+                eligible_machine_count=eligible_machine_count,
+                best_duration_mins=best_duration_mins,
+                blocked=False,
+            )
+
+    return _item(
+        order,
+        screening_status="ready",
+        code="ready",
+        severity="info",
+        root_cause=f"订单 {order.order_id} 满足当前初筛条件，可进入预排程。",
+        candidate_machine_count=candidate_machine_count,
+        eligible_machine_count=eligible_machine_count,
+        best_duration_mins=best_duration_mins,
+        evidence=_evidence(
+            eligible_machine_count=eligible_machine_count,
+            candidate_machine_count=candidate_machine_count,
+            best_duration_mins=best_duration_mins,
+        ),
+        recommendations=[],
+    )
+
+
+def _summary(items: list[dict]) -> dict:
+    return {
+        "total_orders": len(items),
+        "ready_count": sum(1 for item in items if item["screening_status"] == "ready"),
+        "risk_count": sum(1 for item in items if item["screening_status"] == "risk"),
+        "blocked_count": sum(1 for item in items if item["screening_status"] == "blocked"),
+    }
+
+
+def screen_orders(
+    orders: Iterable[ProductionOrderModel],
+    machines: Iterable[BlownFilmMachineModel],
+    *,
+    status_by_order_id: Optional[dict[str, str]] = None,
+    product_exists_by_order_id: Optional[dict[str, bool]] = None,
+    generated_at: Optional[str] = None,
+    scope: str = "selected",
+) -> dict:
+    machine_list = list(machines)
+    status_map = status_by_order_id or {}
+    product_map = product_exists_by_order_id or {}
+    items = [
+        screen_order(
+            order,
+            machine_list,
+            status=status_map.get(order.order_id, "PENDING"),
+            product_exists=product_map.get(order.order_id, True),
+        )
+        for order in orders
+    ]
+    return {
+        "generated_at": generated_at or _utc_now_iso(),
+        "mode": "computed",
+        "scope": scope,
+        "summary": _summary(items),
+        "items": items,
+    }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { getOrders } from '../api/client';
+import { getOrders, screenOrders } from '../api/client';
 
 const PAGE_SIZE = 50;
 const statusOptions = ['', 'PENDING', 'SCHEDULED', 'IN_PRODUCTION', 'COMPLETED', 'CANCELLED'];
@@ -11,6 +11,25 @@ const statusLabels = {
   COMPLETED: '已完成',
   CANCELLED: '已取消',
 };
+const screeningLabels = {
+  ready: '可排',
+  risk: '风险',
+  blocked: '阻断',
+};
+
+function ScreeningBadge({ item }) {
+  if (!item) return <span style={{ color: 'var(--text-muted)' }}>计算中</span>;
+  const cls = {
+    ready: 'badge-scheduled',
+    risk: 'badge-urgent',
+    blocked: 'badge-pending',
+  }[item.screening_status] || 'badge-pending';
+  return (
+    <span className={`badge ${cls}`} title={item.root_cause}>
+      {screeningLabels[item.screening_status] || item.screening_status}
+    </span>
+  );
+}
 
 function StatusBadge({ status }) {
   const cls = {
@@ -32,6 +51,8 @@ export default function OrdersPage() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [screeningItems, setScreeningItems] = useState([]);
+  const [screeningError, setScreeningError] = useState('');
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 250);
@@ -40,30 +61,54 @@ export default function OrdersPage() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.resolve().then(() => {
+    Promise.resolve().then(async () => {
       if (cancelled) return;
       setLoading(true);
       setError('');
-      return getOrders({
-        status: filter || undefined,
-        q: debouncedQuery || undefined,
-        page,
-        size: PAGE_SIZE,
-      }).then(r => {
+      setScreeningError('');
+      try {
+        const r = await getOrders({
+          status: filter || undefined,
+          q: debouncedQuery || undefined,
+          page,
+          size: PAGE_SIZE,
+        });
         if (cancelled) return;
-        setOrders(r.data.items);
+        const nextOrders = r.data.items || [];
+        setOrders(nextOrders);
         setTotal(r.data.total);
-      }).catch(err => {
+        if (!nextOrders.length) {
+          setScreeningItems([]);
+          return;
+        }
+        try {
+          const screeningRes = await screenOrders({
+            scope: 'selected',
+            order_ids: nextOrders.map(order => order.order_id),
+          });
+          if (!cancelled) setScreeningItems(screeningRes.data.items || []);
+        } catch (screeningErr) {
+          if (!cancelled) {
+            setScreeningItems([]);
+            setScreeningError(screeningErr.response?.data?.detail || screeningErr.message || '订单初筛失败');
+          }
+        }
+      } catch (err) {
         if (cancelled) return;
         setError(err.response?.data?.detail || err.message || '订单加载失败');
-      }).finally(() => {
+        setScreeningItems([]);
+      } finally {
         if (!cancelled) setLoading(false);
-      });
+      }
     });
     return () => { cancelled = true; };
   }, [filter, debouncedQuery, page]);
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / PAGE_SIZE)), [total]);
+  const screeningByOrderId = useMemo(
+    () => new Map(screeningItems.map(item => [item.order_id, item])),
+    [screeningItems],
+  );
   const firstRow = total ? (page - 1) * PAGE_SIZE + 1 : 0;
   const lastRow = Math.min(total, page * PAGE_SIZE);
 
@@ -104,6 +149,7 @@ export default function OrdersPage() {
       </div>
 
       {error && <div className="config-status error">{error}</div>}
+      {screeningError && <div className="config-status error">{screeningError}</div>}
 
       <div className="card table-card">
         <table className="data-table">
@@ -116,6 +162,7 @@ export default function OrdersPage() {
               <th>客户</th>
               <th>交期</th>
               <th>状态</th>
+              <th>初筛</th>
               <th>机台</th>
               <th>废料</th>
               <th>实际投料</th>
@@ -137,6 +184,7 @@ export default function OrdersPage() {
                 </td>
                 <td style={{ fontSize: 12 }}>{o.due_date ? new Date(o.due_date).toLocaleDateString('zh-CN') : '-'}</td>
                 <td><StatusBadge status={o.status} /></td>
+                <td><ScreeningBadge item={screeningByOrderId.get(o.order_id)} /></td>
                 <td style={{ fontWeight: 500 }}>{o.assigned_machine || '-'}</td>
                 <td>{o.scrap_kg > 0 ? `${o.scrap_kg} kg` : '-'}</td>
                 <td style={{ fontWeight: 600, color: o.actual_material_kg > 0 ? 'var(--accent-green)' : 'inherit' }}>
