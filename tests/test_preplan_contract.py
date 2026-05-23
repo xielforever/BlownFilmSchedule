@@ -66,6 +66,7 @@ class TestPreplanDetailContract(unittest.TestCase):
                 json={
                     "review_required": original_settings["review_required"],
                     "auto_release_enabled": original_settings["auto_release_enabled"],
+                    "change_reason": "HTTP contract restore",
                 },
                 timeout=10,
             )
@@ -73,7 +74,11 @@ class TestPreplanDetailContract(unittest.TestCase):
         settings_response = requests.patch(
             f"{self.base_url}/api/schedule/settings",
             headers=self.headers,
-            json={"review_required": True, "auto_release_enabled": False},
+            json={
+                "review_required": True,
+                "auto_release_enabled": False,
+                "change_reason": "HTTP contract setup",
+            },
             timeout=10,
         )
         settings_response.raise_for_status()

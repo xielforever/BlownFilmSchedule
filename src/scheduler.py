@@ -42,7 +42,7 @@ class ScheduledTask:
     """单个已排程任务的结果"""
     def __init__(self, order: ProductionOrderModel, machine: BlownFilmMachineModel,
                  start_mins: int, end_mins: int, setup_time: int, scrap_kg: float,
-                 sequence_index: int):
+                 sequence_index: int, setup_detail: Optional[Dict] = None):
         self.order = order
         self.machine = machine
         self.start_mins = start_mins
@@ -50,6 +50,7 @@ class ScheduledTask:
         self.setup_time = setup_time
         self.scrap_kg = scrap_kg
         self.sequence_index = sequence_index
+        self.setup_detail = setup_detail or {"total_mins": setup_time, "components": []}
 
 
 class ScheduleResult:
@@ -147,6 +148,110 @@ class SetupCalculator:
 
         return setup
 
+    def calculate_setup_detail(
+        self,
+        prev_order: Optional[ProductionOrderModel],
+        next_order: ProductionOrderModel,
+        machine: BlownFilmMachineModel,
+    ) -> Dict:
+        """Return a structured breakdown that sums to calculate_setup_time()."""
+        if prev_order is None:
+            m_from = list(machine.initial_material_lanes)
+            w_from = machine.initial_width
+            t_from = machine.initial_thickness
+            c_from = machine.initial_corona
+            r_from = machine.initial_core_size
+            class_from = "INIT"
+            prev_order_id = None
+        else:
+            m_from = list(prev_order.recipe_materials)
+            w_from = prev_order.target_width
+            t_from = prev_order.target_thickness
+            c_from = prev_order.corona_req
+            r_from = prev_order.core_size_inch
+            class_from = prev_order.order_class
+            prev_order_id = prev_order.order_id
+
+        m_to = list(next_order.recipe_materials)
+        w_to = next_order.target_width
+        t_to = next_order.target_thickness
+        c_to = next_order.corona_req
+        r_to = next_order.core_size_inch
+        class_to = next_order.order_class
+
+        components = []
+
+        def add_component(category: str, minutes: int, **evidence) -> None:
+            if minutes <= 0:
+                return
+            components.append({
+                "category": category,
+                "minutes": int(minutes),
+                **evidence,
+            })
+
+        mat_times = []
+        num_layers = min(len(m_from), len(m_to))
+        for layer in range(num_layers):
+            mat_times.append(self.mgr.get_material_switch_time(m_from[layer], m_to[layer]))
+        material_mins = max(mat_times) if mat_times else 0
+        add_component(
+            "material",
+            material_mins,
+            from_materials=m_from,
+            to_materials=m_to,
+            layer_times=mat_times,
+        )
+
+        delta_w = w_to - w_from
+        exceeds = w_to > machine.max_width
+        add_component(
+            "width",
+            self.mgr.get_width_change_time(delta_w, exceeds),
+            from_width=w_from,
+            to_width=w_to,
+            delta=delta_w,
+            exceeds_machine_max=exceeds,
+        )
+
+        delta_t = t_to - t_from
+        add_component(
+            "thickness",
+            self.mgr.get_thickness_change_time(delta_t),
+            from_thickness=t_from,
+            to_thickness=t_to,
+            delta=delta_t,
+        )
+
+        add_component(
+            "corona",
+            self.mgr.get_corona_change_time(c_from, c_to),
+            from_corona=c_from,
+            to_corona=c_to,
+        )
+        add_component(
+            "core",
+            self.mgr.get_core_size_change_time(r_from, r_to),
+            from_core=r_from,
+            to_core=r_to,
+        )
+        add_component(
+            "gmp",
+            self.mgr.get_gmp_clearance_time(class_from, class_to),
+            from_order_class=class_from,
+            to_order_class=class_to,
+        )
+
+        total = sum(component["minutes"] for component in components)
+        return {
+            "prev_order_id": prev_order_id,
+            "order_id": next_order.order_id,
+            "machine_id": machine.machine_id,
+            "total_mins": total,
+            "components": components,
+            "no_enabled_rules": total == 0,
+        }
+
     def calculate_scrap_weight(
         self,
         prev_order: Optional[ProductionOrderModel],
@@ -178,6 +283,8 @@ class SetupCalculator:
             configured_scrap = self.mgr.get_material_switch_scrap(m_from[l], m_to[l])
             if configured_scrap is not None:
                 scrap += configured_scrap
+            elif not self.mgr.scrap_defaults_enabled:
+                scrap += 0
             elif m_from[l] != m_to[l]:
                 scrap += SCRAP_PER_LAYER_MATERIAL_CHANGE_KG
             else:
@@ -189,7 +296,7 @@ class SetupCalculator:
             scrap += (
                 configured_scrap
                 if configured_scrap is not None
-                else SCRAP_WIDTH_CHANGE_KG
+                else (SCRAP_WIDTH_CHANGE_KG if self.mgr.scrap_defaults_enabled else 0)
             )
 
         # 3. 厚度调机废料
@@ -198,7 +305,7 @@ class SetupCalculator:
             scrap += (
                 configured_scrap
                 if configured_scrap is not None
-                else SCRAP_THICKNESS_CHANGE_KG
+                else (SCRAP_THICKNESS_CHANGE_KG if self.mgr.scrap_defaults_enabled else 0)
             )
 
         return scrap
@@ -859,6 +966,7 @@ class AdvancedMedicalAPS:
             for seq, (idx, s, e) in enumerate(task_list):
                 o = orders[idx]
                 setup_t = self.setup_calc.calculate_setup_time(prev_order, o, m)
+                setup_detail = self.setup_calc.calculate_setup_detail(prev_order, o, m)
                 scrap = self.setup_calc.calculate_scrap_weight(prev_order, o, m)
 
                 task = ScheduledTask(
@@ -866,6 +974,7 @@ class AdvancedMedicalAPS:
                     start_mins=s, end_mins=e,
                     setup_time=setup_t, scrap_kg=scrap,
                     sequence_index=seq,
+                    setup_detail=setup_detail,
                 )
                 result.add_task(task)
 

@@ -5,6 +5,7 @@ APS 排程系统 PostgreSQL 数据库访问层
 """
 
 from __future__ import annotations
+import hashlib
 import os
 import datetime
 import json
@@ -24,6 +25,106 @@ from src.setup_matrices import SetupMatricesManager
 logger = logging.getLogger(__name__)
 
 DDL_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "db", "init_schema.sql")
+
+ORDER_SNAPSHOT_FIELDS = (
+    "product_type",
+    "target_width",
+    "target_thickness",
+    "total_quantity_kg",
+    "cleanroom_req",
+    "order_class",
+    "due_date",
+    "material_available_time",
+    "status",
+    "priority_override",
+)
+
+RULE_ENABLEMENT_TABLES = (
+    "material_switch_matrix",
+    "gmp_clearance_matrix",
+    "spec_change_rules",
+    "machine_maintenance_calendar",
+)
+
+
+def _enabled_clause(table: str) -> str:
+    if table not in RULE_ENABLEMENT_TABLES:
+        raise ValueError(f"Unsupported rule table: {table}")
+    return "COALESCE(is_enabled, TRUE)=TRUE"
+
+
+def _snapshot_order_value(value):
+    if isinstance(value, datetime.datetime):
+        return value.isoformat()
+    return value
+
+
+def _build_order_snapshot(row) -> dict:
+    fields = {key: _snapshot_order_value(row.get(key)) for key in ORDER_SNAPSHOT_FIELDS}
+    snapshot = {
+        "order_id": row.get("order_id"),
+        "updated_at": _snapshot_order_value(row.get("updated_at")),
+        "fields": fields,
+    }
+    payload = json.dumps(fields, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    snapshot["hash"] = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return snapshot
+
+
+def _apply_schedule_policy_to_master_data(
+    machines: List[BlownFilmMachineModel],
+    orders: List[ProductionOrderModel],
+    policy: Dict[str, bool],
+) -> None:
+    """Apply global scheduling switches to in-memory solver inputs."""
+    if not policy.get("material_constraint_enabled", True):
+        for order in orders:
+            order.material_available_mins = 0
+
+    if not policy.get("cleanroom_constraint_enabled", True):
+        for order in orders:
+            order.cleanroom_req = "Class_100K"
+
+    if not policy.get("machine_capability_constraint_enabled", True):
+        max_width = max([machine.max_width for machine in machines] + [order.target_width for order in orders] + [0])
+        max_thickness = max(
+            [machine.max_thickness for machine in machines] + [order.target_thickness for order in orders] + [0]
+        )
+        max_layers = max([machine.layer_structure for machine in machines] + [len(order.recipe_materials) for order in orders] + [0])
+        for machine in machines:
+            machine.min_width = min(machine.min_width, 0)
+            machine.max_width = max(machine.max_width, max_width)
+            machine.min_thickness = min(machine.min_thickness, 0)
+            machine.max_thickness = max(machine.max_thickness, max_thickness)
+            machine.layer_structure = max(machine.layer_structure, max_layers)
+
+    if not policy.get("due_date_optimization_enabled", True):
+        for order in orders:
+            order.priority_override = 0
+
+
+def _build_schedule_run_solver_params(
+    result: ScheduleResult,
+    diagnostics_payload: list,
+    normalized_order_ids: list[str],
+    order_snapshots: list[dict],
+    mode: str,
+    policy_snapshot: Optional[dict] = None,
+) -> dict:
+    payload = {
+        "diagnostics": diagnostics_payload,
+        "summary": {
+            "input_order_count": getattr(result, "input_order_count", len(getattr(result, "tasks", []))),
+            "schedulable_order_count": getattr(result, "schedulable_order_count", len(getattr(result, "tasks", []))),
+            "blocked_order_count": getattr(result, "blocked_order_count", 0),
+        },
+        "selected_order_ids": normalized_order_ids,
+        "order_snapshots": order_snapshots,
+        "mode": mode,
+    }
+    if policy_snapshot is not None:
+        payload["policy_snapshot"] = policy_snapshot
+    return payload
 
 
 class DatabaseManager:
@@ -85,7 +186,8 @@ class DatabaseManager:
                 ALTER TABLE scheduled_tasks
                     ADD COLUMN IF NOT EXISTS task_source VARCHAR(20) DEFAULT 'AUTO',
                     ADD COLUMN IF NOT EXISTS manual_lock_machine BOOLEAN DEFAULT FALSE,
-                    ADD COLUMN IF NOT EXISTS manual_lock_time BOOLEAN DEFAULT FALSE
+                    ADD COLUMN IF NOT EXISTS manual_lock_time BOOLEAN DEFAULT FALSE,
+                    ADD COLUMN IF NOT EXISTS setup_detail JSONB
             """)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS schedule_settings (
@@ -120,6 +222,54 @@ class DatabaseManager:
                 )
             """)
             cur.execute("""
+                CREATE TABLE IF NOT EXISTS order_revision_audit (
+                    id                      SERIAL       PRIMARY KEY,
+                    order_id                VARCHAR(20)  NOT NULL REFERENCES production_orders(order_id),
+                    action_type             VARCHAR(30)  NOT NULL,
+                    changed_fields          JSONB        NOT NULL,
+                    before_state            JSONB,
+                    after_state             JSONB,
+                    reason_code             VARCHAR(50),
+                    reason_text             TEXT,
+                    impacted_draft_run_ids  JSONB        NOT NULL DEFAULT '[]'::jsonb,
+                    changed_by              VARCHAR(50),
+                    changed_at              TIMESTAMPTZ  DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_order_revision_audit_order
+                ON order_revision_audit(order_id, changed_at DESC)
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS order_ingestion_batches (
+                    id                  SERIAL       PRIMARY KEY,
+                    source_name         VARCHAR(200),
+                    conflict_policy     VARCHAR(50)  NOT NULL DEFAULT 'reject_duplicates',
+                    total_rows          INTEGER      NOT NULL DEFAULT 0,
+                    accepted_rows       INTEGER      NOT NULL DEFAULT 0,
+                    rejected_rows       INTEGER      NOT NULL DEFAULT 0,
+                    created_by          VARCHAR(50),
+                    created_at          TIMESTAMPTZ  DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS order_ingestion_rows (
+                    id                  SERIAL       PRIMARY KEY,
+                    batch_id            INTEGER      NOT NULL REFERENCES order_ingestion_batches(id),
+                    row_index           INTEGER      NOT NULL,
+                    order_id            VARCHAR(20),
+                    row_status          VARCHAR(30)  NOT NULL,
+                    normalized_order    JSONB,
+                    errors              JSONB        NOT NULL DEFAULT '[]'::jsonb,
+                    warnings            JSONB        NOT NULL DEFAULT '[]'::jsonb,
+                    created_order       BOOLEAN      NOT NULL DEFAULT FALSE
+                )
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_order_ingestion_rows_batch
+                ON order_ingestion_rows(batch_id, row_index)
+            """)
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS manufacturing_queue (
                     id                  SERIAL       PRIMARY KEY,
                     run_id              INTEGER      NOT NULL REFERENCES schedule_runs(run_id),
@@ -136,6 +286,23 @@ class DatabaseManager:
                     completed_at        TIMESTAMPTZ,
                     UNIQUE(run_id, order_id)
                 )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS schedule_publish_audit (
+                    id                   SERIAL       PRIMARY KEY,
+                    run_id               INTEGER      REFERENCES schedule_runs(run_id),
+                    event_type           VARCHAR(40)  NOT NULL,
+                    actor                VARCHAR(50),
+                    selected_order_count INTEGER      NOT NULL DEFAULT 0,
+                    warning_count        INTEGER      NOT NULL DEFAULT 0,
+                    queue_row_count      INTEGER      NOT NULL DEFAULT 0,
+                    details              JSONB,
+                    created_at           TIMESTAMPTZ  DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_schedule_publish_audit_run
+                ON schedule_publish_audit(run_id, created_at DESC)
             """)
             cur.execute("""
                 CREATE INDEX IF NOT EXISTS idx_schedule_runs_lifecycle
@@ -180,12 +347,21 @@ class DatabaseManager:
     ]:
         """Load scheduler inputs from the configured database."""
         base = datetime.datetime.strptime(BASELINE_TIME, "%Y-%m-%d %H:%M")
-        setup_mgr = fallback_setup_mgr or SetupMatricesManager()
+        setup_mgr = fallback_setup_mgr or SetupMatricesManager.empty_rules()
 
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            self._ensure_rule_enablement_schema(cur)
+            policy = self._load_schedule_policy(cur)
             recipes_map = self._load_recipes_map(cur)
-            self._load_setup_matrices_from_db(cur, setup_mgr)
-            machines = self._load_machines_from_db(cur, base)
+            if policy.get("setup_rules_enabled", True):
+                self._load_setup_matrices_from_db(cur, setup_mgr)
+            else:
+                setup_mgr = SetupMatricesManager.empty_rules()
+            machines = self._load_machines_from_db(
+                cur,
+                base,
+                maintenance_enabled=policy.get("maintenance_constraint_enabled", True),
+            )
             orders = self._load_orders_from_db(
                 cur,
                 base,
@@ -193,12 +369,57 @@ class DatabaseManager:
                 order_ids=order_ids,
                 order_statuses=order_statuses,
             )
+            _apply_schedule_policy_to_master_data(machines, orders, policy)
 
         logger.info(
             "从数据库加载排程输入完成: machines=%d, orders=%d, recipes=%d",
             len(machines), len(orders), len(recipes_map),
         )
         return machines, orders, recipes_map, setup_mgr
+
+    def _ensure_rule_enablement_schema(self, cur) -> None:
+        for table in RULE_ENABLEMENT_TABLES:
+            cur.execute(f"""
+                ALTER TABLE {table}
+                    ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    ADD COLUMN IF NOT EXISTS disabled_reason TEXT,
+                    ADD COLUMN IF NOT EXISTS updated_by VARCHAR(50),
+                    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()
+            """)
+        cur.execute("""
+            ALTER TABLE schedule_settings
+                ADD COLUMN IF NOT EXISTS material_constraint_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                ADD COLUMN IF NOT EXISTS maintenance_constraint_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                ADD COLUMN IF NOT EXISTS setup_rules_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                ADD COLUMN IF NOT EXISTS cleanroom_constraint_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                ADD COLUMN IF NOT EXISTS machine_capability_constraint_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                ADD COLUMN IF NOT EXISTS due_date_optimization_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                ADD COLUMN IF NOT EXISTS policy_version INTEGER NOT NULL DEFAULT 1,
+                ADD COLUMN IF NOT EXISTS updated_by VARCHAR(50),
+                ADD COLUMN IF NOT EXISTS change_reason TEXT
+        """)
+
+    def _load_schedule_policy(self, cur) -> Dict[str, bool]:
+        try:
+            cur.execute("""
+                SELECT material_constraint_enabled, maintenance_constraint_enabled,
+                    setup_rules_enabled, cleanroom_constraint_enabled,
+                    machine_capability_constraint_enabled, due_date_optimization_enabled
+                FROM schedule_settings
+                WHERE id=TRUE
+            """)
+            row = cur.fetchone()
+        except Exception:
+            row = None
+        defaults = {
+            "material_constraint_enabled": True,
+            "maintenance_constraint_enabled": True,
+            "setup_rules_enabled": True,
+            "cleanroom_constraint_enabled": True,
+            "machine_capability_constraint_enabled": True,
+            "due_date_optimization_enabled": True,
+        }
+        return {**defaults, **dict(row or {})}
 
     def _load_recipes_map(self, cur) -> Dict[str, List[str]]:
         cur.execute("""
@@ -215,6 +436,7 @@ class DatabaseManager:
         cur.execute("""
             SELECT from_material, to_material, switch_time_mins, scrap_weight_kg
             FROM material_switch_matrix
+            WHERE COALESCE(is_enabled, TRUE)=TRUE
         """)
         for r in cur.fetchall():
             key = (r["from_material"], r["to_material"])
@@ -225,6 +447,7 @@ class DatabaseManager:
         cur.execute("""
             SELECT from_order_class, to_order_class, clearance_time_mins
             FROM gmp_clearance_matrix
+            WHERE COALESCE(is_enabled, TRUE)=TRUE
         """)
         for r in cur.fetchall():
             from_class = r["from_order_class"]
@@ -239,6 +462,7 @@ class DatabaseManager:
             SELECT attribute, condition_desc, threshold_lower, threshold_upper,
                 change_time_mins, scrap_weight_kg
             FROM spec_change_rules
+            WHERE COALESCE(is_enabled, TRUE)=TRUE
             ORDER BY attribute, threshold_upper NULLS LAST, id
         """)
         spec_rows = cur.fetchall()
@@ -288,7 +512,12 @@ class DatabaseManager:
         setup_mgr.width_down_scrap_rules.sort(key=lambda x: x[0])
         setup_mgr.thickness_scrap_rules.sort(key=lambda x: x[0])
 
-    def _load_machines_from_db(self, cur, base: datetime.datetime) -> List[BlownFilmMachineModel]:
+    def _load_machines_from_db(
+        self,
+        cur,
+        base: datetime.datetime,
+        maintenance_enabled: bool = True,
+    ) -> List[BlownFilmMachineModel]:
         cur.execute("""
             SELECT m.*, s.current_material_lanes, s.current_width,
                 s.current_thickness, s.current_corona, s.current_core_size,
@@ -300,28 +529,30 @@ class DatabaseManager:
         """)
         machine_rows = cur.fetchall()
 
-        cur.execute("""
-            SELECT machine_id, start_time, end_time, reason
-            FROM machine_maintenance_calendar
-            ORDER BY start_time
-        """)
         calendar_by_machine: Dict[str, List[ForbiddenWindow]] = {}
         seen_windows = set()
-        for r in cur.fetchall():
-            key = (
-                r["machine_id"],
-                r["start_time"],
-                r["end_time"],
-                r["reason"] or "Maintenance",
-            )
-            if key in seen_windows:
-                continue
-            seen_windows.add(key)
-            calendar_by_machine.setdefault(r["machine_id"], []).append(ForbiddenWindow(
-                start_mins=self._dt_to_mins(r["start_time"], base),
-                end_mins=self._dt_to_mins(r["end_time"], base),
-                reason=r["reason"] or "Maintenance",
-            ))
+        if maintenance_enabled:
+            cur.execute("""
+                SELECT machine_id, start_time, end_time, reason
+                FROM machine_maintenance_calendar
+                WHERE COALESCE(is_enabled, TRUE)=TRUE
+                ORDER BY start_time
+            """)
+            for r in cur.fetchall():
+                key = (
+                    r["machine_id"],
+                    r["start_time"],
+                    r["end_time"],
+                    r["reason"] or "Maintenance",
+                )
+                if key in seen_windows:
+                    continue
+                seen_windows.add(key)
+                calendar_by_machine.setdefault(r["machine_id"], []).append(ForbiddenWindow(
+                    start_mins=self._dt_to_mins(r["start_time"], base),
+                    end_mins=self._dt_to_mins(r["end_time"], base),
+                    reason=r["reason"] or "Maintenance",
+                ))
 
         machines = []
         for r in machine_rows:
@@ -589,6 +820,7 @@ class DatabaseManager:
         mode: str = "AUTO",
         lifecycle_status: Optional[str] = None,
         selected_order_ids: Optional[List[str]] = None,
+        policy_snapshot: Optional[dict] = None,
     ):
         """保存排程结果到数据库"""
         self.ensure_planning_schema()
@@ -633,22 +865,37 @@ class DatabaseManager:
                   mode, lifecycle_status or ("CONFIRMED" if activate else "DRAFT")))
             run_id = cur.fetchone()[0]
 
+            order_snapshots = []
+            normalized_order_ids = [order_id for order_id in dict.fromkeys(selected_order_ids or []) if order_id]
+            if normalized_order_ids:
+                with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as order_cur:
+                    order_cur.execute("""
+                        SELECT order_id, product_type, target_width, target_thickness,
+                            total_quantity_kg, cleanroom_req, order_class, due_date,
+                            material_available_time, status, priority_override, updated_at
+                        FROM production_orders
+                        WHERE order_id = ANY(%s)
+                    """, (normalized_order_ids,))
+                    order_rows = {row["order_id"]: row for row in order_cur.fetchall()}
+                for order_id in normalized_order_ids:
+                    row = order_rows.get(order_id)
+                    if row:
+                        order_snapshots.append(_build_order_snapshot(row))
+
             diagnostics_payload = diagnostics_to_dicts(
                 getattr(result, "diagnostics", []),
                 run_id=run_id,
             )
             cur.execute(
                 "UPDATE schedule_runs SET solver_params=%s WHERE run_id=%s",
-                (Json({
-                    "diagnostics": diagnostics_payload,
-                    "summary": {
-                        "input_order_count": getattr(result, "input_order_count", len(result.tasks)),
-                        "schedulable_order_count": getattr(result, "schedulable_order_count", len(result.tasks)),
-                        "blocked_order_count": getattr(result, "blocked_order_count", 0),
-                    },
-                    "selected_order_ids": selected_order_ids or [],
-                    "mode": mode,
-                }), run_id),
+                (Json(_build_schedule_run_solver_params(
+                    result=result,
+                    diagnostics_payload=diagnostics_payload,
+                    normalized_order_ids=normalized_order_ids,
+                    order_snapshots=order_snapshots,
+                    mode=mode,
+                    policy_snapshot=policy_snapshot,
+                )), run_id),
             )
 
             # 保存任务明细
@@ -666,8 +913,8 @@ class DatabaseManager:
                              setup_start_time, start_time, end_time,
                              start_mins, end_mins, duration_mins, setup_time_mins,
                              scrap_kg, net_weight_kg, actual_material_required_kg,
-                             is_late, tardiness_mins, prev_order_id, task_source)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                              is_late, tardiness_mins, prev_order_id, setup_detail, task_source)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     """, (run_id, t.order.order_id, t.machine.machine_id,
                           t.sequence_index, setup_st, st, et,
                           t.start_mins, t.end_mins,
@@ -676,7 +923,8 @@ class DatabaseManager:
                           t.order.total_quantity_kg + t.scrap_kg,
                           t.end_mins > t.order.due_date_mins,
                           max(0, t.end_mins - t.order.due_date_mins),
-                          prev_oid, "AUTO"))
+                          prev_oid, Json(getattr(t, "setup_detail", None) or {}),
+                          "AUTO"))
                     prev_oid = t.order.order_id
 
             # 更新订单状态

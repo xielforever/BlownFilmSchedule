@@ -1,6 +1,6 @@
 -- ============================================================
 -- 医疗PE薄膜吹膜机 APS 排程系统 — PostgreSQL 数据库初始化
--- 15 张表 · 6 个域 · 覆盖完整运营闭环
+-- 19 张表 · 6 个域 · 覆盖完整运营闭环
 -- ============================================================
 
 -- 域 1：客户与原料主数据 ─────────────────────────────────────
@@ -110,6 +110,10 @@ CREATE TABLE IF NOT EXISTS machine_maintenance_calendar (
     reason            VARCHAR(200),
     is_recurring      BOOLEAN      DEFAULT FALSE,
     recurrence_rule   VARCHAR(100),
+    is_enabled        BOOLEAN      NOT NULL DEFAULT TRUE,
+    disabled_reason   TEXT,
+    updated_by        VARCHAR(50),
+    updated_at        TIMESTAMPTZ  DEFAULT NOW(),
     created_at        TIMESTAMPTZ  DEFAULT NOW()
 );
 COMMENT ON TABLE machine_maintenance_calendar IS '维保/禁排日历';
@@ -138,6 +142,10 @@ CREATE TABLE IF NOT EXISTS material_switch_matrix (
     switch_time_mins  INTEGER      NOT NULL,
     scrap_weight_kg   NUMERIC(6,2),
     description       TEXT,
+    is_enabled        BOOLEAN      NOT NULL DEFAULT TRUE,
+    disabled_reason   TEXT,
+    updated_by        VARCHAR(50),
+    updated_at        TIMESTAMPTZ  DEFAULT NOW(),
     UNIQUE(from_material, to_material)
 );
 COMMENT ON TABLE material_switch_matrix IS '原料切换矩阵';
@@ -150,7 +158,11 @@ CREATE TABLE IF NOT EXISTS spec_change_rules (
     threshold_upper   INTEGER,
     change_time_mins  INTEGER      NOT NULL,
     scrap_weight_kg   NUMERIC(6,2) DEFAULT 0,
-    description       TEXT
+    description       TEXT,
+    is_enabled        BOOLEAN      NOT NULL DEFAULT TRUE,
+    disabled_reason   TEXT,
+    updated_by        VARCHAR(50),
+    updated_at        TIMESTAMPTZ  DEFAULT NOW()
 );
 COMMENT ON TABLE spec_change_rules IS '规格调机规则';
 
@@ -160,6 +172,10 @@ CREATE TABLE IF NOT EXISTS gmp_clearance_matrix (
     to_order_class        VARCHAR(30)  NOT NULL,
     clearance_time_mins   INTEGER      NOT NULL,
     description           TEXT,
+    is_enabled            BOOLEAN      NOT NULL DEFAULT TRUE,
+    disabled_reason       TEXT,
+    updated_by            VARCHAR(50),
+    updated_at            TIMESTAMPTZ  DEFAULT NOW(),
     UNIQUE(from_order_class, to_order_class)
 );
 COMMENT ON TABLE gmp_clearance_matrix IS 'GMP合规清场矩阵';
@@ -186,6 +202,46 @@ CREATE TABLE IF NOT EXISTS production_orders (
     updated_at              TIMESTAMPTZ  DEFAULT NOW()
 );
 COMMENT ON TABLE production_orders IS '生产工单';
+
+CREATE TABLE IF NOT EXISTS order_revision_audit (
+    id                      SERIAL       PRIMARY KEY,
+    order_id                VARCHAR(20)  NOT NULL REFERENCES production_orders(order_id),
+    action_type             VARCHAR(30)  NOT NULL,
+    changed_fields          JSONB        NOT NULL,
+    before_state            JSONB,
+    after_state             JSONB,
+    reason_code             VARCHAR(50),
+    reason_text             TEXT,
+    impacted_draft_run_ids  JSONB        NOT NULL DEFAULT '[]'::jsonb,
+    changed_by              VARCHAR(50),
+    changed_at              TIMESTAMPTZ  DEFAULT NOW()
+);
+COMMENT ON TABLE order_revision_audit IS '订单修订审计';
+
+CREATE TABLE IF NOT EXISTS order_ingestion_batches (
+    id                  SERIAL       PRIMARY KEY,
+    source_name         VARCHAR(200),
+    conflict_policy     VARCHAR(50)  NOT NULL DEFAULT 'reject_duplicates',
+    total_rows          INTEGER      NOT NULL DEFAULT 0,
+    accepted_rows       INTEGER      NOT NULL DEFAULT 0,
+    rejected_rows       INTEGER      NOT NULL DEFAULT 0,
+    created_by          VARCHAR(50),
+    created_at          TIMESTAMPTZ  DEFAULT NOW()
+);
+COMMENT ON TABLE order_ingestion_batches IS '订单导入批次';
+
+CREATE TABLE IF NOT EXISTS order_ingestion_rows (
+    id                  SERIAL       PRIMARY KEY,
+    batch_id            INTEGER      NOT NULL REFERENCES order_ingestion_batches(id),
+    row_index           INTEGER      NOT NULL,
+    order_id            VARCHAR(20),
+    row_status          VARCHAR(30)  NOT NULL,
+    normalized_order    JSONB,
+    errors              JSONB        NOT NULL DEFAULT '[]'::jsonb,
+    warnings            JSONB        NOT NULL DEFAULT '[]'::jsonb,
+    created_order       BOOLEAN      NOT NULL DEFAULT FALSE
+);
+COMMENT ON TABLE order_ingestion_rows IS '订单导入行级结果';
 
 -- 域 6：排程结果与执行反馈 ──────────────────────────────────
 
@@ -249,9 +305,33 @@ CREATE TABLE IF NOT EXISTS schedule_settings (
     manual_adjust_reason_required       BOOLEAN NOT NULL DEFAULT TRUE,
     publish_with_warnings_allowed       BOOLEAN NOT NULL DEFAULT TRUE,
     auto_release_enabled                BOOLEAN NOT NULL DEFAULT FALSE,
+    material_constraint_enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+    maintenance_constraint_enabled      BOOLEAN NOT NULL DEFAULT TRUE,
+    setup_rules_enabled                 BOOLEAN NOT NULL DEFAULT TRUE,
+    cleanroom_constraint_enabled        BOOLEAN NOT NULL DEFAULT TRUE,
+    machine_capability_constraint_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    due_date_optimization_enabled       BOOLEAN NOT NULL DEFAULT TRUE,
+    policy_version                      INTEGER NOT NULL DEFAULT 1,
+    updated_by                          VARCHAR(50),
+    change_reason                       TEXT,
     updated_at                          TIMESTAMPTZ DEFAULT NOW()
 );
 COMMENT ON TABLE schedule_settings IS '排程发布与人工复核开关';
+
+CREATE TABLE IF NOT EXISTS config_change_audit (
+    id              SERIAL       PRIMARY KEY,
+    config_scope    VARCHAR(40)  NOT NULL,
+    config_key      TEXT,
+    entity_id       VARCHAR(80),
+    before_state    JSONB,
+    after_state     JSONB,
+    changed_by      VARCHAR(50),
+    reason_text     TEXT,
+    created_at      TIMESTAMPTZ  DEFAULT NOW()
+);
+COMMENT ON TABLE config_change_audit IS '全局配置与规则变更审计';
+CREATE INDEX IF NOT EXISTS idx_config_change_audit_created
+    ON config_change_audit(created_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS schedule_adjustment_audit (
     id                  SERIAL       PRIMARY KEY,
@@ -287,6 +367,19 @@ CREATE TABLE IF NOT EXISTS manufacturing_queue (
 );
 COMMENT ON TABLE manufacturing_queue IS '确认发布后的制造队列';
 
+CREATE TABLE IF NOT EXISTS schedule_publish_audit (
+    id                   SERIAL       PRIMARY KEY,
+    run_id               INTEGER      REFERENCES schedule_runs(run_id),
+    event_type           VARCHAR(40)  NOT NULL,
+    actor                VARCHAR(50),
+    selected_order_count INTEGER      NOT NULL DEFAULT 0,
+    warning_count        INTEGER      NOT NULL DEFAULT 0,
+    queue_row_count      INTEGER      NOT NULL DEFAULT 0,
+    details              JSONB,
+    created_at           TIMESTAMPTZ  DEFAULT NOW()
+);
+COMMENT ON TABLE schedule_publish_audit IS '排程发布和撤销审计';
+
 CREATE TABLE IF NOT EXISTS production_actuals (
     id                  SERIAL        PRIMARY KEY,
     scheduled_task_id   INTEGER       REFERENCES scheduled_tasks(id),
@@ -320,6 +413,7 @@ CREATE INDEX IF NOT EXISTS idx_recipes_product ON recipes(product_type);
 CREATE INDEX IF NOT EXISTS idx_inventory_material ON material_inventory(material_grade, status);
 CREATE INDEX IF NOT EXISTS idx_actuals_task ON production_actuals(scheduled_task_id);
 CREATE INDEX IF NOT EXISTS idx_queue_status ON manufacturing_queue(queue_status, planned_start_time);
+CREATE INDEX IF NOT EXISTS idx_schedule_publish_audit_run ON schedule_publish_audit(run_id, created_at DESC);
 
 INSERT INTO schedule_settings (id)
 VALUES (TRUE)

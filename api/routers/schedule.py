@@ -1,5 +1,6 @@
 """Schedule, run history, and Gantt API."""
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import locale
 from math import ceil
@@ -8,7 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import threading
-from typing import Optional
+from typing import Any, Optional
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -17,8 +18,7 @@ from psycopg2.extras import Json
 
 from api.auth import get_current_user, require_role
 from api.deps import get_db
-from src.config import BASELINE_TIME, INPUT_EXCEL_PATH
-from src.data_ingestion import BlownFilmDataIngestionPipeline
+from src.config import BASELINE_TIME
 from src.diagnostics import (
     Diagnostic,
     DiagnosticEvidence,
@@ -31,6 +31,7 @@ router = APIRouter(prefix="/api/schedule", tags=["Schedule"])
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _JOB_LOCK = threading.Lock()
+_PLANNING_SCHEMA_LOCK = threading.Lock()
 _CURRENT_JOB = {
     "job_id": None,
     "state": "idle",
@@ -45,10 +46,23 @@ _CURRENT_JOB = {
     "stderr_tail": "",
     "diagnostics": [],
 }
+ORDER_SNAPSHOT_FIELDS = (
+    "product_type",
+    "target_width",
+    "target_thickness",
+    "total_quantity_kg",
+    "cleanroom_req",
+    "order_class",
+    "due_date",
+    "material_available_time",
+    "status",
+    "priority_override",
+)
+VALIDATION_SUMMARY_VERSION = "preplan-validation-v1"
 
 
 def _utc_now_iso():
-    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _tail(text: str, limit: int = 6000) -> str:
@@ -125,6 +139,51 @@ class ScheduleSettingsPayload(BaseModel):
     manual_adjust_reason_required: Optional[bool] = None
     publish_with_warnings_allowed: Optional[bool] = None
     auto_release_enabled: Optional[bool] = None
+    material_constraint_enabled: Optional[bool] = None
+    maintenance_constraint_enabled: Optional[bool] = None
+    setup_rules_enabled: Optional[bool] = None
+    cleanroom_constraint_enabled: Optional[bool] = None
+    machine_capability_constraint_enabled: Optional[bool] = None
+    due_date_optimization_enabled: Optional[bool] = None
+    change_reason: Optional[str] = None
+
+
+POLICY_SETTING_KEYS = (
+    "review_required",
+    "manual_adjust_enabled",
+    "manual_adjust_reason_required",
+    "publish_with_warnings_allowed",
+    "auto_release_enabled",
+    "material_constraint_enabled",
+    "maintenance_constraint_enabled",
+    "setup_rules_enabled",
+    "cleanroom_constraint_enabled",
+    "machine_capability_constraint_enabled",
+    "due_date_optimization_enabled",
+)
+
+
+POLICY_DEFAULTS = {
+    "policy_version": 1,
+    "review_required": True,
+    "manual_adjust_enabled": True,
+    "manual_adjust_reason_required": True,
+    "publish_with_warnings_allowed": True,
+    "auto_release_enabled": False,
+    "material_constraint_enabled": True,
+    "maintenance_constraint_enabled": True,
+    "setup_rules_enabled": True,
+    "cleanroom_constraint_enabled": True,
+    "machine_capability_constraint_enabled": True,
+    "due_date_optimization_enabled": True,
+}
+
+
+def _require_policy_change_reason(value: str | None) -> str:
+    reason = (value or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="保存全局策略前必须填写变更原因。")
+    return reason
 
 
 class PreplanCreatePayload(BaseModel):
@@ -148,7 +207,17 @@ class CancelPreplanPayload(BaseModel):
     reason: str = ""
 
 
+class QueueStatusUpdatePayload(BaseModel):
+    queue_status: str
+    reason: str = ""
+
+
 def _ensure_planning_schema(db):
+    with _PLANNING_SCHEMA_LOCK:
+        _ensure_planning_schema_locked(db)
+
+
+def _ensure_planning_schema_locked(db):
     cur = db.cursor()
     cur.execute("""
         ALTER TABLE schedule_runs
@@ -164,7 +233,8 @@ def _ensure_planning_schema(db):
         ALTER TABLE scheduled_tasks
             ADD COLUMN IF NOT EXISTS task_source VARCHAR(20) DEFAULT 'AUTO',
             ADD COLUMN IF NOT EXISTS manual_lock_machine BOOLEAN DEFAULT FALSE,
-            ADD COLUMN IF NOT EXISTS manual_lock_time BOOLEAN DEFAULT FALSE
+            ADD COLUMN IF NOT EXISTS manual_lock_time BOOLEAN DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS setup_detail JSONB
     """)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS schedule_settings (
@@ -174,8 +244,29 @@ def _ensure_planning_schema(db):
             manual_adjust_reason_required       BOOLEAN NOT NULL DEFAULT TRUE,
             publish_with_warnings_allowed       BOOLEAN NOT NULL DEFAULT TRUE,
             auto_release_enabled                BOOLEAN NOT NULL DEFAULT FALSE,
+            material_constraint_enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+            maintenance_constraint_enabled      BOOLEAN NOT NULL DEFAULT TRUE,
+            setup_rules_enabled                 BOOLEAN NOT NULL DEFAULT TRUE,
+            cleanroom_constraint_enabled        BOOLEAN NOT NULL DEFAULT TRUE,
+            machine_capability_constraint_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            due_date_optimization_enabled       BOOLEAN NOT NULL DEFAULT TRUE,
+            policy_version                      INTEGER NOT NULL DEFAULT 1,
+            updated_by                          VARCHAR(50),
+            change_reason                       TEXT,
             updated_at                          TIMESTAMPTZ DEFAULT NOW()
         )
+    """)
+    cur.execute("""
+        ALTER TABLE schedule_settings
+            ADD COLUMN IF NOT EXISTS material_constraint_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            ADD COLUMN IF NOT EXISTS maintenance_constraint_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            ADD COLUMN IF NOT EXISTS setup_rules_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            ADD COLUMN IF NOT EXISTS cleanroom_constraint_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            ADD COLUMN IF NOT EXISTS machine_capability_constraint_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            ADD COLUMN IF NOT EXISTS due_date_optimization_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            ADD COLUMN IF NOT EXISTS policy_version INTEGER NOT NULL DEFAULT 1,
+            ADD COLUMN IF NOT EXISTS updated_by VARCHAR(50),
+            ADD COLUMN IF NOT EXISTS change_reason TEXT
     """)
     cur.execute("""
         INSERT INTO schedule_settings (id)
@@ -217,6 +308,44 @@ def _ensure_planning_schema(db):
         )
     """)
     cur.execute("""
+        CREATE TABLE IF NOT EXISTS schedule_publish_audit (
+            id                   SERIAL       PRIMARY KEY,
+            run_id               INTEGER      REFERENCES schedule_runs(run_id),
+            event_type           VARCHAR(40)  NOT NULL,
+            actor                VARCHAR(50),
+            selected_order_count INTEGER      NOT NULL DEFAULT 0,
+            warning_count        INTEGER      NOT NULL DEFAULT 0,
+            queue_row_count      INTEGER      NOT NULL DEFAULT 0,
+            details              JSONB,
+            created_at           TIMESTAMPTZ  DEFAULT NOW()
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS config_change_audit (
+            id              SERIAL       PRIMARY KEY,
+            config_scope    VARCHAR(40)  NOT NULL,
+            config_key      TEXT,
+            entity_id       VARCHAR(80),
+            before_state    JSONB,
+            after_state     JSONB,
+            changed_by      VARCHAR(50),
+            reason_text     TEXT,
+            created_at      TIMESTAMPTZ  DEFAULT NOW()
+        )
+    """)
+    cur.execute("""
+        ALTER TABLE config_change_audit
+            ALTER COLUMN config_key TYPE TEXT
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_schedule_publish_audit_run
+        ON schedule_publish_audit(run_id, created_at DESC)
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_config_change_audit_created
+        ON config_change_audit(created_at DESC, id DESC)
+    """)
+    cur.execute("""
         CREATE INDEX IF NOT EXISTS idx_schedule_runs_lifecycle
         ON schedule_runs(lifecycle_status, run_id DESC)
     """)
@@ -243,25 +372,89 @@ def _normalize_json(value, fallback=None):
         return fallback
 
 
+def _json_safe(value):
+    if isinstance(value, datetime):
+        return _iso(value)
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    return value
+
+
 def _get_schedule_settings(db):
     _ensure_planning_schema(db)
     cur = db.cursor()
     cur.execute("""
         SELECT review_required, manual_adjust_enabled,
             manual_adjust_reason_required, publish_with_warnings_allowed,
-            auto_release_enabled
+            auto_release_enabled, material_constraint_enabled,
+            maintenance_constraint_enabled, setup_rules_enabled,
+            cleanroom_constraint_enabled, machine_capability_constraint_enabled,
+            due_date_optimization_enabled, policy_version, updated_by,
+            change_reason, updated_at
         FROM schedule_settings WHERE id=TRUE
     """)
     row = cur.fetchone()
     if not row:
-        return {
-            "review_required": True,
-            "manual_adjust_enabled": True,
-            "manual_adjust_reason_required": True,
-            "publish_with_warnings_allowed": True,
-            "auto_release_enabled": False,
-        }
-    return dict(row)
+        return dict(POLICY_DEFAULTS)
+    settings = {**POLICY_DEFAULTS, **dict(row)}
+    settings["policy_version"] = int(settings.get("policy_version") or 1)
+    return settings
+
+
+def _policy_snapshot(settings: dict, enabled_rule_counts: dict | None = None) -> dict:
+    normalized = {key: bool(settings.get(key, POLICY_DEFAULTS[key])) for key in POLICY_SETTING_KEYS}
+    return {
+        "policy_version": int(settings.get("policy_version") or 1),
+        "settings": normalized,
+        "enabled_rule_counts": enabled_rule_counts or {},
+        "runtime_rule_source": "db_only",
+        "fallback_setup_used": False,
+    }
+
+
+def _policy_snapshot_mismatch(saved: dict | None, current: dict | None) -> str | None:
+    if not saved:
+        return "当前草案缺少全局策略快照，请重新预排。"
+    if not current:
+        return "无法读取当前全局策略，请重新校验后再发布。"
+    if int(saved.get("policy_version") or 0) != int(current.get("policy_version") or 0):
+        return "全局策略版本已变化，请重新预排后再发布。"
+    if (saved.get("settings") or {}) != (current.get("settings") or {}):
+        return "全局策略开关已变化，请重新预排后再发布。"
+    if (saved.get("enabled_rule_counts") or {}) != (current.get("enabled_rule_counts") or {}):
+        return "启用规则数量已变化，请重新预排后再发布。"
+    return None
+
+
+def _policy_snapshot_validation_item(saved: dict | None, current: dict | None) -> dict[str, Any] | None:
+    message = _policy_snapshot_mismatch(saved, current)
+    if not message:
+        return None
+    return _validation_item("error", "policy_snapshot_stale", message)
+
+
+CONFIG_SCOPE_LABELS = {
+    "schedule_policy": "全局策略",
+    "rule": "规则",
+}
+
+
+def _config_audit_row_to_dict(row) -> dict[str, Any]:
+    data = dict(row)
+    data["scope_label"] = CONFIG_SCOPE_LABELS.get(data.get("config_scope"), data.get("config_scope") or "配置")
+    data["before_state"] = _normalize_json(data.get("before_state"), {}) or {}
+    data["after_state"] = _normalize_json(data.get("after_state"), {}) or {}
+    data["created_at"] = _iso(data.get("created_at"))
+    return data
+
+
+def _load_rule_state_counts(db) -> dict:
+    from api.routers.rules import ensure_rule_enablement_schema, rule_state_counts_for_db
+
+    ensure_rule_enablement_schema(db)
+    return rule_state_counts_for_db(db)
 
 
 def _run_row_to_dict(row):
@@ -282,6 +475,10 @@ def _run_row_to_dict(row):
         "late_orders": row.get("total_late_orders") or 0,
         "is_active": bool(row.get("is_active")),
         "selected_order_ids": params.get("selected_order_ids") or [],
+        "order_snapshots": params.get("order_snapshots") or [],
+        "policy_snapshot": params.get("policy_snapshot"),
+        "last_validated_at": params.get("last_validated_at"),
+        "last_validation_summary": params.get("last_validation_summary"),
         "summary": summary,
         "confirmed_by": row.get("confirmed_by"),
         "confirmed_at": _iso(row.get("confirmed_at")),
@@ -303,11 +500,13 @@ def _task_row_to_dict(row):
         "end_time": _iso(row.get("end_time")),
         "duration_mins": row.get("duration_mins"),
         "setup_time_mins": row.get("setup_time_mins") or 0,
+        "setup_detail": _normalize_json(row.get("setup_detail"), {}) or {},
         "scrap_kg": float(row.get("scrap_kg") or 0),
         "net_weight_kg": row.get("net_weight_kg"),
         "actual_material_required_kg": float(row.get("actual_material_required_kg") or 0),
         "is_late": bool(row.get("is_late")),
         "tardiness_mins": row.get("tardiness_mins") or 0,
+        "prev_order_id": row.get("prev_order_id"),
         "task_source": row.get("task_source") or "AUTO",
         "manual_lock_machine": bool(row.get("manual_lock_machine")),
         "manual_lock_time": bool(row.get("manual_lock_time")),
@@ -317,6 +516,37 @@ def _task_row_to_dict(row):
         "total_quantity_kg": row.get("total_quantity_kg"),
         "order_class": row.get("order_class"),
         "due_date": _iso(row.get("due_date")),
+    }
+
+
+def _queue_row_to_dict(row):
+    last_transition = None
+    if row.get("last_transition_created_at") or row.get("last_transition_details"):
+        last_transition = {
+            "actor": row.get("last_transition_actor"),
+            "created_at": _iso(row.get("last_transition_created_at")),
+            "details": _normalize_json(row.get("last_transition_details"), {}),
+        }
+    return {
+        "id": row["id"],
+        "run_id": row["run_id"],
+        "scheduled_task_id": row["scheduled_task_id"],
+        "order_id": row["order_id"],
+        "machine_id": row["machine_id"],
+        "sequence_index": row["sequence_index"],
+        "planned_start_time": _iso(row["planned_start_time"]),
+        "planned_end_time": _iso(row["planned_end_time"]),
+        "queue_status": row["queue_status"],
+        "released_by": row["released_by"],
+        "released_at": _iso(row["released_at"]),
+        "started_at": _iso(row.get("started_at")),
+        "completed_at": _iso(row.get("completed_at")),
+        "product_type": row.get("product_type"),
+        "target_width": row.get("target_width"),
+        "target_thickness": row.get("target_thickness"),
+        "total_quantity_kg": row.get("total_quantity_kg"),
+        "order_class": row.get("order_class"),
+        "last_transition": last_transition,
     }
 
 
@@ -551,6 +781,288 @@ def _validation_item(severity, code, message, order_id=None, machine_id=None):
     }
 
 
+def _publish_audit_payload(
+    *,
+    event_type: str,
+    run_id: int | None,
+    actor: str,
+    selected_order_count: int = 0,
+    warning_count: int = 0,
+    queue_row_count: int = 0,
+    details: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    return {
+        "event_type": event_type,
+        "run_id": run_id,
+        "actor": actor,
+        "selected_order_count": int(selected_order_count or 0),
+        "warning_count": int(warning_count or 0),
+        "queue_row_count": int(queue_row_count or 0),
+        "details": details or {},
+    }
+
+
+def _insert_publish_audit(cur, payload: dict[str, Any]) -> None:
+    cur.execute("""
+        INSERT INTO schedule_publish_audit
+            (run_id, event_type, actor, selected_order_count,
+             warning_count, queue_row_count, details)
+        VALUES (%s,%s,%s,%s,%s,%s,%s)
+    """, (
+        payload.get("run_id"),
+        payload.get("event_type"),
+        payload.get("actor"),
+        payload.get("selected_order_count") or 0,
+        payload.get("warning_count") or 0,
+        payload.get("queue_row_count") or 0,
+        Json(payload.get("details") or {}),
+    ))
+
+
+def _validation_summary_payload(validation: dict[str, Any], task_signature: str) -> dict[str, Any]:
+    hard_error_count = int(validation.get("hard_error_count") or 0)
+    return {
+        "valid": hard_error_count == 0,
+        "status": validation.get("status") or ("FAILED" if hard_error_count else "PASSED"),
+        "hard_error_count": hard_error_count,
+        "warning_count": int(validation.get("warning_count") or 0),
+        "validator_version": VALIDATION_SUMMARY_VERSION,
+        "task_signature": task_signature,
+        "validated_at": _utc_now_iso(),
+    }
+
+
+def _validation_summary_mismatch(
+    summary: Optional[dict[str, Any]],
+    validation: dict[str, Any],
+    *,
+    current_task_signature: str,
+) -> Optional[str]:
+    if not summary:
+        return "当前草案缺少最近校验摘要，请重新校验方案。"
+    if not summary.get("valid"):
+        reason = summary.get("invalid_reason") or "validation_failed"
+        return f"当前草案校验摘要已失效（{reason}），请重新校验方案。"
+    if summary.get("validator_version") != VALIDATION_SUMMARY_VERSION:
+        return "当前草案校验器版本已变化，请重新校验方案。"
+    if summary.get("task_signature") != current_task_signature:
+        return "当前草案任务已变化，请重新校验方案。"
+    if int(summary.get("hard_error_count") or 0) != int(validation.get("hard_error_count") or 0):
+        return "当前草案阻断错误数量已变化，请重新校验方案。"
+    if int(summary.get("warning_count") or 0) != int(validation.get("warning_count") or 0):
+        return "当前草案警告数量已变化，请重新校验方案。"
+    return None
+
+
+def _task_signature_value(value):
+    return value.isoformat() if isinstance(value, datetime) else value
+
+
+def _task_signature_from_rows(rows: list[dict[str, Any]]) -> str:
+    payload = []
+    for row in rows:
+        payload.append({
+            "id": row.get("id"),
+            "order_id": row.get("order_id"),
+            "machine_id": row.get("machine_id"),
+            "sequence_index": row.get("sequence_index"),
+            "setup_start_time": _task_signature_value(row.get("setup_start_time")),
+            "start_time": _task_signature_value(row.get("start_time")),
+            "end_time": _task_signature_value(row.get("end_time")),
+            "task_source": row.get("task_source") or "AUTO",
+            "manual_lock_machine": bool(row.get("manual_lock_machine")),
+            "manual_lock_time": bool(row.get("manual_lock_time")),
+        })
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _schedule_task_signature(cur, run_id: int) -> str:
+    cur.execute("""
+        SELECT id, order_id, machine_id, sequence_index, setup_start_time,
+            start_time, end_time, task_source, manual_lock_machine,
+            manual_lock_time
+        FROM scheduled_tasks
+        WHERE run_id=%s
+        ORDER BY machine_id, start_time, sequence_index, order_id
+    """, (run_id,))
+    return _task_signature_from_rows(cur.fetchall())
+
+
+def _load_validation_summary(cur, run_id: int) -> Optional[dict[str, Any]]:
+    cur.execute("SELECT solver_params FROM schedule_runs WHERE run_id=%s", (run_id,))
+    row = cur.fetchone()
+    params = _normalize_solver_params(row["solver_params"] if row else None)
+    summary = params.get("last_validation_summary")
+    return summary if isinstance(summary, dict) else None
+
+
+def _persist_validation_summary(cur, run_id: int, validation: dict[str, Any], task_signature: str) -> dict[str, Any]:
+    cur.execute("SELECT solver_params FROM schedule_runs WHERE run_id=%s", (run_id,))
+    row = cur.fetchone()
+    params = _normalize_solver_params(row["solver_params"] if row else None)
+    summary = _validation_summary_payload(validation, task_signature)
+    params["last_validated_at"] = summary["validated_at"]
+    params["last_validation_summary"] = summary
+    cur.execute("UPDATE schedule_runs SET solver_params=%s WHERE run_id=%s", (Json(params), run_id))
+    return summary
+
+
+def _invalidate_validation_summary(cur, run_id: int, reason: str) -> None:
+    cur.execute("SELECT solver_params FROM schedule_runs WHERE run_id=%s", (run_id,))
+    row = cur.fetchone()
+    params = _normalize_solver_params(row["solver_params"] if row else None)
+    summary = params.get("last_validation_summary")
+    if not isinstance(summary, dict):
+        return
+    summary = {
+        **summary,
+        "valid": False,
+        "invalid_reason": reason,
+        "invalidated_at": _utc_now_iso(),
+    }
+    params["last_validation_summary"] = summary
+    cur.execute("UPDATE schedule_runs SET solver_params=%s WHERE run_id=%s", (Json(params), run_id))
+
+
+QUEUE_ALLOWED_TRANSITIONS = {
+    "QUEUED": {"READY", "ON_HOLD", "CANCELLED"},
+    "READY": {"IN_PRODUCTION", "ON_HOLD", "CANCELLED"},
+    "ON_HOLD": {"READY", "CANCELLED"},
+    "IN_PRODUCTION": {"COMPLETED", "ON_HOLD"},
+    "COMPLETED": set(),
+    "CANCELLED": set(),
+}
+
+
+def _validate_queue_transition(current_status: str, next_status: str, reason: str = "") -> None:
+    current = (current_status or "").upper()
+    target = (next_status or "").upper()
+    if current not in QUEUE_ALLOWED_TRANSITIONS:
+        raise HTTPException(status_code=400, detail="当前队列状态无效。")
+    if target not in QUEUE_ALLOWED_TRANSITIONS:
+        raise HTTPException(status_code=400, detail="目标队列状态无效。")
+    if target == current:
+        raise HTTPException(status_code=400, detail="目标状态与当前状态相同。")
+    if target not in QUEUE_ALLOWED_TRANSITIONS[current]:
+        raise HTTPException(status_code=400, detail=f"不允许从 {current} 切换到 {target}。")
+    if target in {"ON_HOLD", "CANCELLED"} and not (reason or "").strip():
+        raise HTTPException(status_code=400, detail="切换为暂停或取消必须填写原因。")
+
+
+def _order_status_for_queue_status(queue_status: str) -> str | None:
+    return {
+        "QUEUED": "SCHEDULED",
+        "READY": "SCHEDULED",
+        "ON_HOLD": "SCHEDULED",
+        "IN_PRODUCTION": "IN_PRODUCTION",
+        "COMPLETED": "COMPLETED",
+        "CANCELLED": "PENDING",
+    }.get((queue_status or "").upper())
+
+
+def _order_snapshot_value(value):
+    return value.isoformat() if isinstance(value, datetime) else value
+
+
+def _order_snapshot_hash(snapshot: dict[str, Any]) -> str:
+    fields = snapshot.get("fields") or {}
+    payload = json.dumps(fields, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _order_snapshot_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    fields = {
+        key: _order_snapshot_value(row.get(key))
+        for key in ORDER_SNAPSHOT_FIELDS
+    }
+    snapshot = {
+        "order_id": row.get("order_id"),
+        "updated_at": _iso(row.get("updated_at")),
+        "fields": fields,
+    }
+    snapshot["hash"] = _order_snapshot_hash(snapshot)
+    return snapshot
+
+
+def _normalize_order_snapshot_map(value) -> dict[str, dict[str, Any]]:
+    if not value:
+        return {}
+    items: list[tuple[Any, dict[str, Any]]] = []
+    if isinstance(value, dict):
+        items = list(value.items())
+    elif isinstance(value, list):
+        items = [(item.get("order_id"), item) for item in value if isinstance(item, dict)]
+    result: dict[str, dict[str, Any]] = {}
+    for order_id, snapshot in items:
+        if not order_id or not isinstance(snapshot, dict):
+            continue
+        normalized = dict(snapshot)
+        normalized["order_id"] = order_id
+        normalized.setdefault("fields", {})
+        normalized["hash"] = normalized.get("hash") or _order_snapshot_hash(normalized)
+        result[str(order_id)] = normalized
+    return result
+
+
+def _current_order_snapshot_map(cur, order_ids: list[str]) -> dict[str, dict[str, Any]]:
+    order_ids = [order_id for order_id in dict.fromkeys(order_ids or []) if order_id]
+    if not order_ids:
+        return {}
+    cur.execute("""
+        SELECT order_id, product_type, target_width, target_thickness,
+            total_quantity_kg, cleanroom_req, order_class, due_date,
+            material_available_time, status, priority_override, updated_at
+        FROM production_orders
+        WHERE order_id = ANY(%s)
+    """, (order_ids,))
+    return {
+        row["order_id"]: _order_snapshot_from_row(row)
+        for row in cur.fetchall()
+    }
+
+
+def _snapshot_changed_fields(before_fields: dict[str, Any], after_fields: dict[str, Any]) -> list[str]:
+    changed = []
+    keys = set(before_fields) | set(after_fields)
+    for key in sorted(keys):
+        if _order_snapshot_value(before_fields.get(key)) != _order_snapshot_value(after_fields.get(key)):
+            changed.append(key)
+    return changed
+
+
+def _stale_order_snapshot_items(saved_snapshots, current_snapshots):
+    saved_map = _normalize_order_snapshot_map(saved_snapshots)
+    current_map = _normalize_order_snapshot_map(current_snapshots)
+    items = []
+    for order_id, saved in saved_map.items():
+        current = current_map.get(order_id)
+        if not current:
+            item = _validation_item(
+                "error",
+                "order_snapshot_missing",
+                f"订单 {order_id} 的当前快照缺失，请重新生成草案。",
+                order_id,
+            )
+            item["changed_fields"] = list(saved.get("fields", {}).keys())
+            items.append(item)
+            continue
+        if saved.get("hash") == current.get("hash"):
+            continue
+        changed_fields = _snapshot_changed_fields(saved.get("fields", {}), current.get("fields", {}))
+        item = _validation_item(
+            "error",
+            "order_snapshot_stale",
+            f"订单 {order_id} 的调度关键字段已变化，请重新生成草案。",
+            order_id,
+        )
+        item["changed_fields"] = changed_fields
+        item["saved_updated_at"] = saved.get("updated_at")
+        item["current_updated_at"] = current.get("updated_at")
+        items.append(item)
+    return items
+
+
 def _task_busy_start(task):
     return task.get("setup_start_time") or task.get("start_time")
 
@@ -559,14 +1071,20 @@ def _task_busy_end(task):
     return task.get("end_time")
 
 
-def _calculate_candidate_setup_start(run_id: int, order_id: str, machine_id: str, start_time: datetime):
+def _calculate_candidate_setup_start(
+    run_id: int,
+    order_id: str,
+    machine_id: str,
+    start_time: datetime,
+    setup_rules_enabled: bool = True,
+):
+    if not setup_rules_enabled:
+        return start_time
+
     from src.database import DatabaseManager
 
-    pipeline = BlownFilmDataIngestionPipeline()
-    _, _, _, fallback_setup_mgr = pipeline.load_from_excel(INPUT_EXCEL_PATH)
     with DatabaseManager() as manager:
         machines, orders, _, setup_mgr = manager.load_master_data(
-            fallback_setup_mgr=fallback_setup_mgr,
             order_statuses=("PENDING", "SCHEDULED"),
         )
         machine_map = {machine.machine_id: machine for machine in machines}
@@ -597,6 +1115,26 @@ def _calculate_candidate_setup_start(run_id: int, order_id: str, machine_id: str
     return start_time - timedelta(minutes=setup_mins)
 
 
+def _manual_adjustment_policy_items(ctx, payload: ManualAdjustmentPayload, settings: dict) -> list[dict[str, Any]]:
+    messages = []
+    if ctx["status"] != "PENDING":
+        messages.append(_validation_item("error", "order_status", f"订单 {payload.order_id} 当前状态为 {ctx['status']}。", payload.order_id, payload.machine_id))
+    if ctx["machine_status"] != "ACTIVE":
+        messages.append(_validation_item("error", "machine_status", f"机台 {payload.machine_id} 当前状态为 {ctx['machine_status']}。", payload.order_id, payload.machine_id))
+    if settings["machine_capability_constraint_enabled"]:
+        if not (ctx["min_width"] <= ctx["target_width"] <= ctx["max_width"]):
+            messages.append(_validation_item("error", "width_capacity", "订单幅宽不在机台能力范围。", payload.order_id, payload.machine_id))
+        if not (ctx["min_thickness"] <= ctx["target_thickness"] <= ctx["max_thickness"]):
+            messages.append(_validation_item("error", "thickness_capacity", "订单厚度不在机台能力范围。", payload.order_id, payload.machine_id))
+        if ctx["recipe_layers"] and ctx["recipe_layers"] > ctx["layer_structure"]:
+            messages.append(_validation_item("error", "layer_capacity", "订单配方层数超过机台能力。", payload.order_id, payload.machine_id))
+    if settings["cleanroom_constraint_enabled"] and ctx["cleanroom_req"] == "Class_10K" and ctx["cleanroom_level"] != "Class_10K":
+        messages.append(_validation_item("error", "cleanroom_capacity", "机台洁净等级不满足订单要求。", payload.order_id, payload.machine_id))
+    if settings["material_constraint_enabled"] and ctx["material_available_time"] and _as_naive(payload.start_time) < _as_naive(ctx["material_available_time"]):
+        messages.append(_validation_item("error", "material_not_ready", "计划开工早于物料齐套时间。", payload.order_id, payload.machine_id))
+    return messages
+
+
 def _recalculate_machine_setup_fields(db, run_id: int, machine_ids: list[str]):
     machine_ids = sorted({machine_id for machine_id in machine_ids if machine_id})
     if not machine_ids:
@@ -604,11 +1142,8 @@ def _recalculate_machine_setup_fields(db, run_id: int, machine_ids: list[str]):
 
     from src.database import DatabaseManager
 
-    pipeline = BlownFilmDataIngestionPipeline()
-    _, _, _, fallback_setup_mgr = pipeline.load_from_excel(INPUT_EXCEL_PATH)
     with DatabaseManager() as manager:
         machines, orders, _, setup_mgr = manager.load_master_data(
-            fallback_setup_mgr=fallback_setup_mgr,
             order_statuses=("PENDING", "SCHEDULED"),
         )
     machine_map = {machine.machine_id: machine for machine in machines}
@@ -639,6 +1174,7 @@ def _recalculate_machine_setup_fields(db, run_id: int, machine_ids: list[str]):
                 prev_order_id = None
                 continue
             setup_mins = setup_calc.calculate_setup_time(prev_order, order, machine)
+            setup_detail = setup_calc.calculate_setup_detail(prev_order, order, machine)
             scrap_kg = setup_calc.calculate_scrap_weight(prev_order, order, machine)
             setup_start_time = row["start_time"] - timedelta(minutes=setup_mins)
             cur.execute("""
@@ -648,7 +1184,8 @@ def _recalculate_machine_setup_fields(db, run_id: int, machine_ids: list[str]):
                     setup_time_mins=%s,
                     scrap_kg=%s,
                     actual_material_required_kg=%s,
-                    prev_order_id=%s
+                    prev_order_id=%s,
+                    setup_detail=%s
                 WHERE id=%s
             """, (
                 sequence,
@@ -657,6 +1194,7 @@ def _recalculate_machine_setup_fields(db, run_id: int, machine_ids: list[str]):
                 scrap_kg,
                 order.total_quantity_kg + scrap_kg,
                 prev_order_id,
+                Json(setup_detail),
                 row["id"],
             ))
             prev_order = order
@@ -697,6 +1235,13 @@ def _load_preplan_validation(db, run_id: int):
     params = _normalize_json(run_row.get("solver_params") if run_row else None, {}) or {}
     summary = params.get("summary") or {}
     selected_ids = params.get("selected_order_ids") or []
+    saved_snapshots = params.get("order_snapshots") or []
+    settings = _get_schedule_settings(db)
+    if lifecycle_status in {"DRAFT", "VALIDATED"}:
+        current_policy_snapshot = _policy_snapshot(settings, _load_rule_state_counts(db))
+        policy_item = _policy_snapshot_validation_item(params.get("policy_snapshot"), current_policy_snapshot)
+        if policy_item:
+            items.append(policy_item)
     input_count = summary.get("input_order_count")
     if input_count is None:
         input_count = len(selected_ids) if selected_ids else (run_row.get("total_orders") if run_row else len(tasks))
@@ -711,6 +1256,16 @@ def _load_preplan_validation(db, run_id: int):
             f"{int(blocked_count or 0)} 单未进入草案；发布后未排订单仍保留待排。",
         ))
 
+    current_snapshots = _current_order_snapshot_map(cur, selected_ids)
+    if selected_ids and not _normalize_order_snapshot_map(saved_snapshots) and lifecycle_status in {"DRAFT", "VALIDATED"}:
+        items.append(_validation_item(
+            "warning",
+            "order_snapshot_missing",
+            "旧草案未保存订单快照，请重新生成草案以获得完整校验。",
+        ))
+    elif saved_snapshots:
+        items.extend(_stale_order_snapshot_items(saved_snapshots, current_snapshots))
+
     seen_orders = set()
     for task in tasks:
         order_id = task["order_id"]
@@ -724,15 +1279,15 @@ def _load_preplan_validation(db, run_id: int):
             items.append(_validation_item("error", "order_status", f"订单 {order_id} 当前状态为 {task['order_status']}，不能发布到制造队列。", order_id, machine_id))
         if task["machine_status"] != "ACTIVE":
             items.append(_validation_item("error", "machine_status", f"机台 {machine_id} 当前状态为 {task['machine_status']}。", order_id, machine_id))
-        if not (task["min_width"] <= task["target_width"] <= task["max_width"]):
+        if settings["machine_capability_constraint_enabled"] and not (task["min_width"] <= task["target_width"] <= task["max_width"]):
             items.append(_validation_item("error", "width_capacity", f"订单 {order_id} 幅宽 {task['target_width']}mm 不在机台 {machine_id} 范围 {task['min_width']}-{task['max_width']}mm。", order_id, machine_id))
-        if not (task["min_thickness"] <= task["target_thickness"] <= task["max_thickness"]):
+        if settings["machine_capability_constraint_enabled"] and not (task["min_thickness"] <= task["target_thickness"] <= task["max_thickness"]):
             items.append(_validation_item("error", "thickness_capacity", f"订单 {order_id} 厚度 {task['target_thickness']}um 不在机台 {machine_id} 范围 {task['min_thickness']}-{task['max_thickness']}um。", order_id, machine_id))
-        if task["cleanroom_req"] == "Class_10K" and task["cleanroom_level"] != "Class_10K":
+        if settings["cleanroom_constraint_enabled"] and task["cleanroom_req"] == "Class_10K" and task["cleanroom_level"] != "Class_10K":
             items.append(_validation_item("error", "cleanroom_capacity", f"订单 {order_id} 需要万级洁净，机台 {machine_id} 不满足。", order_id, machine_id))
-        if task["recipe_layers"] and task["recipe_layers"] > task["layer_structure"]:
+        if settings["machine_capability_constraint_enabled"] and task["recipe_layers"] and task["recipe_layers"] > task["layer_structure"]:
             items.append(_validation_item("error", "layer_capacity", f"订单 {order_id} 配方 {task['recipe_layers']} 层超过机台 {machine_id} {task['layer_structure']} 层能力。", order_id, machine_id))
-        if task["material_available_time"] and task["start_time"] < task["material_available_time"]:
+        if settings["material_constraint_enabled"] and task["material_available_time"] and task["start_time"] < task["material_available_time"]:
             items.append(_validation_item("error", "material_not_ready", f"订单 {order_id} 计划开工早于物料齐套时间。", order_id, machine_id))
         if task["end_time"] > task["due_date"]:
             items.append(_validation_item("warning", "late_order", f"订单 {order_id} 计划完工晚于交期。", order_id, machine_id))
@@ -754,15 +1309,17 @@ def _load_preplan_validation(db, run_id: int):
         if cur.fetchone()["cnt"]:
             items.append(_validation_item("error", "task_overlap", f"机台 {task['machine_id']} 存在生产或换产时间重叠。", task["order_id"], task["machine_id"]))
 
-        cur.execute("""
-            SELECT COUNT(*) AS cnt
-            FROM machine_maintenance_calendar m
-            WHERE m.machine_id=%s
-              AND m.start_time < %s
-              AND m.end_time > %s
-        """, (task["machine_id"], busy_end, busy_start))
-        if cur.fetchone()["cnt"]:
-            items.append(_validation_item("error", "maintenance_overlap", f"订单 {task['order_id']} 的生产或换产时间与机台 {task['machine_id']} 维护窗口冲突。", task["order_id"], task["machine_id"]))
+        if settings["maintenance_constraint_enabled"]:
+            cur.execute("""
+                SELECT COUNT(*) AS cnt
+                FROM machine_maintenance_calendar m
+                WHERE m.machine_id=%s
+                  AND m.start_time < %s
+                  AND m.end_time > %s
+                  AND COALESCE(m.is_enabled, TRUE)=TRUE
+            """, (task["machine_id"], busy_end, busy_start))
+            if cur.fetchone()["cnt"]:
+                items.append(_validation_item("error", "maintenance_overlap", f"订单 {task['order_id']} 的生产或换产时间与机台 {task['machine_id']} 维护窗口冲突。", task["order_id"], task["machine_id"]))
 
         cur.execute("""
             SELECT COUNT(*) AS cnt
@@ -1637,7 +2194,7 @@ def get_gantt(run_id: int = None, db=Depends(get_db), _=Depends(get_current_user
     cur.execute("""
         SELECT t.order_id, t.machine_id, t.sequence_index,
             t.setup_start_time, t.start_time, t.end_time,
-            t.setup_time_mins, t.duration_mins, t.scrap_kg,
+            t.setup_time_mins, t.setup_detail, t.duration_mins, t.scrap_kg,
             t.is_late, t.tardiness_mins, t.net_weight_kg,
             o.product_type, o.target_width, o.target_thickness,
             o.order_class, o.order_date, o.due_date,
@@ -1669,6 +2226,7 @@ def get_gantt(run_id: int = None, db=Depends(get_db), _=Depends(get_current_user
             "start": _iso(r["start_time"]),
             "end": _iso(r["end_time"]),
             "setup_mins": r["setup_time_mins"],
+            "setup_detail": _normalize_json(r.get("setup_detail"), {}) or {},
             "duration_mins": r["duration_mins"],
             "scrap_kg": float(r["scrap_kg"]),
             "product_type": r["product_type"],
@@ -1971,13 +2529,8 @@ def update_schedule_settings(
     fields = payload.model_dump(exclude_unset=True)
     if not fields:
         raise HTTPException(status_code=400, detail="No settings to update.")
-    allowed = {
-        "review_required",
-        "manual_adjust_enabled",
-        "manual_adjust_reason_required",
-        "publish_with_warnings_allowed",
-        "auto_release_enabled",
-    }
+    change_reason = _require_policy_change_reason(fields.pop("change_reason", None))
+    allowed = set(POLICY_SETTING_KEYS)
     assignments = []
     params = []
     for key, value in fields.items():
@@ -1988,12 +2541,44 @@ def update_schedule_settings(
         raise HTTPException(status_code=400, detail="No valid settings to update.")
     _ensure_planning_schema(db)
     cur = db.cursor()
+    before = _get_schedule_settings(db)
+    assignments.extend(["policy_version=policy_version+1", "updated_by=%s", "change_reason=%s"])
+    params.extend([_.username, change_reason])
     cur.execute(
         f"UPDATE schedule_settings SET {', '.join(assignments)}, updated_at=NOW() WHERE id=TRUE",
         params,
     )
+    after = _get_schedule_settings(db)
+    cur.execute("""
+        INSERT INTO config_change_audit
+            (config_scope, config_key, entity_id, before_state, after_state, changed_by, reason_text)
+        VALUES (%s,%s,%s,%s,%s,%s,%s)
+    """, (
+        "schedule_policy",
+        ",".join(sorted(fields)),
+        "global",
+        Json(_json_safe(before)),
+        Json(_json_safe(after)),
+        _.username,
+        change_reason,
+    ))
     db.commit()
-    return _get_schedule_settings(db)
+    return after
+
+
+@router.get("/config-audit")
+def get_config_audit(limit: int = 50, db=Depends(get_db), _=Depends(get_current_user)):
+    _ensure_planning_schema(db)
+    safe_limit = max(1, min(int(limit or 50), 200))
+    cur = db.cursor()
+    cur.execute("""
+        SELECT id, config_scope, config_key, entity_id, before_state,
+            after_state, changed_by, reason_text, created_at
+        FROM config_change_audit
+        ORDER BY created_at DESC, id DESC
+        LIMIT %s
+    """, (safe_limit,))
+    return [_config_audit_row_to_dict(row) for row in cur.fetchall()]
 
 
 @router.post("/preplans")
@@ -2029,14 +2614,12 @@ def create_preplan(
         raise HTTPException(status_code=400, detail=f"只有待排订单可以创建预排程: {', '.join(blocked[:5])}")
 
     settings = _get_schedule_settings(db)
+    policy_snapshot = _policy_snapshot(settings, _load_rule_state_counts(db))
     from src.database import DatabaseManager
 
-    pipeline = BlownFilmDataIngestionPipeline()
-    _, _, _, fallback_setup_mgr = pipeline.load_from_excel(INPUT_EXCEL_PATH)
     with DatabaseManager() as manager:
         manager.ensure_planning_schema()
         machines, orders, _, setup_mgr = manager.load_master_data(
-            fallback_setup_mgr=fallback_setup_mgr,
             order_ids=order_ids,
             order_statuses=("PENDING",),
         )
@@ -2055,6 +2638,7 @@ def create_preplan(
             mode=mode,
             lifecycle_status="DRAFT",
             selected_order_ids=order_ids,
+            policy_snapshot=policy_snapshot,
         )
 
     if settings["auto_release_enabled"] and not settings["review_required"]:
@@ -2130,6 +2714,28 @@ def get_preplan(run_id: int, db=Depends(get_db), _=Depends(get_current_user)):
             "validation_status": row["validation_status"],
             "validation_messages": _normalize_json(row["validation_messages"], []),
         })
+    cur.execute("""
+        SELECT id, run_id, event_type, actor, selected_order_count,
+            warning_count, queue_row_count, details, created_at
+        FROM schedule_publish_audit
+        WHERE run_id=%s
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+    """, (run_id,))
+    publish_audit_row = cur.fetchone()
+    latest_publish_audit = None
+    if publish_audit_row:
+        latest_publish_audit = {
+            "id": publish_audit_row["id"],
+            "run_id": publish_audit_row["run_id"],
+            "event_type": publish_audit_row["event_type"],
+            "actor": publish_audit_row["actor"],
+            "selected_order_count": publish_audit_row["selected_order_count"],
+            "warning_count": publish_audit_row["warning_count"],
+            "queue_row_count": publish_audit_row["queue_row_count"],
+            "details": _normalize_json(publish_audit_row["details"], {}),
+            "created_at": _iso(publish_audit_row["created_at"]),
+        }
     validation = _load_preplan_validation(db, run_id)
     diagnostics = _load_persisted_diagnostics(cur, run_id)
     order_buckets = _load_preplan_order_context(cur, run, tasks, diagnostics)
@@ -2138,6 +2744,7 @@ def get_preplan(run_id: int, db=Depends(get_db), _=Depends(get_current_user)):
         "tasks": tasks,
         "validation": validation,
         "adjustments": adjustments,
+        "latest_publish_audit": latest_publish_audit,
         "diagnostics": diagnostics,
         **order_buckets,
     }
@@ -2195,27 +2802,14 @@ def apply_manual_adjustment(
     if not ctx:
         raise HTTPException(status_code=404, detail="订单或机台不存在。")
 
-    messages = []
-    if ctx["status"] != "PENDING":
-        messages.append(_validation_item("error", "order_status", f"订单 {payload.order_id} 当前状态为 {ctx['status']}。", payload.order_id, payload.machine_id))
-    if ctx["machine_status"] != "ACTIVE":
-        messages.append(_validation_item("error", "machine_status", f"机台 {payload.machine_id} 当前状态为 {ctx['machine_status']}。", payload.order_id, payload.machine_id))
-    if not (ctx["min_width"] <= ctx["target_width"] <= ctx["max_width"]):
-        messages.append(_validation_item("error", "width_capacity", "订单幅宽不在机台能力范围。", payload.order_id, payload.machine_id))
-    if not (ctx["min_thickness"] <= ctx["target_thickness"] <= ctx["max_thickness"]):
-        messages.append(_validation_item("error", "thickness_capacity", "订单厚度不在机台能力范围。", payload.order_id, payload.machine_id))
-    if ctx["cleanroom_req"] == "Class_10K" and ctx["cleanroom_level"] != "Class_10K":
-        messages.append(_validation_item("error", "cleanroom_capacity", "机台洁净等级不满足订单要求。", payload.order_id, payload.machine_id))
-    if ctx["recipe_layers"] and ctx["recipe_layers"] > ctx["layer_structure"]:
-        messages.append(_validation_item("error", "layer_capacity", "订单配方层数超过机台能力。", payload.order_id, payload.machine_id))
-    if ctx["material_available_time"] and _as_naive(payload.start_time) < _as_naive(ctx["material_available_time"]):
-        messages.append(_validation_item("error", "material_not_ready", "计划开工早于物料齐套时间。", payload.order_id, payload.machine_id))
+    messages = _manual_adjustment_policy_items(ctx, payload, settings)
 
     candidate_busy_start = _calculate_candidate_setup_start(
         run_id,
         payload.order_id,
         payload.machine_id,
         payload.start_time,
+        setup_rules_enabled=settings["setup_rules_enabled"],
     )
     cur.execute("""
         SELECT COUNT(*) AS cnt
@@ -2228,15 +2822,17 @@ def apply_manual_adjustment(
     """, (run_id, payload.machine_id, payload.order_id, payload.end_time, candidate_busy_start))
     if cur.fetchone()["cnt"]:
         messages.append(_validation_item("error", "task_overlap", "该机台在目标生产或换产时间段已有其他任务。", payload.order_id, payload.machine_id))
-    cur.execute("""
-        SELECT COUNT(*) AS cnt
-        FROM machine_maintenance_calendar m
-        WHERE m.machine_id=%s
-          AND m.start_time < %s
-          AND m.end_time > %s
-    """, (payload.machine_id, payload.end_time, candidate_busy_start))
-    if cur.fetchone()["cnt"]:
-        messages.append(_validation_item("error", "maintenance_overlap", "目标生产或换产时间段与维护窗口冲突。", payload.order_id, payload.machine_id))
+    if settings["maintenance_constraint_enabled"]:
+        cur.execute("""
+            SELECT COUNT(*) AS cnt
+            FROM machine_maintenance_calendar m
+            WHERE m.machine_id=%s
+              AND m.start_time < %s
+              AND m.end_time > %s
+              AND COALESCE(m.is_enabled, TRUE)=TRUE
+        """, (payload.machine_id, payload.end_time, candidate_busy_start))
+        if cur.fetchone()["cnt"]:
+            messages.append(_validation_item("error", "maintenance_overlap", "目标生产或换产时间段与维护窗口冲突。", payload.order_id, payload.machine_id))
     cur.execute("""
         SELECT COUNT(*) AS cnt
         FROM machine_downtime_events d
@@ -2326,6 +2922,7 @@ def apply_manual_adjustment(
     task_id = cur.fetchone()["id"]
     after_state["scheduled_task_id"] = task_id
     _recalculate_machine_setup_fields(db, run_id, list(affected_machine_ids))
+    _invalidate_validation_summary(cur, run_id, "manual_adjustment")
     cur.execute("""
         UPDATE schedule_runs
         SET lifecycle_status='DRAFT'
@@ -2355,25 +2952,38 @@ def validate_preplan(run_id: int, db=Depends(get_db), _=Depends(require_role("ad
     if not run:
         raise HTTPException(status_code=404, detail="Preplan not found.")
     validation = _load_preplan_validation(db, run_id)
+    task_signature = _schedule_task_signature(cur, run_id)
+    validation_summary = _persist_validation_summary(cur, run_id, validation, task_signature)
     if validation["hard_error_count"] == 0 and run["lifecycle_status"] in {"DRAFT", "VALIDATED"}:
         cur.execute("UPDATE schedule_runs SET lifecycle_status='VALIDATED' WHERE run_id=%s", (run_id,))
-        db.commit()
-    return validation
+    db.commit()
+    return {**validation, "last_validation_summary": validation_summary}
 
 
 @router.post("/preplans/{run_id}/confirm")
 def confirm_preplan(run_id: int, db=Depends(get_db), user=Depends(require_role("admin", "planner"))):
     settings = _get_schedule_settings(db)
     cur = db.cursor()
-    cur.execute("SELECT run_id, lifecycle_status FROM schedule_runs WHERE run_id=%s", (run_id,))
+    cur.execute("SELECT run_id, lifecycle_status, solver_params FROM schedule_runs WHERE run_id=%s", (run_id,))
     run = cur.fetchone()
     if not run:
         raise HTTPException(status_code=404, detail="Preplan not found.")
     if run["lifecycle_status"] not in {"DRAFT", "VALIDATED"}:
         raise HTTPException(status_code=400, detail="只有草案可以确认发布。")
+    if settings["review_required"] and run["lifecycle_status"] != "VALIDATED":
+        raise HTTPException(status_code=400, detail="需要先校验方案，再确认进入制造队列。")
     validation = _load_preplan_validation(db, run_id)
     if validation["hard_error_count"]:
         raise HTTPException(status_code=400, detail={"message": "草案存在阻断错误，不能发布。", "validation": validation})
+    if settings["review_required"]:
+        task_signature = _schedule_task_signature(cur, run_id)
+        mismatch = _validation_summary_mismatch(
+            _load_validation_summary(cur, run_id),
+            validation,
+            current_task_signature=task_signature,
+        )
+        if mismatch:
+            raise HTTPException(status_code=400, detail=mismatch)
     if validation["warning_count"] and not settings["publish_with_warnings_allowed"]:
         raise HTTPException(status_code=400, detail={"message": "草案存在警告，当前系统不允许带警告发布。", "validation": validation})
 
@@ -2452,8 +3062,30 @@ def confirm_preplan(run_id: int, db=Depends(get_db), user=Depends(require_role("
             released_by=EXCLUDED.released_by,
             released_at=NOW()
     """, (user.username, run_id))
+    queue_row_count = cur.rowcount
+    run_params = _normalize_json(run.get("solver_params"), {}) or {}
+    _insert_publish_audit(cur, _publish_audit_payload(
+        event_type="PUBLISH",
+        run_id=run_id,
+        actor=user.username,
+        selected_order_count=len(run_params.get("selected_order_ids") or []),
+        warning_count=validation.get("warning_count") or 0,
+        queue_row_count=queue_row_count,
+        details={
+            "superseded_run_ids": previous_run_ids,
+            "hard_error_count": validation.get("hard_error_count") or 0,
+        },
+    ))
     db.commit()
-    return {"run_id": run_id, "status": "CONFIRMED", "validation": validation}
+    return {
+        "run_id": run_id,
+        "status": "CONFIRMED",
+        "validation": validation,
+        "publish_audit": {
+            "event_type": "PUBLISH",
+            "queue_row_count": queue_row_count,
+        },
+    }
 
 
 @router.post("/preplans/{run_id}/cancel")
@@ -2510,35 +3142,128 @@ def get_manufacturing_queue(
     where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
     cur.execute(f"""
         SELECT q.*, o.product_type, o.target_width, o.target_thickness,
-            o.total_quantity_kg, o.order_class
+            o.total_quantity_kg, o.order_class,
+            qa.actor AS last_transition_actor,
+            qa.details AS last_transition_details,
+            qa.created_at AS last_transition_created_at
         FROM manufacturing_queue q
         JOIN production_orders o ON o.order_id=q.order_id
         JOIN schedule_runs r ON r.run_id=q.run_id
+        LEFT JOIN LATERAL (
+            SELECT actor, details, created_at
+            FROM schedule_publish_audit a
+            WHERE a.run_id=q.run_id
+              AND a.event_type='QUEUE_STATUS_CHANGE'
+              AND a.details->>'queue_id'=q.id::text
+            ORDER BY a.created_at DESC, a.id DESC
+            LIMIT 1
+        ) qa ON TRUE
         {where_sql}
         ORDER BY q.planned_start_time, q.machine_id, q.sequence_index
         LIMIT %s
     """, params + [limit])
-    rows = []
-    for row in cur.fetchall():
-        rows.append({
-            "id": row["id"],
-            "run_id": row["run_id"],
-            "scheduled_task_id": row["scheduled_task_id"],
+    return [_queue_row_to_dict(row) for row in cur.fetchall()]
+
+
+@router.patch("/manufacturing-queue/{queue_id}")
+def update_manufacturing_queue_item(
+    queue_id: int,
+    payload: QueueStatusUpdatePayload,
+    db=Depends(get_db),
+    user=Depends(require_role("admin", "planner")),
+):
+    target_status = (payload.queue_status or "").strip().upper()
+    reason = (payload.reason or "").strip()
+    if target_status not in QUEUE_ALLOWED_TRANSITIONS:
+        raise HTTPException(status_code=400, detail="目标队列状态无效。")
+    if target_status in {"ON_HOLD", "CANCELLED"} and not reason:
+        raise HTTPException(status_code=400, detail="切换为暂停或取消必须填写原因。")
+
+    _ensure_planning_schema(db)
+    cur = db.cursor()
+    try:
+        cur.execute("""
+            SELECT q.*, r.is_active, r.lifecycle_status,
+                o.product_type, o.target_width, o.target_thickness,
+                o.total_quantity_kg, o.order_class
+            FROM manufacturing_queue q
+            JOIN schedule_runs r ON r.run_id=q.run_id
+            JOIN production_orders o ON o.order_id=q.order_id
+            WHERE q.id=%s
+            FOR UPDATE
+        """, (queue_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="制造队列项不存在。")
+        if not row["is_active"] or row["lifecycle_status"] != "CONFIRMED":
+            raise HTTPException(status_code=400, detail="只能推进当前正式排程的制造队列。")
+
+        current_status = row["queue_status"]
+        _validate_queue_transition(current_status, target_status, reason)
+        if target_status == "CANCELLED" and row.get("started_at"):
+            raise HTTPException(status_code=400, detail="已开工队列项不能取消回待排。")
+
+        cur.execute("""
+            UPDATE manufacturing_queue
+            SET queue_status=%s,
+                started_at=CASE
+                    WHEN %s='IN_PRODUCTION' AND started_at IS NULL THEN NOW()
+                    ELSE started_at
+                END,
+                completed_at=CASE
+                    WHEN %s='COMPLETED' THEN NOW()
+                    ELSE completed_at
+                END
+            WHERE id=%s
+        """, (target_status, target_status, target_status, queue_id))
+
+        order_status = _order_status_for_queue_status(target_status)
+        if order_status:
+            cur.execute("""
+                UPDATE production_orders
+                SET status=%s, updated_at=NOW()
+                WHERE order_id=%s
+            """, (order_status, row["order_id"]))
+
+        details = {
+            "queue_id": queue_id,
+            "scheduled_task_id": row.get("scheduled_task_id"),
             "order_id": row["order_id"],
             "machine_id": row["machine_id"],
-            "sequence_index": row["sequence_index"],
-            "planned_start_time": _iso(row["planned_start_time"]),
-            "planned_end_time": _iso(row["planned_end_time"]),
-            "queue_status": row["queue_status"],
-            "released_by": row["released_by"],
-            "released_at": _iso(row["released_at"]),
-            "product_type": row["product_type"],
-            "target_width": row["target_width"],
-            "target_thickness": row["target_thickness"],
-            "total_quantity_kg": row["total_quantity_kg"],
-            "order_class": row["order_class"],
-        })
-    return rows
+            "from_status": current_status,
+            "to_status": target_status,
+            "reason": reason,
+        }
+        _insert_publish_audit(cur, _publish_audit_payload(
+            event_type="QUEUE_STATUS_CHANGE",
+            run_id=row["run_id"],
+            actor=user.username,
+            queue_row_count=1,
+            details=details,
+        ))
+
+        cur.execute("""
+            SELECT q.*, o.product_type, o.target_width, o.target_thickness,
+                o.total_quantity_kg, o.order_class
+            FROM manufacturing_queue q
+            JOIN production_orders o ON o.order_id=q.order_id
+            WHERE q.id=%s
+        """, (queue_id,))
+        updated = cur.fetchone() or {**row, "queue_status": target_status}
+        db.commit()
+        result = _queue_row_to_dict(updated)
+        result["last_transition"] = {
+            "actor": user.username,
+            "created_at": _utc_now_iso(),
+            "details": details,
+        }
+        return result
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        raise
 
 
 @router.post("/clear-active")
@@ -2592,6 +3317,15 @@ def clear_active_schedule(
           AND queue_status IN ('QUEUED', 'READY')
     """, (run_id,))
     cancelled_queue_count = cur.rowcount
+    _insert_publish_audit(cur, _publish_audit_payload(
+        event_type="CLEAR_ACTIVE",
+        run_id=run_id,
+        actor=user.username,
+        selected_order_count=restored_order_count,
+        warning_count=0,
+        queue_row_count=cancelled_queue_count,
+        details={"restored_order_count": restored_order_count},
+    ))
     db.commit()
     return {
         "cleared": True,

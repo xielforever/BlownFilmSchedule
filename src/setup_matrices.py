@@ -50,11 +50,43 @@ class SetupMatricesManager:
 
         # 72h 强制停机清场耗时
         self.continuous_run_cleaning_time: int = 90
+        self.missing_material_switch_fallback_mins: int = DEFAULT_MATERIAL_SWITCH_TIME_MINS
+        self.scrap_defaults_enabled: bool = True
 
         # 本轮求解观测：缺失的材料切换规则。求解器会高频查询换产矩阵，
         # 因此缺失规则只记录一次 warning，并在排程结果里汇总诊断。
         self.missing_material_switch_pairs: Dict[Tuple[str, str], int] = {}
         self._warned_missing_material_switches = set()
+
+    @classmethod
+    def empty_rules(cls) -> "SetupMatricesManager":
+        """Create a setup manager whose rules contribute no hidden time or scrap."""
+        mgr = cls()
+        mgr.material_switch_matrix = {}
+        mgr.material_switch_scrap_matrix = {}
+        mgr.same_material_time = 0
+        mgr.same_material_scrap_kg = 0.0
+        mgr.special_to_any_time = 0
+        mgr.any_to_special_time = 0
+        mgr.special_to_any_scrap_kg = 0.0
+        mgr.any_to_special_scrap_kg = 0.0
+        mgr.width_up_rules = []
+        mgr.width_down_rules = []
+        mgr.width_up_scrap_rules = []
+        mgr.width_down_scrap_rules = []
+        mgr.die_change_time = 0
+        mgr.die_change_scrap_kg = 0.0
+        mgr.thickness_rules = []
+        mgr.thickness_scrap_rules = []
+        mgr.corona_switch_time = 0
+        mgr.corona_switch_scrap_kg = 0.0
+        mgr.core_size_switch_time = 0
+        mgr.core_size_switch_scrap_kg = 0.0
+        mgr.gmp_clearance_matrix = {}
+        mgr.continuous_run_cleaning_time = 0
+        mgr.missing_material_switch_fallback_mins = 0
+        mgr.scrap_defaults_enabled = False
+        return mgr
 
     def reset_runtime_observations(self) -> None:
         """清空本轮求解期间收集的运行时观测。"""
@@ -267,13 +299,12 @@ class SetupMatricesManager:
 
     def get_material_switch_time(self, from_grade: str, to_grade: str) -> int:
         """查询原料切换耗时（单层）"""
-        if from_grade == to_grade:
-            return self.same_material_time
-
-        # 精确匹配
         key = (from_grade, to_grade)
         if key in self.material_switch_matrix:
             return self.material_switch_matrix[key]
+
+        if from_grade == to_grade:
+            return self.same_material_time
 
         # 处理 Special_Co-PE 的通配规则
         if from_grade == "Special_Co-PE":
@@ -282,23 +313,25 @@ class SetupMatricesManager:
             return self.any_to_special_time
 
         # 未命中：安全降级
-        self.missing_material_switch_pairs[key] = (
-            self.missing_material_switch_pairs.get(key, 0) + 1
-        )
-        if key not in self._warned_missing_material_switches:
-            self._warned_missing_material_switches.add(key)
-            logger.warning("原料切换矩阵未命中: %s → %s，降级使用默认值 %d min",
-                            from_grade, to_grade, DEFAULT_MATERIAL_SWITCH_TIME_MINS)
-        return DEFAULT_MATERIAL_SWITCH_TIME_MINS
+        fallback_mins = self.missing_material_switch_fallback_mins
+        if fallback_mins > 0:
+            self.missing_material_switch_pairs[key] = (
+                self.missing_material_switch_pairs.get(key, 0) + 1
+            )
+            if key not in self._warned_missing_material_switches:
+                self._warned_missing_material_switches.add(key)
+                logger.warning("原料切换矩阵未命中: %s → %s，降级使用默认值 %d min",
+                                from_grade, to_grade, fallback_mins)
+        return fallback_mins
 
     def get_material_switch_scrap(self, from_grade: str, to_grade: str) -> Optional[float]:
         """查询原料切换废料；未配置时返回 None 让算法使用旧默认值。"""
-        if from_grade == to_grade:
-            return self.same_material_scrap_kg
-
         key = (from_grade, to_grade)
         if key in self.material_switch_scrap_matrix:
             return self.material_switch_scrap_matrix[key]
+
+        if from_grade == to_grade:
+            return self.same_material_scrap_kg
 
         if from_grade == "Special_Co-PE":
             return self.special_to_any_scrap_kg
@@ -313,7 +346,7 @@ class SetupMatricesManager:
                 "from_material": from_mat,
                 "to_material": to_mat,
                 "lookup_count": count,
-                "fallback_mins": DEFAULT_MATERIAL_SWITCH_TIME_MINS,
+                "fallback_mins": self.missing_material_switch_fallback_mins,
             }
             for (from_mat, to_mat), count in sorted(
                 self.missing_material_switch_pairs.items(),
