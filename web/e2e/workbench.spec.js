@@ -9,6 +9,7 @@ const credentials = {
 let token;
 let originalSettings;
 let cleanupRunIds = [];
+let cleanupOrderIds = [];
 
 function testIdPart(value) {
   return String(value ?? '').replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -50,6 +51,7 @@ async function configureWorkbenchSettings(request) {
       manual_adjust_enabled: true,
       manual_adjust_reason_required: false,
       publish_with_warnings_allowed: true,
+      change_reason: 'E2E workbench setup',
     },
   });
   expect(updated.ok()).toBeTruthy();
@@ -64,6 +66,13 @@ async function restoreWorkbenchSettings(request) {
       manual_adjust_enabled: originalSettings.manual_adjust_enabled,
       manual_adjust_reason_required: originalSettings.manual_adjust_reason_required,
       publish_with_warnings_allowed: originalSettings.publish_with_warnings_allowed,
+      material_constraint_enabled: originalSettings.material_constraint_enabled,
+      maintenance_constraint_enabled: originalSettings.maintenance_constraint_enabled,
+      setup_rules_enabled: originalSettings.setup_rules_enabled,
+      cleanroom_constraint_enabled: originalSettings.cleanroom_constraint_enabled,
+      machine_capability_constraint_enabled: originalSettings.machine_capability_constraint_enabled,
+      due_date_optimization_enabled: originalSettings.due_date_optimization_enabled,
+      change_reason: 'E2E workbench restore',
     },
   });
 }
@@ -114,12 +123,7 @@ async function openOrderPoolIfCollapsed(page) {
 }
 
 async function ensureManualAdjustmentEnabled(page) {
-  const toggle = page.getByTestId('workbench-setting-manual-adjust');
-  await expect(toggle).toBeVisible();
-  if ((await toggle.getAttribute('aria-pressed')) !== 'true') {
-    await toggle.click();
-    await expect(page.getByTestId('workbench-status')).toContainText('系统开关已保存');
-  }
+  await expect(page.getByTestId('workbench-policy-summary')).toContainText('人工调整开');
 }
 
 async function currentRunId(page) {
@@ -144,6 +148,7 @@ async function findDraft(request, predicate, chunkSize = 10) {
 test.describe.serial('schedule workbench closed loop', () => {
   test.beforeEach(async ({ page, request }) => {
     cleanupRunIds = [];
+    cleanupOrderIds = [];
     await login(request, page);
     await configureWorkbenchSettings(request);
     await openWorkbench(page);
@@ -152,6 +157,15 @@ test.describe.serial('schedule workbench closed loop', () => {
   test.afterEach(async ({ request }) => {
     for (const runId of cleanupRunIds) {
       await cancelPreplan(request, runId);
+    }
+    for (const orderId of cleanupOrderIds) {
+      await apiJson(request, 'patch', `/api/orders/${orderId}`, {
+        data: {
+          status: 'CANCELLED',
+          reason_code: 'E2E_CLEANUP',
+          reason_text: 'E2E cleanup',
+        },
+      });
     }
     await restoreWorkbenchSettings(request);
     originalSettings = null;
@@ -181,6 +195,35 @@ test.describe.serial('schedule workbench closed loop', () => {
     await expect(page.getByTestId('workbench-create-preplan')).toContainText('(1)');
   });
 
+  test('shows screening recommended actions in the pending order pool', async ({ page, request }) => {
+    const sample = (await pendingOrders(request, 1))[0];
+    test.skip(!sample, 'no sample product available for screening action setup');
+    const orderId = `E2EACTION${Date.now().toString().slice(-8)}`;
+    const created = await apiJson(request, 'post', '/api/orders', {
+      data: {
+        order_id: orderId,
+        product_type: sample.product_type,
+        customer_class: 'STANDARD',
+        target_width: 9999,
+        target_thickness: 35,
+        total_quantity_kg: 1200,
+        cleanroom_req: 'Class_100K',
+        order_class: 'NORMAL',
+        due_date: '2026-06-01T08:00:00',
+        reason_code: 'E2E_SETUP',
+        reason_text: 'E2E setup for screening action',
+      },
+    });
+    expect(created.ok()).toBeTruthy();
+    cleanupOrderIds.push(orderId);
+
+    await openWorkbench(page);
+    await openOrderPoolIfCollapsed(page);
+    await page.getByTestId('workbench-search').fill(orderId);
+    await expect(page.getByTestId(`workbench-pending-order-${testIdPart(orderId)}`)).toBeVisible();
+    await expect(page.getByTestId(`workbench-screening-action-${testIdPart(orderId)}-expand_machine_capability`)).toContainText('调整机台规格能力');
+  });
+
   test('creates, validates, selects, and cancels a draft safely', async ({ page, request }) => {
     const orders = await pendingOrders(request, 8);
     test.skip(!orders.length, 'no pending orders available for draft creation');
@@ -193,6 +236,14 @@ test.describe.serial('schedule workbench closed loop', () => {
     await expect(page.getByTestId('workbench-active-preplan-summary')).toContainText('#');
     const runId = await currentRunId(page);
     cleanupRunIds.push(runId);
+
+    await expect(page.getByTestId('workbench-workflow-stepper')).toBeVisible();
+    await expect(page.getByTestId('workbench-workflow-step-draft_review')).toHaveAttribute('aria-current', 'step');
+    await expect(page.getByTestId('workbench-command-bar')).toContainText(`#${runId}`);
+    await expect(page.getByTestId('workbench-command-bar')).toContainText('待复核');
+    await expect(page.getByTestId('workbench-primary-action')).toContainText('校验方案');
+    await expect(page.getByTestId('workbench-order-tab-needs-action')).toBeVisible();
+    await expect(page.getByTestId('workbench-version-drawer-toggle')).toBeVisible();
 
     await expect(page.getByTestId('workbench-order-pool-toggle')).toHaveAttribute('aria-expanded', 'false');
     await page.setViewportSize({ width: 1265, height: 720 });
@@ -226,7 +277,12 @@ test.describe.serial('schedule workbench closed loop', () => {
     await expect(page.getByTestId('workbench-resource-view')).toBeVisible();
     await page.getByTestId('workbench-view-order-review').click();
     await expect(page.getByTestId('workbench-resource-view')).toBeHidden();
-    await expect(page.getByTestId('workbench-queue-panel')).toHaveClass(/collapsed/);
+    await page.getByTestId('workbench-version-drawer-toggle').click();
+    await expect(page.getByTestId('workbench-version-drawer')).toBeVisible();
+    await expect(page.getByTestId('workbench-version-drawer')).toContainText(`#${runId}`);
+    await expect(page.getByTestId('workbench-version-filter-active')).toBeVisible();
+    await page.getByTestId('workbench-version-drawer-close').click();
+    await expect(page.getByTestId('workbench-version-drawer')).toBeHidden();
     await page.getByTestId('workbench-cancel-preplan').click();
     await expect(page.getByTestId('workbench-cancel-confirm-panel')).toBeVisible();
     expect((await detailForRun(request, runId)).run.lifecycle_status).not.toBe('CANCELLED');
@@ -297,16 +353,30 @@ test.describe.serial('schedule workbench closed loop', () => {
     const runId = draft.run.run_id;
 
     await openWorkbench(page);
+    await page.getByTestId('workbench-validate-preplan').click();
     await expect(page.getByTestId('workbench-confirm-preplan')).toBeEnabled();
     await page.getByTestId('workbench-confirm-preplan').click();
     await expect(page.getByTestId('workbench-status')).toContainText('已确认进入制造队列');
+    await expect(page.getByTestId('workbench-inspector')).toContainText('发布成功');
+    await expect(page.getByTestId('workbench-inspector')).not.toContainText('PUBLISH');
+    await expect(page.getByTestId('workbench-primary-action')).toContainText('查看制造队列');
+    await page.getByTestId('workbench-view-queue').click();
     await expect(page.getByTestId('workbench-queue-panel')).toHaveClass(/expanded/);
+    await expect(page.getByTestId('workbench-queue-table')).toBeVisible();
 
     const detail = await detailForRun(request, runId);
     expect(detail.run.lifecycle_status).toBe('CONFIRMED');
     const queue = await apiJson(request, 'get', '/api/schedule/manufacturing-queue');
     expect(queue.ok()).toBeTruthy();
-    expect((await queue.json()).some(item => item.run_id === runId)).toBeTruthy();
+    const queueItems = await queue.json();
+    const queueItem = queueItems.find(item => item.run_id === runId);
+    expect(queueItem).toBeTruthy();
+
+    await page.getByTestId(`workbench-queue-action-${queueItem.id}-READY`).click();
+    await expect(page.getByTestId('workbench-status')).toContainText('已更新为可开工');
+    const queueAfterReady = await apiJson(request, 'get', '/api/schedule/manufacturing-queue');
+    expect(queueAfterReady.ok()).toBeTruthy();
+    expect((await queueAfterReady.json()).some(item => item.id === queueItem.id && item.queue_status === 'READY')).toBeTruthy();
 
     const clear = await apiJson(request, 'post', '/api/schedule/clear-active');
     expect(clear.ok()).toBeTruthy();

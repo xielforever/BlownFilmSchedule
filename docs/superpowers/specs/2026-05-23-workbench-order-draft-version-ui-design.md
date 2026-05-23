@@ -498,3 +498,31 @@ flowchart LR
 5. 草案版本、策略快照、订单快照和审计详情。
 
 这条路线最适合当前项目阶段：既保留系统辅助排程与人工复核的现实场景，也避免把计划员淹没在草案、版本和审计细节里。
+
+## 14. 实施验证记录
+
+完成日期：2026-05-23
+
+- `python -m pytest tests/test_order_flow_sprint1.py tests/test_order_screening.py tests/test_order_import_flow.py tests/test_publish_audit.py tests/test_queue_transitions.py tests/test_rule_enablement.py tests/test_policy_settings.py tests/test_setup_time.py -q`：61 passed, 6 subtests passed。
+- `cd web; npm run lint`：通过。
+- `cd web; npm run build`：通过，仍有既有 chunk-size warning。
+- `cd web; npm run e2e -- workbench.spec.js`：5 passed, 1 skipped。
+- `cd web; npm run e2e -- smoke-routes.spec.js`：1 passed。
+
+已验证 UI：
+
+- 顶部流程 Stepper 可见，并随草案状态切换当前步骤。
+- 当前草案控制条展示草案编号、生命周期、发布状态、版本状态和主操作。
+- 订单池创建前展开，创建后折叠为抽屉。
+- 主工作区默认聚焦需处理订单。
+- 草案版本通过抽屉查看，不再常驻挤压主区。
+- 制造队列在主工作区 Tab 内展示和推进。
+- Inspector 固定展示当前草案状态、当前订单根因、换产说明、人工调整入口和审计摘要。
+
+响应式验证：
+
+| 视口 | 结果 |
+| --- | --- |
+| `1440x900` | 主工作区与 Inspector 同行，Inspector 可见，无横向滚动。 |
+| `1280x720` | 主工作区与 Inspector 同行，Inspector 可见，无横向滚动。 |
+| `1024x768` | 工作区按响应式规则堆叠，无横向滚动。 |
