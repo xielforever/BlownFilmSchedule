@@ -325,7 +325,7 @@ function DashboardGanttChart({ ganttData }) {
   }, [ganttData, machineIds]);
 
   if (!ganttData || !machineIds.length) {
-    return <div className="config-empty">暂无有效 Gantt 数据。</div>;
+    return <div className="config-empty">暂无有效甘特图数据。</div>;
   }
   
   return <div ref={ref} style={{ width: '100%', height: Math.max(440, machineIds.length * 52 + 120) }} />;
@@ -773,14 +773,14 @@ export default function Dashboard() {
       <div className="card dashboard-gantt-card">
         <div className="dashboard-gantt-head">
           <div>
-            <h3>交互式 Gantt</h3>
+            <h3>交互式甘特图</h3>
             <span>运行 #{summary.run_id || '-'} · {formatRunStatus(summary.status)} · {formatActor(summary.triggered_by) || '系统'}</span>
           </div>
           <div className="gantt-stats">
             <span>空档 {idleCount}</span>
             <span>维护 {maintenanceCount}</span>
             <span>停机 {downtimeCount}</span>
-            <Link to="/gantt">打开完整 Gantt</Link>
+            <Link to="/gantt">打开完整甘特图</Link>
           </div>
         </div>
         <div className="gantt-legend-strip dashboard-gantt-legend">

@@ -7,6 +7,10 @@ const machineStatusLabels = {
   MAINTENANCE: '维护中',
   OFFLINE: '离线',
 };
+const cleanroomLabels = {
+  Class_10K: '万级洁净',
+  Class_100K: '十万级洁净',
+};
 const diagnosticSeverityLabels = {
   critical: '关键',
   warning: '警告',
@@ -129,7 +133,7 @@ function MachineCard({ m, diagnostics }) {
       <div className="machine-header">
         <div>
           <div className="machine-name">{m.name}</div>
-          <div className="machine-id">{m.machine_id} · {m.cleanroom_level}</div>
+          <div className="machine-id">{m.machine_id} · {cleanroomLabels[m.cleanroom_level] || m.cleanroom_level}</div>
         </div>
         <div className="machine-badges">
           <span className={`badge ${m.status === 'ACTIVE' ? 'badge-completed' : 'badge-urgent'}`}>{machineStatusLabels[m.status] || m.status}</span>
@@ -275,7 +279,7 @@ export default function MachinesPage() {
         <div className="segmented-control">
           {['', 'Class_10K', 'Class_100K'].map(level => (
             <button key={level} className={cleanroomFilter === level ? 'active' : ''} onClick={() => setCleanroomFilter(level)}>
-              {level || '全部洁净等级'}
+              {level ? cleanroomLabels[level] || level : '全部洁净等级'}
             </button>
           ))}
         </div>

@@ -35,6 +35,25 @@ function formatDuration(minutes) {
   return mins ? `${hours} 小时 ${mins} 分钟` : `${hours} 小时`;
 }
 
+const SETUP_CATEGORY_LABELS = {
+  material: '物料换批',
+  width: '幅宽调整',
+  thickness: '厚度调整',
+  corona: '电晕切换',
+  core: '卷芯切换',
+  gmp: 'GMP清场',
+};
+
+function setupDetailLines(event) {
+  const components = Array.isArray(event?.setup_detail?.components) ? event.setup_detail.components : [];
+  if (components.length) {
+    return components.map(item => `${SETUP_CATEGORY_LABELS[item.category] || item.category} ${item.minutes}分钟`);
+  }
+  return Number(event?.setup_mins || 0) > 0
+    ? [`换产 ${event.setup_mins}分钟，暂无分项明细`]
+    : ['无启用换产规则产生换产时间'];
+}
+
 function getMachineIds(chartData) {
   if (!chartData) return [];
   const configured = (chartData.machines || []).map(machine => machine.machine_id);
@@ -73,7 +92,7 @@ function renderTooltip(params) {
       (d.guidance ? `<br/><span style="color:#bfdbfe">${d.guidance}</span>` : '');
   }
   if (d.kind === 'setup') {
-    return `<b>${d.order_id} 换产</b><br/>持续时间：${formatDuration(d.setup_mins)}<br/>${start} ~ ${end}`;
+    return `<b>${d.order_id} 换产</b><br/>持续时间：${formatDuration(d.setup_mins)}<br/>${setupDetailLines(d).join('<br/>')}<br/>${start} ~ ${end}`;
   }
   if (d.kind === 'maintenance') {
     return `<b>维护</b><br/>${d.type || '计划维护'}${d.reason ? ` - ${d.reason}` : ''}<br/>持续时间：${formatDuration(d.duration_mins)}<br/>${start} ~ ${end}` +
@@ -144,6 +163,12 @@ function EventDiagnosticPanel({ event }) {
         {event.confidence && <span>{event.confidence}</span>}
         {event.code && <span>{event.code}</span>}
       </div>
+      {event.kind === 'setup' && (
+        <div className="evidence-strip">
+          <span>前序 {event.prev_order_id || '机台初始状态'}</span>
+          {setupDetailLines(event).map(line => <span key={line}>{line}</span>)}
+        </div>
+      )}
       {event.guidance && <p className="gantt-guidance">{event.guidance}</p>}
       {diagnostics.length ? (
         <div className="diagnostic-list compact">
@@ -184,6 +209,7 @@ export default function GanttPage() {
   const [searchParams] = useSearchParams();
   const chartRef = useRef(null);
   const machineFilter = searchParams.get('machine') || '';
+  const runId = searchParams.get('run_id') || '';
 
   const chartData = useMemo(() => {
     if (!data || !machineFilter) return data;
@@ -200,8 +226,8 @@ export default function GanttPage() {
   const machineIds = useMemo(() => getMachineIds(chartData), [chartData]);
 
   useEffect(() => {
-    getGantt().then(r => setData(r.data));
-  }, []);
+    getGantt(runId).then(r => setData(r.data));
+  }, [runId]);
 
   useEffect(() => {
     if (!chartRef.current || !chartData || !machineIds.length) return undefined;
@@ -222,7 +248,13 @@ export default function GanttPage() {
 
       if (task.setup_mins > 0 && task.setup_start) {
         setupData.push({
-          value: [yIdx, new Date(task.setup_start).getTime(), start, { ...task, kind: 'setup' }],
+          value: [yIdx, new Date(task.setup_start).getTime(), start, {
+            ...task,
+            kind: 'setup',
+            start: task.setup_start,
+            end: task.start,
+            duration_mins: task.setup_mins,
+          }],
           itemStyle: { color: setupPattern, borderColor: '#475569', borderWidth: 1 },
         });
       }
@@ -423,7 +455,7 @@ export default function GanttPage() {
     <div>
       <div className="page-header">
         <div>
-          <h2>排程 Gantt</h2>
+          <h2>排程甘特图</h2>
           <p className="page-subtitle">
             运行 #{chartData?.run_id || '-'} | {machineFilter ? `机台 ${machineFilter}` : `${machineIds.length} 台机台`} | {orderCount} 个订单
           </p>
@@ -446,9 +478,9 @@ export default function GanttPage() {
         {chartData && machineIds.length ? (
           <div ref={chartRef} className="gantt-wrapper" style={{ height: dynamicHeight }} />
         ) : chartData ? (
-          <div className="config-empty">当前机台筛选下没有 Gantt 事件。</div>
+          <div className="config-empty">当前机台筛选下没有甘特图事件。</div>
         ) : (
-          <div className="loading">Gantt 数据加载中...</div>
+          <div className="loading">甘特图数据加载中...</div>
         )}
       </div>
 
