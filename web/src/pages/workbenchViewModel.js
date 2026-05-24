@@ -259,6 +259,12 @@ export function screeningOverrideBadge(screening) {
   return null;
 }
 
+export function screeningOverrideDraftRisk(row) {
+  const override = row?.applied_override;
+  if (!override) return '';
+  return `筛选豁免排入：${override.reason_text || override.reason_code || '已记录豁免审计'}`;
+}
+
 export function screeningOverrideAction(screening, { canOverride = false } = {}) {
   if (!screening || screening.applied_override) return null;
   const decision = screening.override_decision;

@@ -5,6 +5,7 @@ import {
   matchesScreeningFilter,
   screeningOverrideAction,
   screeningOverrideBadge,
+  screeningOverrideDraftRisk,
   canCreateScreeningOverride,
   screeningPoolCounts,
   selectableOrderIds,
@@ -149,4 +150,17 @@ test('canCreateScreeningOverride follows operator role permissions', () => {
   assert.equal(canCreateScreeningOverride({ role: 'planner' }), true);
   assert.equal(canCreateScreeningOverride({ role: 'viewer' }), false);
   assert.equal(canCreateScreeningOverride(null), false);
+});
+
+test('screeningOverrideDraftRisk labels applied overrides for draft review', () => {
+  assert.equal(
+    screeningOverrideDraftRisk({
+      applied_override: {
+        override_policy: 'restricted',
+        reason_text: '物料替代方案已确认',
+      },
+    }),
+    '筛选豁免排入：物料替代方案已确认',
+  );
+  assert.equal(screeningOverrideDraftRisk({}), '');
 });

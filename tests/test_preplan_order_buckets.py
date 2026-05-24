@@ -109,6 +109,41 @@ class TestPreplanOrderBuckets(unittest.TestCase):
         self.assertEqual([row["order_id"] for row in buckets["late_orders"]], ["ORD-LATE"])
         self.assertEqual(buckets["late_orders"][0]["bucket_reason"], "计划完工时间晚于订单交期。")
 
+    def test_exposes_applied_screening_override_on_preplan_rows(self):
+        task = {
+            "id": 12,
+            "order_id": "ORD-OVERRIDE",
+            "machine_id": "LINE-01",
+            "sequence_index": 0,
+            "start_time": "2026-05-22T08:00:00Z",
+            "end_time": "2026-05-22T10:00:00Z",
+            "is_late": False,
+            "tardiness_mins": 0,
+            "task_source": "AUTO",
+        }
+        applied_override = {
+            "audit_id": 7,
+            "override_policy": "restricted",
+            "reason_text": "物料替代方案已确认",
+        }
+
+        buckets = _build_preplan_order_buckets(
+            order_rows=[_order("ORD-OVERRIDE")],
+            machines=[_machine()],
+            tasks=[task],
+            diagnostics=[],
+            selected_order_ids=["ORD-OVERRIDE"],
+            screening_items_by_order_id={
+                "ORD-OVERRIDE": {
+                    "order_id": "ORD-OVERRIDE",
+                    "applied_override": applied_override,
+                },
+            },
+        )
+
+        self.assertEqual(buckets["scheduled_orders"][0]["applied_override"], applied_override)
+        self.assertEqual(buckets["input_orders"][0]["applied_override"], applied_override)
+
     def test_decimal_string_dimensions_are_schedulable(self):
         machine = _machine()
         machine.update({

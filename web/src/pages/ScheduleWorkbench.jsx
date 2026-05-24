@@ -34,6 +34,7 @@ import {
   matchesScreeningFilter,
   screeningOverrideAction,
   screeningOverrideBadge,
+  screeningOverrideDraftRisk,
   screeningPoolCounts,
   selectableOrderIds,
   staleOrderIds,
@@ -796,6 +797,7 @@ export default function ScheduleWorkbench() {
       const warningItem = relatedValidation.find(item => item.severity === 'warning');
       const source = order || task || {};
       const rowBucket = override.bucket || source.bucket;
+      const overrideRisk = screeningOverrideDraftRisk(source);
       const isLate = Boolean(source.is_late || task?.is_late || asNumber(source.tardiness_mins ?? task?.tardiness_mins) > 0);
       const hasTask = Boolean(task || source.scheduled_task_id || source.start_time);
       let statusLabel;
@@ -832,7 +834,8 @@ export default function ScheduleWorkbench() {
         end_time: source.end_time || task?.end_time,
         statusLabel,
         statusTone,
-        risk: errorItem?.message
+        risk: overrideRisk
+          || errorItem?.message
           || source.root_cause
           || source.bucket_reason
           || diagnostic?.root_cause

@@ -724,7 +724,7 @@ def _count_eligible_machines(order, machines):
 
 def _preplan_order_base(order_id, order=None):
     source = order or {}
-    return {
+    row = {
         "order_id": order_id,
         "product_type": source.get("product_type"),
         "target_width": source.get("target_width"),
@@ -738,6 +738,9 @@ def _preplan_order_base(order_id, order=None):
         "status": source.get("status"),
         "recipe_layers": source.get("recipe_layers"),
     }
+    if source.get("applied_override"):
+        row["applied_override"] = source.get("applied_override")
+    return row
 
 
 def _preplan_order_bucket_row(order_id, order=None, task=None, diagnostic=None, bucket="input", bucket_reason=""):
@@ -780,8 +783,16 @@ def _preplan_order_bucket_row(order_id, order=None, task=None, diagnostic=None, 
     return row
 
 
-def _build_preplan_order_buckets(order_rows, machines, tasks, diagnostics, selected_order_ids):
+def _build_preplan_order_buckets(
+    order_rows,
+    machines,
+    tasks,
+    diagnostics,
+    selected_order_ids,
+    screening_items_by_order_id=None,
+):
     orders_by_id = {row["order_id"]: dict(row) for row in order_rows or []}
+    screening_items_by_order_id = screening_items_by_order_id or {}
     task_by_order = {}
     for task in tasks or []:
         task_by_order.setdefault(task.get("order_id"), task)
@@ -805,6 +816,9 @@ def _build_preplan_order_buckets(order_rows, machines, tasks, diagnostics, selec
 
     for order_id in ordered_ids:
         order = orders_by_id.get(order_id, {"order_id": order_id})
+        screening_item = screening_items_by_order_id.get(order_id) or {}
+        if screening_item.get("applied_override"):
+            order["applied_override"] = screening_item.get("applied_override")
         order["candidate_machine_count"] = candidate_machine_count
         order["eligible_machine_count"] = _count_eligible_machines(order, machines)
         task = task_by_order.get(order_id)
@@ -854,6 +868,11 @@ def _build_preplan_order_buckets(order_rows, machines, tasks, diagnostics, selec
 def _load_preplan_order_context(cur, run, tasks, diagnostics):
     params = _normalize_json(run.get("solver_params"), {}) or {}
     selected_ids = params.get("selected_order_ids") or []
+    screening_items_by_order_id = {
+        item.get("order_id"): item
+        for item in (params.get("preplan_screening") or {}).get("items", [])
+        if item.get("order_id")
+    }
     diagnostics_by_order = _first_order_diagnostics(diagnostics)
     order_ids = []
     for source in selected_ids + [task.get("order_id") for task in tasks] + list(diagnostics_by_order):
@@ -887,7 +906,14 @@ def _load_preplan_order_context(cur, run, tasks, diagnostics):
         ORDER BY machine_id
     """)
     machines = cur.fetchall()
-    return _build_preplan_order_buckets(order_rows, machines, tasks, diagnostics, selected_ids)
+    return _build_preplan_order_buckets(
+        order_rows,
+        machines,
+        tasks,
+        diagnostics,
+        selected_ids,
+        screening_items_by_order_id=screening_items_by_order_id,
+    )
 
 
 def _validation_item(severity, code, message, order_id=None, machine_id=None):
