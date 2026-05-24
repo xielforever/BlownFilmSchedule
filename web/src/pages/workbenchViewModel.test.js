@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { selectableOrderIds } from './workbenchViewModel.js';
+import { matchesScreeningFilter, selectableOrderIds } from './workbenchViewModel.js';
 
 test('selectableOrderIds excludes blocked screening orders', () => {
   const orders = [
@@ -19,4 +19,12 @@ test('selectableOrderIds excludes blocked screening orders', () => {
     selectableOrderIds(orders, screeningByOrderId),
     ['ORD-READY', 'ORD-RISK'],
   );
+});
+
+test('matchesScreeningFilter treats schedulable as ready or risk only', () => {
+  assert.equal(matchesScreeningFilter('ready', 'schedulable'), true);
+  assert.equal(matchesScreeningFilter('risk', 'schedulable'), true);
+  assert.equal(matchesScreeningFilter('blocked', 'schedulable'), false);
+  assert.equal(matchesScreeningFilter('blocked', 'blocked'), true);
+  assert.equal(matchesScreeningFilter('ready', ''), true);
 });

@@ -28,6 +28,7 @@ import {
   draftVersionTones,
   isDraftStale,
   isSelectableScreeningStatus,
+  matchesScreeningFilter,
   selectableOrderIds,
   summarizeQueue,
   workbenchStageLabels,
@@ -564,7 +565,7 @@ export default function ScheduleWorkbench() {
   const [orderQuery, setOrderQuery] = useState('');
   const [orderClassFilter, setOrderClassFilter] = useState('');
   const [cleanroomFilter, setCleanroomFilter] = useState('');
-  const [screeningFilter, setScreeningFilter] = useState('');
+  const [screeningFilter, setScreeningFilter] = useState('schedulable');
   const [orderScreening, setOrderScreening] = useState({ summary: null, items: [], error: '' });
   const [queueExpanded, setQueueExpanded] = useState(false);
   const [queueAction, setQueueAction] = useState({ queueId: null, targetStatus: '', reason: '' });
@@ -586,7 +587,7 @@ export default function ScheduleWorkbench() {
     return orders.filter(order => {
       if (orderClassFilter && order.order_class !== orderClassFilter) return false;
       if (cleanroomFilter && order.cleanroom_req !== cleanroomFilter) return false;
-      if (screeningFilter && screeningByOrderId.get(order.order_id)?.screening_status !== screeningFilter) return false;
+      if (!matchesScreeningFilter(screeningByOrderId.get(order.order_id)?.screening_status, screeningFilter)) return false;
       if (!query) return true;
       return [
         order.order_id,
@@ -1510,6 +1511,8 @@ export default function ScheduleWorkbench() {
             {Object.entries(cleanroomLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
           <select value={screeningFilter} data-testid="workbench-filter-screening" onChange={event => setScreeningFilter(event.target.value)}>
+            <option value="schedulable">可排订单池</option>
+            <option value="blocked">异常/阻断订单</option>
             <option value="">全部初筛</option>
             {Object.entries(screeningLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>

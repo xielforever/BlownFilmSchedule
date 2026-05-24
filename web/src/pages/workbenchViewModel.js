@@ -218,6 +218,12 @@ export function isSelectableScreeningStatus(screeningStatus) {
   return screeningStatus !== 'blocked';
 }
 
+export function matchesScreeningFilter(screeningStatus, filter) {
+  if (!filter) return true;
+  if (filter === 'schedulable') return screeningStatus === 'ready' || screeningStatus === 'risk';
+  return screeningStatus === filter;
+}
+
 export function selectableOrderIds(orders = [], screeningByOrderId = new Map()) {
   return orders
     .filter(order => isSelectableScreeningStatus(screeningByOrderId.get(order.order_id)?.screening_status))
