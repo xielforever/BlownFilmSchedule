@@ -42,7 +42,8 @@ class ScheduledTask:
     """单个已排程任务的结果"""
     def __init__(self, order: ProductionOrderModel, machine: BlownFilmMachineModel,
                  start_mins: int, end_mins: int, setup_time: int, scrap_kg: float,
-                 sequence_index: int, setup_detail: Optional[Dict] = None):
+                 sequence_index: int, setup_detail: Optional[Dict] = None,
+                 manual_lock_machine: bool = True, manual_lock_time: bool = True):
         self.order = order
         self.machine = machine
         self.start_mins = start_mins
@@ -51,6 +52,8 @@ class ScheduledTask:
         self.scrap_kg = scrap_kg
         self.sequence_index = sequence_index
         self.setup_detail = setup_detail or {"total_mins": setup_time, "components": []}
+        self.manual_lock_machine = manual_lock_machine
+        self.manual_lock_time = manual_lock_time
 
 
 class ScheduleResult:
@@ -953,10 +956,12 @@ class AdvancedMedicalAPS:
             if locked_machine_idx is None or locked_machine_idx not in eligible[idx]:
                 model.add_bool_or([])
                 continue
-            for m_idx in eligible[idx]:
-                model.add(presence[idx][m_idx] == (1 if m_idx == locked_machine_idx else 0))
-            model.add(starts[idx][locked_machine_idx] == locked_task.start_mins)
-            model.add(ends[idx][locked_machine_idx] == locked_task.end_mins)
+            if getattr(locked_task, "manual_lock_machine", True):
+                for m_idx in eligible[idx]:
+                    model.add(presence[idx][m_idx] == (1 if m_idx == locked_machine_idx else 0))
+            if getattr(locked_task, "manual_lock_time", True):
+                model.add(starts[idx][locked_machine_idx] == locked_task.start_mins)
+                model.add(ends[idx][locked_machine_idx] == locked_task.end_mins)
 
         # ─── 约束 2：原料齐套等待 ───
         for idx in range(n):

@@ -170,6 +170,30 @@ class TestSchedulerSequencing(unittest.TestCase):
         self.assertEqual(by_order["ORD-LOCKED"].end_mins, 180)
         self.assertGreaterEqual(by_order["ORD-NEXT"].start_mins, by_order["ORD-LOCKED"].end_mins)
 
+    def test_machine_locked_task_can_move_when_time_is_unlocked(self):
+        locked_order = _make_order("ORD-MACHINE-LOCKED")
+        machine = _make_machine()
+        locked_task = ScheduledTask(
+            locked_order,
+            machine,
+            start_mins=999,
+            end_mins=1059,
+            setup_time=120,
+            scrap_kg=0,
+            sequence_index=0,
+            manual_lock_machine=True,
+            manual_lock_time=False,
+        )
+        aps = AdvancedMedicalAPS(_make_setup_mgr())
+
+        result = aps.run([locked_order], [machine], locked_tasks=[locked_task])
+
+        self.assertIn(result.status, {"OPTIMAL", "FEASIBLE"})
+        task = result.tasks[0]
+        self.assertEqual(task.machine.machine_id, "LINE-T")
+        self.assertNotEqual(task.start_mins, 999)
+        self.assertNotEqual(task.end_mins, 1059)
+
     def test_validation_catches_machine_overlap(self):
         order_a = _make_order("ORD-A")
         order_b = _make_order("ORD-B")
