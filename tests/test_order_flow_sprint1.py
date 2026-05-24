@@ -576,6 +576,16 @@ class _FakeCursor:
             self._rows = [{"id": row["id"]}]
             self.rowcount = 1
             return
+        if normalized.startswith("select id, order_id, screening_status, screening_code, override_policy"):
+            order_id = params[0]
+            rows = [
+                dict(row)
+                for row in self.db.order_screening_override_audit
+                if row["order_id"] == order_id
+            ]
+            rows.sort(key=lambda item: (item.get("created_at"), item["id"]), reverse=True)
+            self._rows = rows[:50]
+            return
         if normalized.startswith("update order_screening_cache"):
             reason = params[0]
             order_ids = params[1] if len(params) > 1 else list(self.db.order_screening_cache)
@@ -906,6 +916,38 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 400)
         self.assertEqual(ctx.exception.detail["code"], "screening_override_prohibited")
         self.assertEqual(len(db.order_screening_override_audit), 0)
+
+    def test_screening_override_audit_can_be_listed_for_an_order(self):
+        db = _FakeDb()
+        db.order_screening_override_audit.append({
+            "id": 12,
+            "order_id": "ORD-AUDIT-LIST",
+            "screening_status": "risk",
+            "screening_code": "due_risk",
+            "override_policy": "restricted",
+            "reason_code": "SCREENING_OVERRIDE",
+            "reason_text": "排程主管确认插单",
+            "mode": "formal",
+            "policy_version": 3,
+            "actor": "planner",
+            "details": {"override_decision": {"policy": "restricted"}},
+            "created_at": datetime(2026, 5, 24, 8, 30, tzinfo=timezone.utc),
+        })
+
+        result = orders_router.get_order_screening_overrides(
+            "ORD-AUDIT-LIST",
+            db=db,
+            _=SimpleNamespace(username="planner"),
+        )
+
+        self.assertEqual(result["order_id"], "ORD-AUDIT-LIST")
+        self.assertEqual(len(result["items"]), 1)
+        item = result["items"][0]
+        self.assertEqual(item["id"], 12)
+        self.assertEqual(item["override_policy"], "restricted")
+        self.assertEqual(item["reason_text"], "排程主管确认插单")
+        self.assertEqual(item["policy_version"], 3)
+        self.assertEqual(item["created_at"], "2026-05-24T08:30:00+00:00")
 
     def test_list_orders_exposes_cached_screening_status(self):
         db = _FakeDb()

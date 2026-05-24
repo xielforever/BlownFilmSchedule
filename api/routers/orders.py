@@ -126,6 +126,12 @@ def _normalize_order_value(value):
     return value
 
 
+def _iso(value):
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
+
+
 def _order_row_state(row: dict[str, Any] | None) -> dict[str, Any]:
     if not row:
         return {}
@@ -724,6 +730,23 @@ def _insert_order_screening_override_audit(
     return int(row["id"] if isinstance(row, dict) else row[0])
 
 
+def _screening_override_audit_row_to_dict(row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "order_id": row["order_id"],
+        "screening_status": row["screening_status"],
+        "screening_code": row.get("screening_code"),
+        "override_policy": row["override_policy"],
+        "reason_code": row["reason_code"],
+        "reason_text": row["reason_text"],
+        "mode": row["mode"],
+        "policy_version": row["policy_version"],
+        "actor": row.get("actor"),
+        "details": row.get("details") or {},
+        "created_at": _iso(row.get("created_at")),
+    }
+
+
 def _screening_summary(items: list[dict]) -> dict:
     return {
         "total_orders": len(items),
@@ -1062,6 +1085,32 @@ def create_order_screening_override(
     except Exception:
         db.rollback()
         raise
+
+
+@router.get("/{order_id}/screening-overrides")
+def get_order_screening_overrides(
+    order_id: str,
+    db=Depends(get_db),
+    _=Depends(get_current_user),
+):
+    _ensure_order_screening_override_schema(db)
+    cur = db.cursor()
+    cur.execute("""
+        SELECT id, order_id, screening_status, screening_code, override_policy,
+            reason_code, reason_text, mode, policy_version, actor, details,
+            created_at
+        FROM order_screening_override_audit
+        WHERE order_id=%s
+        ORDER BY created_at DESC, id DESC
+        LIMIT 50
+    """, (order_id,))
+    return {
+        "order_id": order_id,
+        "items": [
+            _screening_override_audit_row_to_dict(row)
+            for row in cur.fetchall()
+        ],
+    }
 
 
 @router.post("/import-preview")
