@@ -47,6 +47,28 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertFalse(summary["cases"][0]["passed"])
         self.assertLess(summary["cases"][0]["scheduled_ratio"], 1.1)
 
+    def test_benchmark_case_fails_when_business_quality_thresholds_are_exceeded(self):
+        summary = run_benchmark_suite([
+            BenchmarkCase(
+                name="quality-threshold",
+                order_count=3,
+                machine_count=1,
+                max_wall_time_seconds=10.0,
+                max_late_order_count=0,
+                max_weighted_tardiness=0,
+                max_total_setup_time_mins=0,
+            ),
+        ])
+
+        case = summary["cases"][0]
+        self.assertEqual(summary["status"], "FAIL")
+        self.assertFalse(case["passed"])
+        self.assertIn("quality_thresholds", case)
+        self.assertEqual(case["quality_thresholds"]["max_late_order_count"], 0)
+        self.assertEqual(case["quality_thresholds"]["max_weighted_tardiness"], 0)
+        self.assertEqual(case["quality_thresholds"]["max_total_setup_time_mins"], 0)
+        self.assertIn("total_setup_time_mins", case["failed_checks"])
+
     def test_benchmark_command_writes_summary_json(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "summary.json")
@@ -55,6 +77,9 @@ class TestSolverBenchmark(unittest.TestCase):
                 "--machine-count", "1",
                 "--output", path,
                 "--max-wall-time-seconds", "10",
+                "--max-late-order-count", "5",
+                "--max-weighted-tardiness", "1000",
+                "--max-total-setup-time-mins", "1000",
             ])
             with open(path, encoding="utf-8") as f:
                 summary = json.load(f)
@@ -62,6 +87,9 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(summary["case_count"], 1)
         self.assertEqual(summary["cases"][0]["order_count"], 3)
+        self.assertEqual(summary["cases"][0]["quality_thresholds"]["max_late_order_count"], 5)
+        self.assertEqual(summary["cases"][0]["quality_thresholds"]["max_weighted_tardiness"], 1000)
+        self.assertEqual(summary["cases"][0]["quality_thresholds"]["max_total_setup_time_mins"], 1000)
         self.assertIn("status", summary)
 
 

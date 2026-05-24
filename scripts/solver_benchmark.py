@@ -23,6 +23,9 @@ class BenchmarkCase:
     max_wall_time_seconds: float = 120.0
     max_gap: float | None = None
     min_scheduled_ratio: float = 0.0
+    max_late_order_count: int | None = None
+    max_weighted_tardiness: int | None = None
+    max_total_setup_time_mins: int | None = None
 
 
 def _make_setup_mgr() -> SetupMatricesManager:
@@ -127,13 +130,27 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
         for task in result.tasks
     )
     total_setup_time_mins = sum(max(0, task.setup_time) for task in result.tasks)
+    failed_checks = []
+    if result.status not in PASS_STATUSES:
+        failed_checks.append("solver_status")
+    if wall_time > case.max_wall_time_seconds:
+        failed_checks.append("wall_time_seconds")
+    if scheduled_ratio < case.min_scheduled_ratio:
+        failed_checks.append("scheduled_ratio")
+    if case.max_gap is not None and gap is not None and float(gap) > case.max_gap:
+        failed_checks.append("gap")
+    if case.max_late_order_count is not None and late_order_count > case.max_late_order_count:
+        failed_checks.append("late_order_count")
+    if case.max_weighted_tardiness is not None and weighted_tardiness > case.max_weighted_tardiness:
+        failed_checks.append("weighted_tardiness")
+    if (
+        case.max_total_setup_time_mins is not None
+        and total_setup_time_mins > case.max_total_setup_time_mins
+    ):
+        failed_checks.append("total_setup_time_mins")
     passed = (
-        result.status in PASS_STATUSES
-        and wall_time <= case.max_wall_time_seconds
-        and scheduled_ratio >= case.min_scheduled_ratio
+        not failed_checks
     )
-    if case.max_gap is not None and gap is not None:
-        passed = passed and float(gap) <= case.max_gap
 
     return {
         "name": case.name,
@@ -152,6 +169,12 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
         "late_order_count": late_order_count,
         "weighted_tardiness": weighted_tardiness,
         "total_setup_time_mins": total_setup_time_mins,
+        "quality_thresholds": {
+            "max_late_order_count": case.max_late_order_count,
+            "max_weighted_tardiness": case.max_weighted_tardiness,
+            "max_total_setup_time_mins": case.max_total_setup_time_mins,
+        },
+        "failed_checks": failed_checks,
         "machine_load": _machine_load(result.tasks),
         "phase_metrics": {
             key: value
@@ -189,6 +212,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-wall-time-seconds", type=float, default=120.0)
     parser.add_argument("--max-gap", type=float, default=None)
     parser.add_argument("--min-scheduled-ratio", type=float, default=0.0)
+    parser.add_argument("--max-late-order-count", type=int, default=None)
+    parser.add_argument("--max-weighted-tardiness", type=int, default=None)
+    parser.add_argument("--max-total-setup-time-mins", type=int, default=None)
     parser.add_argument("--output", default="benchmark-summary.json")
     args = parser.parse_args(argv)
 
@@ -201,6 +227,15 @@ def main(argv: list[str] | None = None) -> int:
             max_wall_time_seconds=args.max_wall_time_seconds,
             max_gap=args.max_gap,
             min_scheduled_ratio=max(0.0, float(args.min_scheduled_ratio)),
+            max_late_order_count=(
+                None if args.max_late_order_count is None else max(0, int(args.max_late_order_count))
+            ),
+            max_weighted_tardiness=(
+                None if args.max_weighted_tardiness is None else max(0, int(args.max_weighted_tardiness))
+            ),
+            max_total_setup_time_mins=(
+                None if args.max_total_setup_time_mins is None else max(0, int(args.max_total_setup_time_mins))
+            ),
         )
         for count in args.order_counts
     ]
