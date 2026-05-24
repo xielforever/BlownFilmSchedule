@@ -229,6 +229,7 @@ def _ensure_order_screening_schema(db) -> None:
         CREATE TABLE IF NOT EXISTS order_screening_cache (
             order_id            VARCHAR(20)  PRIMARY KEY REFERENCES production_orders(order_id),
             screening_status    VARCHAR(20)  NOT NULL,
+            business_bucket     VARCHAR(80),
             code                VARCHAR(80),
             root_cause          TEXT,
             result              JSONB        NOT NULL,
@@ -241,8 +242,16 @@ def _ensure_order_screening_schema(db) -> None:
         )
     """)
     cur.execute("""
+        ALTER TABLE order_screening_cache
+            ADD COLUMN IF NOT EXISTS business_bucket VARCHAR(80)
+    """)
+    cur.execute("""
         CREATE INDEX IF NOT EXISTS idx_order_screening_cache_status
         ON order_screening_cache(screening_status, is_stale)
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_order_screening_cache_bucket
+        ON order_screening_cache(business_bucket, is_stale)
     """)
 
 
@@ -668,10 +677,11 @@ def _persist_order_screening_result(cur, result: dict) -> None:
     for item in result.get("items", []):
         cur.execute("""
             INSERT INTO order_screening_cache
-                (order_id, screening_status, code, root_cause, result, summary, scope, is_stale)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,FALSE)
+                (order_id, screening_status, business_bucket, code, root_cause, result, summary, scope, is_stale)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,FALSE)
             ON CONFLICT (order_id) DO UPDATE SET
                 screening_status=EXCLUDED.screening_status,
+                business_bucket=EXCLUDED.business_bucket,
                 code=EXCLUDED.code,
                 root_cause=EXCLUDED.root_cause,
                 result=EXCLUDED.result,
@@ -682,6 +692,7 @@ def _persist_order_screening_result(cur, result: dict) -> None:
         """, (
             item.get("order_id"),
             item.get("screening_status"),
+            item.get("business_bucket"),
             item.get("code"),
             item.get("root_cause"),
             Json(item),
@@ -850,7 +861,7 @@ def list_orders(
         normalized_screening_bucket = screening_bucket.lower()
         if normalized_screening_bucket not in SCREENING_BUSINESS_BUCKETS:
             raise HTTPException(status_code=400, detail="Invalid screening bucket.")
-        where_clauses.append("LOWER(osc.result->>'business_bucket')=%s")
+        where_clauses.append("LOWER(COALESCE(osc.business_bucket, osc.result->>'business_bucket'))=%s")
         params.append(normalized_screening_bucket)
     if screening_stale is not None:
         where_clauses.append("COALESCE(osc.is_stale, FALSE)=%s")
@@ -880,6 +891,7 @@ def list_orders(
             osc.screening_status, osc.code AS screening_code,
             osc.root_cause AS screening_root_cause, osc.is_stale AS screening_is_stale,
             osc.stale_reason AS screening_stale_reason,
+            osc.business_bucket AS screening_business_bucket,
             osc.result AS screening_result
         FROM production_orders o
         LEFT JOIN customers c ON o.customer_id = c.customer_id
@@ -911,7 +923,7 @@ def list_orders(
             "assigned_machine": r["assigned_machine"],
             "screening": {
                 "screening_status": r.get("screening_status"),
-                "business_bucket": screening_result.get("business_bucket"),
+                "business_bucket": r.get("screening_business_bucket") or screening_result.get("business_bucket"),
                 "code": r.get("screening_code"),
                 "root_cause": r.get("screening_root_cause"),
                 "is_stale": r.get("screening_is_stale"),

@@ -178,7 +178,13 @@ class _FakeCursor:
         if normalized.startswith("create index if not exists idx_order_screening_cache_status"):
             self._rows = []
             return
+        if normalized.startswith("create index if not exists idx_order_screening_cache_bucket"):
+            self._rows = []
+            return
         if normalized.startswith("create index if not exists idx_order_screening_override_order"):
+            self._rows = []
+            return
+        if normalized.startswith("alter table order_screening_cache"):
             self._rows = []
             return
         if normalized.startswith("alter table schedule_runs"):
@@ -356,7 +362,7 @@ class _FakeCursor:
             if "lower(osc.screening_status)=%s" in normalized:
                 screening_status_filter = params[param_index]
                 param_index += 1
-            if "lower(osc.result->>'business_bucket')=%s" in normalized:
+            if "business_bucket" in normalized and "coalesce" in normalized and "=%s" in normalized:
                 screening_bucket_filter = params[param_index]
                 param_index += 1
             if "coalesce(osc.is_stale, false)=%s" in normalized:
@@ -389,6 +395,7 @@ class _FakeCursor:
                     "screening_root_cause": cache.get("root_cause"),
                     "screening_is_stale": cache.get("is_stale"),
                     "screening_stale_reason": cache.get("stale_reason"),
+                    "screening_business_bucket": cache.get("business_bucket"),
                     "screening_result": cache.get("result"),
                 })
             self._rows = sorted(rows, key=lambda item: item["due_date"])
@@ -405,7 +412,7 @@ class _FakeCursor:
             if "lower(osc.screening_status)=%s" in normalized:
                 screening_status_filter = params[param_index]
                 param_index += 1
-            if "lower(osc.result->>'business_bucket')=%s" in normalized:
+            if "business_bucket" in normalized and "coalesce" in normalized and "=%s" in normalized:
                 screening_bucket_filter = params[param_index]
                 param_index += 1
             if "coalesce(osc.is_stale, false)=%s" in normalized:
@@ -546,10 +553,11 @@ class _FakeCursor:
             self.rowcount = 1
             return
         if normalized.startswith("insert into order_screening_cache"):
-            order_id, screening_status, code, root_cause, result, summary, scope = params
+            order_id, screening_status, business_bucket, code, root_cause, result, summary, scope = params
             self.db.order_screening_cache[order_id] = {
                 "order_id": order_id,
                 "screening_status": screening_status,
+                "business_bucket": business_bucket,
                 "code": code,
                 "root_cause": root_cause,
                 "result": self._unwrap(result),
@@ -798,6 +806,7 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         self.assertEqual(result["screening"]["items"][0]["order_id"], "ORD-IMP-READY")
         self.assertEqual(result["screening"]["items"][0]["screening_status"], "ready")
         self.assertEqual(db.order_screening_cache["ORD-IMP-READY"]["screening_status"], "ready")
+        self.assertEqual(db.order_screening_cache["ORD-IMP-READY"]["business_bucket"], "ready")
         self.assertEqual(db.commit_count, 1)
 
     def test_get_order_screening_refreshes_screening_cache(self):
