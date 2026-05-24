@@ -259,6 +259,23 @@ export function screeningOverrideBadge(screening) {
   return null;
 }
 
+export function screeningOverrideAction(screening, { canOverride = false } = {}) {
+  if (!screening || screening.applied_override) return null;
+  const decision = screening.override_decision;
+  if (!decision?.allowed || decision.policy !== 'restricted') return null;
+  const action = {
+    orderId: screening.order_id,
+    label: '申请豁免',
+    disabled: !canOverride,
+    reasonRequired: Boolean(decision.requires_reason),
+    reasonCode: 'SCREENING_OVERRIDE',
+  };
+  if (!canOverride) {
+    action.disabledReason = '当前账号无豁免权限';
+  }
+  return action;
+}
+
 export function matchesScreeningFilter(screeningOrStatus, filter) {
   const screening = typeof screeningOrStatus === 'object' && screeningOrStatus !== null
     ? screeningOrStatus

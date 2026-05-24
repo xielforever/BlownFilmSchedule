@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   matchesScreeningFilter,
+  screeningOverrideAction,
   screeningOverrideBadge,
   screeningPoolCounts,
   selectableOrderIds,
@@ -94,5 +95,50 @@ test('screeningOverrideBadge explains override boundaries and applied overrides'
       override_decision: { allowed: true, policy: 'restricted' },
     }),
     { label: '已豁免', tone: 'warning', detail: '物料替代方案已确认' },
+  );
+});
+
+test('screeningOverrideAction only enables restricted unapplied overrides with permission', () => {
+  assert.deepEqual(
+    screeningOverrideAction({
+      order_id: 'ORD-RISK',
+      override_decision: { allowed: true, policy: 'restricted', requires_reason: true },
+    }, { canOverride: true }),
+    {
+      orderId: 'ORD-RISK',
+      label: '申请豁免',
+      disabled: false,
+      reasonRequired: true,
+      reasonCode: 'SCREENING_OVERRIDE',
+    },
+  );
+  assert.equal(
+    screeningOverrideAction({
+      order_id: 'ORD-WIDE',
+      override_decision: { allowed: false, policy: 'prohibited' },
+    }, { canOverride: true }),
+    null,
+  );
+  assert.deepEqual(
+    screeningOverrideAction({
+      order_id: 'ORD-RISK',
+      override_decision: { allowed: true, policy: 'restricted', requires_reason: true },
+    }, { canOverride: false }),
+    {
+      orderId: 'ORD-RISK',
+      label: '申请豁免',
+      disabled: true,
+      reasonRequired: true,
+      reasonCode: 'SCREENING_OVERRIDE',
+      disabledReason: '当前账号无豁免权限',
+    },
+  );
+  assert.equal(
+    screeningOverrideAction({
+      order_id: 'ORD-DONE',
+      applied_override: { audit_id: 9 },
+      override_decision: { allowed: true, policy: 'restricted' },
+    }, { canOverride: true }),
+    null,
   );
 });
