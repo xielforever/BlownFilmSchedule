@@ -904,6 +904,29 @@ def _locked_task_summary(tasks: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _adjustment_reason_summary(adjustments: list[dict[str, Any]]) -> dict[str, Any]:
+    reason_counts: dict[str, int] = {}
+    actor_counts: dict[str, int] = {}
+    reason_texts: dict[str, str] = {}
+    failed_adjustment_count = 0
+    for item in adjustments or []:
+        reason = item.get("reason_code") or "UNKNOWN"
+        actor = item.get("changed_by") or "unknown"
+        reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        actor_counts[actor] = actor_counts.get(actor, 0) + 1
+        if item.get("reason_text") and reason not in reason_texts:
+            reason_texts[reason] = item["reason_text"]
+        if item.get("validation_status") == "FAILED":
+            failed_adjustment_count += 1
+    return {
+        "adjustment_count": len(adjustments or []),
+        "failed_adjustment_count": failed_adjustment_count,
+        "reason_counts": reason_counts,
+        "actor_counts": actor_counts,
+        "reason_texts": reason_texts,
+    }
+
+
 def _locked_external_order_from_row(row: dict[str, Any]) -> ProductionOrderModel:
     return ProductionOrderModel(
         order_id=str(row.get("order_id")),
@@ -3552,6 +3575,7 @@ def get_preplan(run_id: int, db=Depends(get_db), _=Depends(get_current_user)):
         "adjustments": adjustments,
         "adjustment_impact_summary": _manual_adjustment_impact_summary(adjustments),
         "locked_task_summary": _locked_task_summary(tasks),
+        "adjustment_reason_summary": _adjustment_reason_summary(adjustments),
         "latest_publish_audit": latest_publish_audit,
         "diagnostics": diagnostics,
         **order_buckets,

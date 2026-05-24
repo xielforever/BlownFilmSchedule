@@ -668,6 +668,37 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(summary["protected_order_ids"], ["ORD-MACHINE-LOCK", "ORD-TIME-LOCK"])
         self.assertEqual(summary["protected_machine_ids"], ["LINE-A", "LINE-B"])
 
+    def test_adjustment_reason_summary_groups_audit_causes_and_actors(self):
+        summary = schedule_router._adjustment_reason_summary([
+            {
+                "order_id": "ORD-A",
+                "reason_code": "URGENT_INSERT",
+                "reason_text": "客户急单插入",
+                "changed_by": "planner-a",
+                "validation_status": "PASSED",
+            },
+            {
+                "order_id": "ORD-B",
+                "reason_code": "URGENT_INSERT",
+                "reason_text": "客户急单插入",
+                "changed_by": "planner-b",
+                "validation_status": "FAILED",
+            },
+            {
+                "order_id": "ORD-C",
+                "reason_code": "MATERIAL_DELAY",
+                "reason_text": "原料延期",
+                "changed_by": "planner-a",
+                "validation_status": "PASSED",
+            },
+        ])
+
+        self.assertEqual(summary["adjustment_count"], 3)
+        self.assertEqual(summary["failed_adjustment_count"], 1)
+        self.assertEqual(summary["reason_counts"], {"URGENT_INSERT": 2, "MATERIAL_DELAY": 1})
+        self.assertEqual(summary["actor_counts"], {"planner-a": 2, "planner-b": 1})
+        self.assertEqual(summary["reason_texts"]["URGENT_INSERT"], "客户急单插入")
+
 
 if __name__ == "__main__":
     unittest.main()
