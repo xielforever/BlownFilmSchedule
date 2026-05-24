@@ -108,6 +108,23 @@ class TestOrderScreening(unittest.TestCase):
         self.assertGreaterEqual(item["slack_mins"], 0)
         self.assertEqual(result["summary"]["risk_count"], 1)
 
+    def test_due_risk_threshold_uses_configurable_screening_policy(self):
+        order = _make_order("ORD-CONFIGURED-SLACK", due_date_mins=370)
+
+        default_result = screen_orders([order], [_make_machine(hourly_output_kg=600)])
+        strict_result = screen_orders(
+            [order],
+            [_make_machine(hourly_output_kg=600)],
+            screening_policy={
+                "due_risk_min_slack_mins": 300,
+                "due_risk_duration_multiplier": 1.0,
+            },
+        )
+
+        self.assertEqual(default_result["items"][0]["screening_status"], "ready")
+        self.assertEqual(strict_result["items"][0]["screening_status"], "risk")
+        self.assertEqual(strict_result["items"][0]["code"], "due_risk")
+
     def test_non_ready_screening_items_have_specific_action_recommendations(self):
         cases = [
             (

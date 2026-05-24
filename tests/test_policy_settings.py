@@ -33,6 +33,8 @@ class TestSchedulePolicySettings(unittest.TestCase):
             "candidate_reject_penalty",
             "arc_pruning_enabled",
             "arc_pruning_max_setup_mins",
+            "screening_due_risk_min_slack_mins",
+            "screening_due_risk_duration_multiplier",
             "manual_adjust_review_delay_threshold_mins",
             "manual_adjust_review_setup_threshold_mins",
             "manual_adjust_review_tardiness_threshold_mins",
@@ -125,6 +127,8 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "candidate_reject_penalty": 4321,
                 "arc_pruning_enabled": True,
                 "arc_pruning_max_setup_mins": 180,
+                "screening_due_risk_min_slack_mins": 300,
+                "screening_due_risk_duration_multiplier": 2.0,
                 "manual_adjust_review_delay_threshold_mins": 30,
                 "manual_adjust_review_setup_threshold_mins": 20,
                 "manual_adjust_review_tardiness_threshold_mins": 15,
@@ -143,6 +147,8 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(snapshot["candidate_acceptance"]["reject_penalty"], 4321)
         self.assertEqual(snapshot["arc_pruning"]["enabled"], True)
         self.assertEqual(snapshot["arc_pruning"]["max_setup_time_mins"], 180)
+        self.assertEqual(snapshot["order_screening"]["due_risk_min_slack_mins"], 300)
+        self.assertEqual(snapshot["order_screening"]["due_risk_duration_multiplier"], 2.0)
         self.assertEqual(snapshot["manual_adjustment_review"]["delay_threshold_mins"], 30)
         self.assertEqual(snapshot["manual_adjustment_review"]["setup_threshold_mins"], 20)
         self.assertEqual(snapshot["manual_adjustment_review"]["tardiness_threshold_mins"], 15)

@@ -176,6 +176,8 @@ class ScheduleSettingsPayload(BaseModel):
     candidate_reject_penalty: Optional[int] = None
     arc_pruning_enabled: Optional[bool] = None
     arc_pruning_max_setup_mins: Optional[int] = None
+    screening_due_risk_min_slack_mins: Optional[int] = None
+    screening_due_risk_duration_multiplier: Optional[float] = None
     manual_adjust_review_delay_threshold_mins: Optional[int] = None
     manual_adjust_review_setup_threshold_mins: Optional[int] = None
     manual_adjust_review_tardiness_threshold_mins: Optional[int] = None
@@ -212,6 +214,8 @@ POLICY_VALUE_KEYS = (
     "candidate_reject_penalty",
     "arc_pruning_enabled",
     "arc_pruning_max_setup_mins",
+    "screening_due_risk_min_slack_mins",
+    "screening_due_risk_duration_multiplier",
     "manual_adjust_review_delay_threshold_mins",
     "manual_adjust_review_setup_threshold_mins",
     "manual_adjust_review_tardiness_threshold_mins",
@@ -245,6 +249,8 @@ POLICY_DEFAULTS = {
     "candidate_reject_penalty": 10_000_000,
     "arc_pruning_enabled": False,
     "arc_pruning_max_setup_mins": 0,
+    "screening_due_risk_min_slack_mins": 240,
+    "screening_due_risk_duration_multiplier": 1.5,
     "manual_adjust_review_delay_threshold_mins": 0,
     "manual_adjust_review_setup_threshold_mins": 0,
     "manual_adjust_review_tardiness_threshold_mins": 0,
@@ -336,6 +342,8 @@ def _ensure_planning_schema_locked(db):
             candidate_reject_penalty            INTEGER NOT NULL DEFAULT 10000000,
             arc_pruning_enabled                 BOOLEAN NOT NULL DEFAULT FALSE,
             arc_pruning_max_setup_mins          INTEGER NOT NULL DEFAULT 0,
+            screening_due_risk_min_slack_mins   INTEGER NOT NULL DEFAULT 240,
+            screening_due_risk_duration_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.5,
             manual_adjust_review_delay_threshold_mins INTEGER NOT NULL DEFAULT 0,
             manual_adjust_review_setup_threshold_mins INTEGER NOT NULL DEFAULT 0,
             manual_adjust_review_tardiness_threshold_mins INTEGER NOT NULL DEFAULT 0,
@@ -367,6 +375,8 @@ def _ensure_planning_schema_locked(db):
             ADD COLUMN IF NOT EXISTS candidate_reject_penalty INTEGER NOT NULL DEFAULT 10000000,
             ADD COLUMN IF NOT EXISTS arc_pruning_enabled BOOLEAN NOT NULL DEFAULT FALSE,
             ADD COLUMN IF NOT EXISTS arc_pruning_max_setup_mins INTEGER NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS screening_due_risk_min_slack_mins INTEGER NOT NULL DEFAULT 240,
+            ADD COLUMN IF NOT EXISTS screening_due_risk_duration_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.5,
             ADD COLUMN IF NOT EXISTS manual_adjust_review_delay_threshold_mins INTEGER NOT NULL DEFAULT 0,
             ADD COLUMN IF NOT EXISTS manual_adjust_review_setup_threshold_mins INTEGER NOT NULL DEFAULT 0,
             ADD COLUMN IF NOT EXISTS manual_adjust_review_tardiness_threshold_mins INTEGER NOT NULL DEFAULT 0,
@@ -504,6 +514,7 @@ def _get_schedule_settings(db):
             planning_must_schedule_horizon_days, planning_candidate_horizon_days,
             candidate_reject_penalty,
             arc_pruning_enabled, arc_pruning_max_setup_mins,
+            screening_due_risk_min_slack_mins, screening_due_risk_duration_multiplier,
             manual_adjust_review_delay_threshold_mins,
             manual_adjust_review_setup_threshold_mins,
             manual_adjust_review_tardiness_threshold_mins,
@@ -552,6 +563,12 @@ def _policy_snapshot(settings: dict, enabled_rule_counts: dict | None = None) ->
             "enabled": bool(settings.get("arc_pruning_enabled", False)),
             "max_setup_time_mins": int(settings.get("arc_pruning_max_setup_mins") or 0),
         },
+        "order_screening": {
+            "due_risk_min_slack_mins": int(settings.get("screening_due_risk_min_slack_mins") or 240),
+            "due_risk_duration_multiplier": float(
+                settings.get("screening_due_risk_duration_multiplier") or 1.5
+            ),
+        },
         "manual_adjustment_review": {
             "delay_threshold_mins": int(settings.get("manual_adjust_review_delay_threshold_mins") or 0),
             "setup_threshold_mins": int(settings.get("manual_adjust_review_setup_threshold_mins") or 0),
@@ -584,6 +601,8 @@ def _policy_snapshot_mismatch(saved: dict | None, current: dict | None) -> str |
         return "candidate acceptance policy changed; rerun pre-schedule before publishing."
     if (saved.get("arc_pruning") or {}) != (current.get("arc_pruning") or {}):
         return "arc pruning policy changed; rerun pre-schedule before publishing."
+    if (saved.get("order_screening") or {}) != (current.get("order_screening") or {}):
+        return "订单初筛策略已变化，请重新预排后再发布。"
     if (saved.get("manual_adjustment_review") or {}) != (current.get("manual_adjustment_review") or {}):
         return "manual adjustment review policy changed; rerun pre-schedule before publishing."
     if (saved.get("enabled_rule_counts") or {}) != (current.get("enabled_rule_counts") or {}):
@@ -3502,6 +3521,12 @@ def update_schedule_settings(
         elif key == "arc_pruning_max_setup_mins":
             assignments.append(f"{key}=%s")
             params.append(max(0, int(value)))
+        elif key == "screening_due_risk_min_slack_mins":
+            assignments.append(f"{key}=%s")
+            params.append(max(0, int(value)))
+        elif key == "screening_due_risk_duration_multiplier":
+            assignments.append(f"{key}=%s")
+            params.append(max(0.0, float(value)))
         elif key in {
             "manual_adjust_review_delay_threshold_mins",
             "manual_adjust_review_setup_threshold_mins",

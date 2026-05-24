@@ -15,6 +15,12 @@ from src.models import BlownFilmMachineModel, ProductionOrderModel
 from src.snapshotting import stable_hash
 
 
+DEFAULT_SCREENING_POLICY = {
+    "due_risk_min_slack_mins": 240,
+    "due_risk_duration_multiplier": 1.5,
+}
+
+
 def _utc_now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -250,14 +256,32 @@ def _due_risk_item(
     )
 
 
+def _normalize_screening_policy(policy: Optional[dict] = None) -> dict:
+    policy = policy or {}
+    min_slack = policy.get(
+        "due_risk_min_slack_mins",
+        DEFAULT_SCREENING_POLICY["due_risk_min_slack_mins"],
+    )
+    duration_multiplier = policy.get(
+        "due_risk_duration_multiplier",
+        DEFAULT_SCREENING_POLICY["due_risk_duration_multiplier"],
+    )
+    return {
+        "due_risk_min_slack_mins": max(0, int(min_slack)),
+        "due_risk_duration_multiplier": max(0.0, float(duration_multiplier)),
+    }
+
+
 def screen_order(
     order: ProductionOrderModel,
     machines: Iterable[BlownFilmMachineModel],
     *,
     status: str = "PENDING",
     product_exists: bool = True,
+    screening_policy: Optional[dict] = None,
 ) -> dict:
     machine_list = list(machines)
+    policy = _normalize_screening_policy(screening_policy)
     candidate_machine_count = len(machine_list)
     fit_results = [evaluate_machine_fit(order, machine) for machine in machine_list]
     eligible_machines = [
@@ -349,7 +373,10 @@ def screen_order(
                 best_duration_mins=best_duration_mins,
                 blocked=True,
             )
-        risk_threshold = max(240, int(best_duration_mins * 1.5))
+        risk_threshold = max(
+            policy["due_risk_min_slack_mins"],
+            int(best_duration_mins * policy["due_risk_duration_multiplier"]),
+        )
         if slack <= risk_threshold:
             return _due_risk_item(
                 order,
@@ -471,6 +498,7 @@ def screen_orders(
     product_exists_by_order_id: Optional[dict[str, bool]] = None,
     generated_at: Optional[str] = None,
     scope: str = "selected",
+    screening_policy: Optional[dict] = None,
 ) -> dict:
     machine_list = list(machines)
     status_map = status_by_order_id or {}
@@ -481,6 +509,7 @@ def screen_orders(
             machine_list,
             status=status_map.get(order.order_id, "PENDING"),
             product_exists=product_map.get(order.order_id, True),
+            screening_policy=screening_policy,
         )
         for order in orders
     ]

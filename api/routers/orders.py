@@ -585,6 +585,23 @@ def _screening_machine_from_row(row) -> BlownFilmMachineModel:
     )
 
 
+def _load_order_screening_policy(cur) -> dict[str, Any]:
+    try:
+        cur.execute("""
+            SELECT screening_due_risk_min_slack_mins,
+                screening_due_risk_duration_multiplier
+            FROM schedule_settings
+            WHERE id=TRUE
+        """)
+        row = cur.fetchone() or {}
+    except Exception:
+        row = {}
+    return {
+        "due_risk_min_slack_mins": int(row.get("screening_due_risk_min_slack_mins") or 240),
+        "due_risk_duration_multiplier": float(row.get("screening_due_risk_duration_multiplier") or 1.5),
+    }
+
+
 def _load_screening_order_rows(cur, order_ids: list[str] | None):
     params = []
     where = "WHERE o.status='PENDING'"
@@ -631,12 +648,14 @@ def _run_order_screening(db, *, order_ids: list[str] | None, scope: str):
     """)
     machines = [_screening_machine_from_row(row) for row in cur.fetchall()]
     orders = [_screening_order_from_row(row) for row in order_rows]
+    screening_policy = _load_order_screening_policy(cur)
     result = screen_orders(
         orders,
         machines,
         status_by_order_id={row["order_id"]: row["status"] for row in order_rows},
         product_exists_by_order_id={row["order_id"]: bool(row.get("product_exists")) for row in order_rows},
         scope=scope,
+        screening_policy=screening_policy,
     )
     result["requested_order_ids"] = order_ids or []
     return result

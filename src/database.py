@@ -310,6 +310,8 @@ class DatabaseManager:
                     candidate_reject_penalty            INTEGER NOT NULL DEFAULT 10000000,
                     arc_pruning_enabled                 BOOLEAN NOT NULL DEFAULT FALSE,
                     arc_pruning_max_setup_mins          INTEGER NOT NULL DEFAULT 0,
+                    screening_due_risk_min_slack_mins   INTEGER NOT NULL DEFAULT 240,
+                    screening_due_risk_duration_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.5,
                     updated_at                          TIMESTAMPTZ DEFAULT NOW()
                 )
             """)
@@ -521,6 +523,8 @@ class DatabaseManager:
                 ADD COLUMN IF NOT EXISTS candidate_reject_penalty INTEGER NOT NULL DEFAULT 10000000,
                 ADD COLUMN IF NOT EXISTS arc_pruning_enabled BOOLEAN NOT NULL DEFAULT FALSE,
                 ADD COLUMN IF NOT EXISTS arc_pruning_max_setup_mins INTEGER NOT NULL DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS screening_due_risk_min_slack_mins INTEGER NOT NULL DEFAULT 240,
+                ADD COLUMN IF NOT EXISTS screening_due_risk_duration_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.5,
                 ADD COLUMN IF NOT EXISTS policy_version INTEGER NOT NULL DEFAULT 1,
                 ADD COLUMN IF NOT EXISTS updated_by VARCHAR(50),
                 ADD COLUMN IF NOT EXISTS change_reason TEXT
@@ -537,7 +541,8 @@ class DatabaseManager:
                     solver_profile, solver_time_limit_seconds, solver_relative_gap_limit,
                     solver_random_seed, solver_num_workers, solver_log_search_progress,
                     planning_must_schedule_horizon_days, planning_candidate_horizon_days,
-                    candidate_reject_penalty, arc_pruning_enabled, arc_pruning_max_setup_mins
+                    candidate_reject_penalty, arc_pruning_enabled, arc_pruning_max_setup_mins,
+                    screening_due_risk_min_slack_mins, screening_due_risk_duration_multiplier
                 FROM schedule_settings
                 WHERE id=TRUE
             """)
@@ -565,6 +570,8 @@ class DatabaseManager:
             "candidate_reject_penalty": 10_000_000,
             "arc_pruning_enabled": False,
             "arc_pruning_max_setup_mins": 0,
+            "screening_due_risk_min_slack_mins": 240,
+            "screening_due_risk_duration_multiplier": 1.5,
         }
         return {**defaults, **dict(row or {})}
 
