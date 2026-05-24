@@ -276,6 +276,10 @@ export function screeningOverrideAction(screening, { canOverride = false } = {})
   return action;
 }
 
+export function canCreateScreeningOverride(user) {
+  return user?.role === 'admin' || user?.role === 'planner';
+}
+
 export function matchesScreeningFilter(screeningOrStatus, filter) {
   const screening = typeof screeningOrStatus === 'object' && screeningOrStatus !== null
     ? screeningOrStatus

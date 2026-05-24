@@ -8,6 +8,7 @@ import {
   createOrderScreeningOverride,
   getManufacturingQueue,
   getMachines,
+  getMe,
   getOrders,
   getPreplans,
   getPreplan,
@@ -27,6 +28,7 @@ import {
   deriveWorkflowStep,
   draftVersionLabels,
   draftVersionTones,
+  canCreateScreeningOverride,
   isDraftStale,
   isSelectableScreening,
   matchesScreeningFilter,
@@ -554,6 +556,7 @@ export default function ScheduleWorkbench() {
   const [activePlan, setActivePlan] = useState(null);
   const [queue, setQueue] = useState([]);
   const [settings, setSettings] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null);
   const [selected, setSelected] = useState([]);
   const [busy, setBusy] = useState(false);
   const [loadingWorkbench, setLoadingWorkbench] = useState(true);
@@ -749,6 +752,7 @@ export default function ScheduleWorkbench() {
   const canConfirm = canEditDraft && planTasks.length > 0 && !hasHardErrors && !warningPublishBlocked && !reviewValidationPending && !isDraftStale(draftVersionState);
   const canCancel = canEditDraft;
   const canAdjust = canEditDraft && Boolean(settings?.manual_adjust_enabled);
+  const canOverrideScreening = canCreateScreeningOverride(currentUser);
   const workbenchBusy = busy || loadingWorkbench;
   const isCancelledPlan = activePlan?.run?.lifecycle_status === 'CANCELLED';
   const cancellationReason = activePlan?.run?.cancel_reason?.trim() || '未填写废弃原因';
@@ -1103,6 +1107,18 @@ export default function ScheduleWorkbench() {
 
   useEffect(() => {
     let cancelled = false;
+    getMe()
+      .then(res => {
+        if (!cancelled) setCurrentUser(res.data);
+      })
+      .catch(() => {
+        if (!cancelled) setCurrentUser(null);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
     setLoadingWorkbench(true);
     Promise.resolve().then(async () => {
       try {
@@ -1160,7 +1176,7 @@ export default function ScheduleWorkbench() {
   };
 
   const applyScreeningOverride = async (screening) => {
-    const action = screeningOverrideAction(screening, { canOverride: true });
+    const action = screeningOverrideAction(screening, { canOverride: canOverrideScreening });
     if (!action || action.disabled) return;
     const reason = window.prompt('\u8bf7\u8f93\u5165\u7b5b\u9009\u8c41\u514d\u539f\u56e0');
     if (!reason || !reason.trim()) {
@@ -1604,7 +1620,7 @@ export default function ScheduleWorkbench() {
           const screening = screeningByOrderId.get(order.order_id);
           const selectable = isSelectableScreening(screening);
           const overrideBadge = screeningOverrideBadge(screening);
-          const overrideAction = screeningOverrideAction(screening, { canOverride: true });
+          const overrideAction = screeningOverrideAction(screening, { canOverride: canOverrideScreening });
           return (
             <div
               key={order.order_id}

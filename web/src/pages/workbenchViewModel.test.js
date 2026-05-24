@@ -5,6 +5,7 @@ import {
   matchesScreeningFilter,
   screeningOverrideAction,
   screeningOverrideBadge,
+  canCreateScreeningOverride,
   screeningPoolCounts,
   selectableOrderIds,
   staleOrderIds,
@@ -141,4 +142,11 @@ test('screeningOverrideAction only enables restricted unapplied overrides with p
     }, { canOverride: true }),
     null,
   );
+});
+
+test('canCreateScreeningOverride follows operator role permissions', () => {
+  assert.equal(canCreateScreeningOverride({ role: 'admin' }), true);
+  assert.equal(canCreateScreeningOverride({ role: 'planner' }), true);
+  assert.equal(canCreateScreeningOverride({ role: 'viewer' }), false);
+  assert.equal(canCreateScreeningOverride(null), false);
 });
