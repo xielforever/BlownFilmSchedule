@@ -219,6 +219,30 @@ class TestPreplanOrderBuckets(unittest.TestCase):
         self.assertEqual([row["order_id"] for row in buckets["deferred_orders"]], ["ORD-CANDIDATE"])
         self.assertEqual(buckets["deferred_orders"][0]["bucket_reason"], "候选订单按本轮接受策略延后。")
         self.assertEqual(buckets["deferred_orders"][0]["deferred_reason_code"], "candidate_optional_rejected")
+        self.assertEqual(buckets["deferred_reason_counts"], {
+            "candidate_optional_rejected": 1,
+        })
+
+    def test_deferred_reason_counts_include_planning_window_deferrals(self):
+        buckets = _build_preplan_order_buckets(
+            order_rows=[
+                _order_due("ORD-CANDIDATE", 30),
+                _order_due("ORD-DEFERRED", 10, month=6),
+            ],
+            machines=[_machine()],
+            tasks=[],
+            diagnostics=[],
+            selected_order_ids=["ORD-CANDIDATE", "ORD-DEFERRED"],
+            planning_bucket_policy={
+                "plan_start": datetime(2026, 5, 24, tzinfo=timezone.utc),
+                "must_schedule_horizon_days": 3,
+                "candidate_horizon_days": 14,
+            },
+        )
+
+        self.assertEqual(buckets["deferred_reason_counts"], {
+            "planning_window_deferred": 2,
+        })
 
     def test_solver_unplaced_orders_use_structured_bucket(self):
         buckets = _build_preplan_order_buckets(

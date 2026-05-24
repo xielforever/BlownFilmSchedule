@@ -1486,6 +1486,7 @@ def _build_preplan_order_buckets(
     candidate_orders = []
     deferred_orders = []
     unplaced_solver_failed_orders = []
+    deferred_reason_counts = {}
     candidate_machine_count = len(machines or [])
 
     for order_id in ordered_ids:
@@ -1529,6 +1530,8 @@ def _build_preplan_order_buckets(
         if deferred_item:
             input_row["deferred_reason_code"] = deferred_item.get("reason")
             input_row["deferred_reason"] = deferred_item
+        elif bucket == "deferred":
+            input_row["deferred_reason_code"] = "planning_window_deferred"
         if unplaced_item:
             input_row["unplaced_reason_code"] = unplaced_item.get("reason")
             input_row["unplaced_reason"] = unplaced_item
@@ -1554,6 +1557,8 @@ def _build_preplan_order_buckets(
         else:
             if bucket == "deferred":
                 deferred_orders.append(input_row)
+                reason_code = input_row.get("deferred_reason_code") or "planning_window_deferred"
+                deferred_reason_counts[reason_code] = deferred_reason_counts.get(reason_code, 0) + 1
             elif bucket == "unplaced_solver_failed":
                 unplaced_solver_failed_orders.append(input_row)
             else:
@@ -1569,6 +1574,7 @@ def _build_preplan_order_buckets(
         "must_schedule_orders": must_schedule_orders,
         "candidate_orders": candidate_orders,
         "deferred_orders": deferred_orders,
+        "deferred_reason_counts": deferred_reason_counts,
         "unplaced_solver_failed_orders": unplaced_solver_failed_orders,
     }
 
