@@ -288,6 +288,41 @@ class TestRuleEnablementContracts(unittest.TestCase):
         mark_stale.assert_called_once_with(db.cursor_obj, reason="maintenance_calendar_changed")
         self.assertEqual(db.commit_count, 1)
 
+    def test_maintenance_dedupe_marks_screening_cache_stale_when_rows_deleted(self):
+        class Cursor:
+            rowcount = 0
+
+            def execute(self, sql, params=None):
+                self.last_sql = " ".join(sql.split()).lower()
+
+            def fetchone(self):
+                return {"deleted_count": 2}
+
+        class Db:
+            def __init__(self):
+                self.cursor_obj = Cursor()
+                self.commit_count = 0
+
+            def cursor(self):
+                return self.cursor_obj
+
+            def commit(self):
+                self.commit_count += 1
+
+        db = Db()
+        with patch.object(rules_router, "get_maintenance_duplicate_summary", side_effect=[
+            {"group_count": 1, "duplicate_row_count": 2, "groups": []},
+            {"group_count": 0, "duplicate_row_count": 0, "groups": []},
+        ]), patch.object(rules_router, "_mark_order_screening_cache_stale") as mark_stale:
+            result = rules_router.dedupe_maintenance_windows(
+                db=db,
+                _=SimpleNamespace(username="planner"),
+            )
+
+        self.assertEqual(result["deleted_count"], 2)
+        mark_stale.assert_called_once_with(db.cursor_obj, reason="maintenance_calendar_changed")
+        self.assertEqual(db.commit_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

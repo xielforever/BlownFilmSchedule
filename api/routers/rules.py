@@ -586,6 +586,8 @@ def dedupe_maintenance_windows(
         SELECT COUNT(*) AS deleted_count FROM deleted
     """)
     deleted_count = cur.fetchone()["deleted_count"]
+    if deleted_count:
+        _mark_order_screening_cache_stale(cur, reason="maintenance_calendar_changed")
     db.commit()
     after = get_maintenance_duplicate_summary(db, _)
     return {
