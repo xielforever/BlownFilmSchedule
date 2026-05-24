@@ -176,6 +176,9 @@ class ScheduleSettingsPayload(BaseModel):
     candidate_reject_penalty: Optional[int] = None
     arc_pruning_enabled: Optional[bool] = None
     arc_pruning_max_setup_mins: Optional[int] = None
+    manual_adjust_review_delay_threshold_mins: Optional[int] = None
+    manual_adjust_review_setup_threshold_mins: Optional[int] = None
+    manual_adjust_review_tardiness_threshold_mins: Optional[int] = None
     change_reason: Optional[str] = None
 
 
@@ -209,6 +212,9 @@ POLICY_VALUE_KEYS = (
     "candidate_reject_penalty",
     "arc_pruning_enabled",
     "arc_pruning_max_setup_mins",
+    "manual_adjust_review_delay_threshold_mins",
+    "manual_adjust_review_setup_threshold_mins",
+    "manual_adjust_review_tardiness_threshold_mins",
 )
 
 
@@ -239,6 +245,9 @@ POLICY_DEFAULTS = {
     "candidate_reject_penalty": 10_000_000,
     "arc_pruning_enabled": False,
     "arc_pruning_max_setup_mins": 0,
+    "manual_adjust_review_delay_threshold_mins": 0,
+    "manual_adjust_review_setup_threshold_mins": 0,
+    "manual_adjust_review_tardiness_threshold_mins": 0,
 }
 
 
@@ -327,6 +336,9 @@ def _ensure_planning_schema_locked(db):
             candidate_reject_penalty            INTEGER NOT NULL DEFAULT 10000000,
             arc_pruning_enabled                 BOOLEAN NOT NULL DEFAULT FALSE,
             arc_pruning_max_setup_mins          INTEGER NOT NULL DEFAULT 0,
+            manual_adjust_review_delay_threshold_mins INTEGER NOT NULL DEFAULT 0,
+            manual_adjust_review_setup_threshold_mins INTEGER NOT NULL DEFAULT 0,
+            manual_adjust_review_tardiness_threshold_mins INTEGER NOT NULL DEFAULT 0,
             policy_version                      INTEGER NOT NULL DEFAULT 1,
             updated_by                          VARCHAR(50),
             change_reason                       TEXT,
@@ -355,6 +367,9 @@ def _ensure_planning_schema_locked(db):
             ADD COLUMN IF NOT EXISTS candidate_reject_penalty INTEGER NOT NULL DEFAULT 10000000,
             ADD COLUMN IF NOT EXISTS arc_pruning_enabled BOOLEAN NOT NULL DEFAULT FALSE,
             ADD COLUMN IF NOT EXISTS arc_pruning_max_setup_mins INTEGER NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS manual_adjust_review_delay_threshold_mins INTEGER NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS manual_adjust_review_setup_threshold_mins INTEGER NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS manual_adjust_review_tardiness_threshold_mins INTEGER NOT NULL DEFAULT 0,
             ADD COLUMN IF NOT EXISTS policy_version INTEGER NOT NULL DEFAULT 1,
             ADD COLUMN IF NOT EXISTS updated_by VARCHAR(50),
             ADD COLUMN IF NOT EXISTS change_reason TEXT
@@ -489,6 +504,9 @@ def _get_schedule_settings(db):
             planning_must_schedule_horizon_days, planning_candidate_horizon_days,
             candidate_reject_penalty,
             arc_pruning_enabled, arc_pruning_max_setup_mins,
+            manual_adjust_review_delay_threshold_mins,
+            manual_adjust_review_setup_threshold_mins,
+            manual_adjust_review_tardiness_threshold_mins,
             policy_version, updated_by,
             change_reason, updated_at
         FROM schedule_settings WHERE id=TRUE
@@ -534,6 +552,11 @@ def _policy_snapshot(settings: dict, enabled_rule_counts: dict | None = None) ->
             "enabled": bool(settings.get("arc_pruning_enabled", False)),
             "max_setup_time_mins": int(settings.get("arc_pruning_max_setup_mins") or 0),
         },
+        "manual_adjustment_review": {
+            "delay_threshold_mins": int(settings.get("manual_adjust_review_delay_threshold_mins") or 0),
+            "setup_threshold_mins": int(settings.get("manual_adjust_review_setup_threshold_mins") or 0),
+            "tardiness_threshold_mins": int(settings.get("manual_adjust_review_tardiness_threshold_mins") or 0),
+        },
         "enabled_rule_counts": enabled_rule_counts or {},
         "runtime_rule_source": "db_only",
         "fallback_setup_used": False,
@@ -561,6 +584,8 @@ def _policy_snapshot_mismatch(saved: dict | None, current: dict | None) -> str |
         return "candidate acceptance policy changed; rerun pre-schedule before publishing."
     if (saved.get("arc_pruning") or {}) != (current.get("arc_pruning") or {}):
         return "arc pruning policy changed; rerun pre-schedule before publishing."
+    if (saved.get("manual_adjustment_review") or {}) != (current.get("manual_adjustment_review") or {}):
+        return "manual adjustment review policy changed; rerun pre-schedule before publishing."
     if (saved.get("enabled_rule_counts") or {}) != (current.get("enabled_rule_counts") or {}):
         return "启用规则数量已变化，请重新预排后再发布。"
     return None
@@ -851,7 +876,35 @@ def _manual_adjustment_impact(before_state: dict[str, Any] | None, after_state: 
     }
 
 
-def _manual_adjustment_impact_summary(adjustments: list[dict[str, Any]]) -> dict[str, Any]:
+def _manual_adjustment_review_policy(settings: dict | None = None) -> dict[str, int]:
+    settings = settings or {}
+    return {
+        "delay_threshold_mins": max(
+            0,
+            int(settings.get("delay_threshold_mins", settings.get("manual_adjust_review_delay_threshold_mins", 0)) or 0),
+        ),
+        "setup_threshold_mins": max(
+            0,
+            int(settings.get("setup_threshold_mins", settings.get("manual_adjust_review_setup_threshold_mins", 0)) or 0),
+        ),
+        "tardiness_threshold_mins": max(
+            0,
+            int(
+                settings.get(
+                    "tardiness_threshold_mins",
+                    settings.get("manual_adjust_review_tardiness_threshold_mins", 0),
+                )
+                or 0
+            ),
+        ),
+    }
+
+
+def _manual_adjustment_impact_summary(
+    adjustments: list[dict[str, Any]],
+    review_policy: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    review_policy = _manual_adjustment_review_policy(review_policy)
     affected_order_ids = []
     negative_impact_order_ids = []
     review_reasons = []
@@ -875,11 +928,11 @@ def _manual_adjustment_impact_summary(adjustments: list[dict[str, Any]]) -> dict
         total_setup_time_delta_mins += int(impact.get("setup_time_delta_mins") or 0)
         total_tardiness_delta_mins += int(impact.get("tardiness_delta_mins") or 0)
         reasons = []
-        if int(impact.get("end_delta_mins") or 0) > 0:
+        if int(impact.get("end_delta_mins") or 0) > review_policy["delay_threshold_mins"]:
             reasons.append("end_delayed")
-        if int(impact.get("setup_time_delta_mins") or 0) > 0:
+        if int(impact.get("setup_time_delta_mins") or 0) > review_policy["setup_threshold_mins"]:
             reasons.append("setup_increased")
-        if int(impact.get("tardiness_delta_mins") or 0) > 0:
+        if int(impact.get("tardiness_delta_mins") or 0) > review_policy["tardiness_threshold_mins"]:
             reasons.append("tardiness_increased")
         if order_id and reasons:
             negative_impact_order_ids.append(order_id)
@@ -899,6 +952,7 @@ def _manual_adjustment_impact_summary(adjustments: list[dict[str, Any]]) -> dict
         "has_negative_impact": bool(negative_impact_order_ids),
         "negative_impact_order_ids": negative_impact_order_ids,
         "review_reasons": review_reasons,
+        "review_policy": review_policy,
         "affected_order_ids": affected_order_ids,
     }
 
@@ -3358,6 +3412,13 @@ def update_schedule_settings(
         elif key == "arc_pruning_max_setup_mins":
             assignments.append(f"{key}=%s")
             params.append(max(0, int(value)))
+        elif key in {
+            "manual_adjust_review_delay_threshold_mins",
+            "manual_adjust_review_setup_threshold_mins",
+            "manual_adjust_review_tardiness_threshold_mins",
+        }:
+            assignments.append(f"{key}=%s")
+            params.append(max(0, int(value)))
         elif key == "continuous_run_enforcement_mode":
             mode = str(value or "publish_blocker")
             if mode not in {"hard", "publish_blocker", "experimental_disabled"}:
@@ -3522,6 +3583,10 @@ def get_preplan(run_id: int, db=Depends(get_db), _=Depends(get_current_user)):
     run = cur.fetchone()
     if not run:
         raise HTTPException(status_code=404, detail="Preplan not found.")
+    run_params = _normalize_json(run.get("solver_params"), {}) or {}
+    review_policy = (run_params.get("policy_snapshot") or {}).get("manual_adjustment_review")
+    if not review_policy:
+        review_policy = _manual_adjustment_review_policy(_get_schedule_settings(db))
     cur.execute("""
         SELECT t.*, o.product_type, o.target_width, o.target_thickness,
             o.total_quantity_kg, o.order_class, o.due_date
@@ -3588,7 +3653,7 @@ def get_preplan(run_id: int, db=Depends(get_db), _=Depends(get_current_user)):
         "tasks": tasks,
         "validation": validation,
         "adjustments": adjustments,
-        "adjustment_impact_summary": _manual_adjustment_impact_summary(adjustments),
+        "adjustment_impact_summary": _manual_adjustment_impact_summary(adjustments, review_policy),
         "locked_task_summary": _locked_task_summary(tasks),
         "adjustment_reason_summary": _adjustment_reason_summary(adjustments),
         "latest_publish_audit": latest_publish_audit,

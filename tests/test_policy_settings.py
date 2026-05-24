@@ -33,6 +33,9 @@ class TestSchedulePolicySettings(unittest.TestCase):
             "candidate_reject_penalty",
             "arc_pruning_enabled",
             "arc_pruning_max_setup_mins",
+            "manual_adjust_review_delay_threshold_mins",
+            "manual_adjust_review_setup_threshold_mins",
+            "manual_adjust_review_tardiness_threshold_mins",
             "change_reason",
         ]:
             self.assertIn(key, fields)
@@ -122,6 +125,9 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "candidate_reject_penalty": 4321,
                 "arc_pruning_enabled": True,
                 "arc_pruning_max_setup_mins": 180,
+                "manual_adjust_review_delay_threshold_mins": 30,
+                "manual_adjust_review_setup_threshold_mins": 20,
+                "manual_adjust_review_tardiness_threshold_mins": 15,
             },
             {},
         )
@@ -137,6 +143,9 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(snapshot["candidate_acceptance"]["reject_penalty"], 4321)
         self.assertEqual(snapshot["arc_pruning"]["enabled"], True)
         self.assertEqual(snapshot["arc_pruning"]["max_setup_time_mins"], 180)
+        self.assertEqual(snapshot["manual_adjustment_review"]["delay_threshold_mins"], 30)
+        self.assertEqual(snapshot["manual_adjustment_review"]["setup_threshold_mins"], 20)
+        self.assertEqual(snapshot["manual_adjustment_review"]["tardiness_threshold_mins"], 15)
 
     def test_policy_snapshot_captures_version_settings_and_rule_counts(self):
         snapshot = schedule_router._policy_snapshot(
@@ -647,6 +656,41 @@ class TestSchedulePolicySettings(unittest.TestCase):
             }
         ])
         self.assertEqual(summary["affected_order_ids"], ["ORD-A", "ORD-B"])
+
+    def test_manual_adjustment_impact_summary_uses_configured_review_thresholds(self):
+        summary = schedule_router._manual_adjustment_impact_summary(
+            [
+                {
+                    "order_id": "ORD-BELOW",
+                    "impact": {
+                        "end_delta_mins": 10,
+                        "setup_time_delta_mins": 4,
+                        "tardiness_delta_mins": 9,
+                    },
+                },
+                {
+                    "order_id": "ORD-REVIEW",
+                    "impact": {
+                        "end_delta_mins": 31,
+                        "setup_time_delta_mins": 21,
+                        "tardiness_delta_mins": 16,
+                    },
+                },
+            ],
+            {
+                "delay_threshold_mins": 30,
+                "setup_threshold_mins": 20,
+                "tardiness_threshold_mins": 15,
+            },
+        )
+
+        self.assertEqual(summary["negative_impact_order_ids"], ["ORD-REVIEW"])
+        self.assertEqual(summary["review_reasons"], [
+            {
+                "order_id": "ORD-REVIEW",
+                "reasons": ["end_delayed", "setup_increased", "tardiness_increased"],
+            }
+        ])
 
     def test_locked_task_summary_lists_protected_orders(self):
         summary = schedule_router._locked_task_summary([
