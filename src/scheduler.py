@@ -557,10 +557,27 @@ class AdvancedMedicalAPS:
             result.diagnostics.extend(build_result_diagnostics(result, orders, machines))
             self._append_continuous_run_diagnostics(result)
             self._append_material_matrix_diagnostic(result)
-            if result.blocked_order_count:
+            self._apply_post_solve_diagnostic_status(result)
+            if result.blocked_order_count and result.status not in {"INVALID", "UNPUBLISHABLE"}:
                 result.status = "PARTIAL"
 
         return result
+
+    def _apply_post_solve_diagnostic_status(self, result: ScheduleResult) -> None:
+        blocking = [
+            item
+            for item in result.diagnostics
+            if getattr(item, "level", None) in {"publish_blocker", "invalid"}
+        ]
+        if not blocking:
+            return
+        if any(getattr(item, "level", None) == "invalid" for item in blocking):
+            result.status = "INVALID"
+        elif result.status not in {"INVALID", "INFEASIBLE"}:
+            result.status = "UNPUBLISHABLE"
+        result.validation_errors.append(
+            f"存在 {len(blocking)} 条不可发布诊断，请修复后重新排程。"
+        )
 
     def _append_phase2_fallback_diagnostic(
         self,

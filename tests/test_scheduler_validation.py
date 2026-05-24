@@ -203,6 +203,7 @@ class TestSchedulerSequencing(unittest.TestCase):
 
     def test_continuous_run_policy_controls_limit_duration_and_level(self):
         result = ScheduleResult()
+        result.status = "FEASIBLE"
         machine = _make_machine(initialContinuousRunMins=0)
         order = _make_order("ORD-CLEAN-POLICY")
         result.add_task(ScheduledTask(order, machine, 0, 70, 0, 0, 0))
@@ -223,6 +224,27 @@ class TestSchedulerSequencing(unittest.TestCase):
         self.assertEqual(diagnostic.level, "publish_blocker")
         self.assertTrue(any(item.metric == "limit_mins" and item.actual == 60 for item in diagnostic.evidence))
         self.assertTrue(any(item.metric == "required_cleaning_mins" and item.actual == 15 for item in diagnostic.evidence))
+
+    def test_publish_blocker_diagnostic_marks_result_unpublishable(self):
+        result = ScheduleResult()
+        result.status = "FEASIBLE"
+        machine = _make_machine(initialContinuousRunMins=0)
+        order = _make_order("ORD-CLEAN-STATUS")
+        result.add_task(ScheduledTask(order, machine, 0, 70, 0, 0, 0))
+        aps = AdvancedMedicalAPS(
+            _make_setup_mgr(),
+            continuous_run_policy={
+                "limit_mins": 60,
+                "cleaning_mins": 15,
+                "enforcement_mode": "publish_blocker",
+            },
+        )
+
+        aps._append_continuous_run_diagnostics(result)
+        aps._apply_post_solve_diagnostic_status(result)
+
+        self.assertEqual(result.status, "UNPUBLISHABLE")
+        self.assertTrue(any("不可发布" in item for item in result.validation_errors))
 
     def test_decode_child_output_handles_gbk_logs(self):
         text = "订单 ORD-062 无可用机台: width=1718, thickness=80"
