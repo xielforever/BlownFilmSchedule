@@ -314,6 +314,7 @@ class TestOutputFormatter(unittest.TestCase):
             {
                 "order_id": "ORD-UNPLACED",
                 "planning_bucket": "must_schedule",
+                "unplaced_reason_code": "required_order_unplaced",
                 "reason": "锁定窗口下无可用空隙",
             }
         ]
@@ -329,6 +330,7 @@ class TestOutputFormatter(unittest.TestCase):
         self.assertIn("candidate_optional_rejected", text)
         self.assertIn("候选订单未被本轮接受", text)
         self.assertIn("ORD-UNPLACED", text)
+        self.assertIn("required_order_unplaced", text)
         self.assertIn("锁定窗口下无可用空隙", text)
 
 

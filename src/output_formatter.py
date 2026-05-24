@@ -331,7 +331,7 @@ def _order_bucket_explanation_table(result: ScheduleResult) -> List[str]:
             "bucket": "unplaced_solver_failed",
             "order_id": item.get("order_id") or "-",
             "planning_bucket": item.get("planning_bucket") or item.get("bucket") or "-",
-            "reason_code": item.get("reason_code") or "-",
+            "reason_code": item.get("unplaced_reason_code") or item.get("reason_code") or "-",
             "reason": item.get("reason") or item.get("bucket_reason") or item.get("root_cause") or "-",
         })
     if not rows:
