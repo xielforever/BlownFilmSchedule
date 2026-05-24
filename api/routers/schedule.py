@@ -1508,7 +1508,12 @@ def _build_preplan_order_buckets(
     for source in (selected_order_ids or []):
         if source and source not in ordered_ids:
             ordered_ids.append(source)
-    for source in list(task_by_order) + list(diagnostics_by_order):
+    for source in (
+        list(task_by_order)
+        + list(diagnostics_by_order)
+        + list(deferred_items_by_order_id)
+        + list(unplaced_items_by_order_id)
+    ):
         if source and source not in ordered_ids:
             ordered_ids.append(source)
 
