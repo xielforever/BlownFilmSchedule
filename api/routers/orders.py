@@ -1158,6 +1158,28 @@ def list_orders(
         {where}
     """, params)
     total = cur.fetchone()["cnt"]
+    screening_bucket_counts = {value: 0 for value in SCREENING_BUSINESS_BUCKETS}
+    cur.execute(f"""
+        SELECT COALESCE(osc.business_bucket, osc.result->>'business_bucket', 'unknown') AS business_bucket,
+               count(DISTINCT o.order_id) AS cnt
+        FROM production_orders o
+        LEFT JOIN customers c ON o.customer_id = c.customer_id
+        LEFT JOIN scheduled_tasks t ON o.order_id = t.order_id
+            AND t.run_id = (SELECT run_id FROM schedule_runs WHERE is_active=TRUE ORDER BY run_id DESC LIMIT 1)
+        LEFT JOIN order_screening_cache osc ON osc.order_id = o.order_id
+        LEFT JOIN LATERAL (
+            SELECT action_type, handling_status, assignee, actor
+            FROM order_screening_action_audit saa
+            WHERE saa.order_id = o.order_id
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+        ) latest_action ON TRUE
+        {where}
+        GROUP BY COALESCE(osc.business_bucket, osc.result->>'business_bucket', 'unknown')
+    """, params)
+    for row in cur.fetchall():
+        bucket_key = row.get("business_bucket") or "unknown"
+        screening_bucket_counts[bucket_key] = int(row.get("cnt") or 0)
     action_status_counts = {value: 0 for value in SCREENING_HANDLING_STATUSES}
     action_status_counts["unhandled"] = 0
     cur.execute(f"""
@@ -1253,6 +1275,7 @@ def list_orders(
         "total": total,
         "page": page,
         "size": size,
+        "screening_bucket_counts": screening_bucket_counts,
         "screening_action_status_counts": action_status_counts,
         "screening_action_type_counts": action_type_counts,
         "screening_action_assignee_counts": action_assignee_counts,

@@ -601,6 +601,43 @@ class _FakeCursor:
                 count += 1
             self._rows = [{"cnt": count}]
             return
+        if normalized.startswith("select coalesce(osc.business_bucket"):
+            param_index = 0
+            status_filter = None
+            screening_status_filter = None
+            screening_bucket_filter = None
+            screening_stale_filter = None
+            if "o.status=%s" in normalized:
+                status_filter = params[param_index]
+                param_index += 1
+            if "lower(osc.screening_status)=%s" in normalized:
+                screening_status_filter = params[param_index]
+                param_index += 1
+            if "lower(coalesce(osc.business_bucket, osc.result->>'business_bucket'))=%s" in normalized:
+                screening_bucket_filter = params[param_index]
+                param_index += 1
+            if "coalesce(osc.is_stale, false)=%s" in normalized:
+                screening_stale_filter = params[param_index]
+                param_index += 1
+            counts = {}
+            for row in self.db.production_orders.values():
+                cache = self.db.order_screening_cache.get(row["order_id"], {})
+                if status_filter and row["status"] != status_filter:
+                    continue
+                if screening_status_filter and (cache.get("screening_status") or "").lower() != screening_status_filter:
+                    continue
+                business_bucket = cache.get("business_bucket") or (cache.get("result") or {}).get("business_bucket")
+                if screening_bucket_filter and (business_bucket or "").lower() != screening_bucket_filter:
+                    continue
+                if screening_stale_filter is not None and bool(cache.get("is_stale")) is not bool(screening_stale_filter):
+                    continue
+                key = business_bucket or "unknown"
+                counts[key] = counts.get(key, 0) + 1
+            self._rows = [
+                {"business_bucket": key, "cnt": value}
+                for key, value in counts.items()
+            ]
+            return
         if normalized.startswith("select coalesce(latest_action.handling_status, 'unhandled')"):
             param_index = 0
             status_filter = None
@@ -3175,6 +3212,61 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         self.assertEqual(result["total"], 1)
         self.assertEqual([item["order_id"] for item in result["items"]], ["ORD-LIST-BLOCKED"])
         self.assertIs(result["items"][0]["screening"]["is_stale"], True)
+
+    def test_list_orders_summarizes_screening_business_buckets(self):
+        db = _FakeDb()
+        db.products.add("Film-A")
+        for order_id in ["ORD-BUCKET-MACHINE", "ORD-BUCKET-MATERIAL", "ORD-BUCKET-READY"]:
+            db.production_orders[order_id] = {
+                "order_id": order_id,
+                "customer_id": "STANDARD",
+                "product_type": "Film-A",
+                "target_width": 520,
+                "target_thickness": 35,
+                "total_quantity_kg": 1200,
+                "cleanroom_req": "Class_10K",
+                "order_class": "NORMAL",
+                "corona_req": False,
+                "core_size_inch": 3,
+                "order_date": None,
+                "due_date": datetime(2026, 5, 28, 8, 30, tzinfo=timezone.utc),
+                "material_available_time": None,
+                "status": "PENDING",
+                "priority_override": None,
+                "created_at": datetime(2026, 5, 22, 8, 0, tzinfo=timezone.utc),
+                "updated_at": datetime(2026, 5, 22, 8, 0, tzinfo=timezone.utc),
+            }
+        db.order_screening_cache["ORD-BUCKET-MACHINE"] = {
+            "screening_status": "blocked",
+            "business_bucket": "blocked_machine_capability",
+            "result": {"business_bucket": "blocked_machine_capability"},
+            "is_stale": False,
+        }
+        db.order_screening_cache["ORD-BUCKET-MATERIAL"] = {
+            "screening_status": "blocked",
+            "business_bucket": "blocked_material",
+            "result": {"business_bucket": "blocked_material"},
+            "is_stale": False,
+        }
+        db.order_screening_cache["ORD-BUCKET-READY"] = {
+            "screening_status": "ready",
+            "business_bucket": "ready",
+            "result": {"business_bucket": "ready"},
+            "is_stale": False,
+        }
+
+        result = orders_router.list_orders(
+            status="PENDING",
+            screening_status="blocked",
+            q=None,
+            page=1,
+            size=50,
+            db=db,
+        )
+
+        self.assertEqual(result["screening_bucket_counts"]["blocked_machine_capability"], 1)
+        self.assertEqual(result["screening_bucket_counts"]["blocked_material"], 1)
+        self.assertEqual(result["screening_bucket_counts"]["ready"], 0)
 
     def test_ensure_screening_schema_backfills_business_bucket_from_cached_result(self):
         db = _FakeDb()
