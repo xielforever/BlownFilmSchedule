@@ -71,6 +71,19 @@ class TestOrderScreening(unittest.TestCase):
         self.assertEqual(item["code"], "status_not_pending")
         self.assertEqual(result["summary"]["blocked_count"], 1)
 
+    def test_allowed_order_statuses_are_configurable(self):
+        order = _make_order("ORD-RELEASED")
+        result = screen_orders(
+            [order],
+            [_make_machine()],
+            status_by_order_id={"ORD-RELEASED": "RELEASED"},
+            screening_policy={"allowed_order_statuses": ["PENDING", "RELEASED"]},
+        )
+
+        item = result["items"][0]
+        self.assertEqual(item["screening_status"], "ready")
+        self.assertEqual(item["code"], "ready")
+
     def test_missing_recipe_blocks_order(self):
         order = _make_order("ORD-NO-RECIPE", recipe_materials=[])
         result = screen_orders([order], [_make_machine()])

@@ -18,6 +18,7 @@ from src.snapshotting import stable_hash
 DEFAULT_SCREENING_POLICY = {
     "due_risk_min_slack_mins": 240,
     "due_risk_duration_multiplier": 1.5,
+    "allowed_order_statuses": ["PENDING"],
 }
 
 
@@ -285,9 +286,18 @@ def _normalize_screening_policy(policy: Optional[dict] = None) -> dict:
         "due_risk_duration_multiplier",
         DEFAULT_SCREENING_POLICY["due_risk_duration_multiplier"],
     )
+    allowed_statuses = policy.get(
+        "allowed_order_statuses",
+        DEFAULT_SCREENING_POLICY["allowed_order_statuses"],
+    )
     return {
         "due_risk_min_slack_mins": max(0, int(min_slack)),
         "due_risk_duration_multiplier": max(0.0, float(duration_multiplier)),
+        "allowed_order_statuses": {
+            str(status).strip().upper()
+            for status in allowed_statuses
+            if str(status).strip()
+        } or set(DEFAULT_SCREENING_POLICY["allowed_order_statuses"]),
     }
 
 
@@ -310,7 +320,8 @@ def screen_order(
     ]
     eligible_machine_count = len(eligible_machines)
 
-    if status != "PENDING":
+    normalized_status = (status or "").strip().upper()
+    if normalized_status not in policy["allowed_order_statuses"]:
         return _item(
             order,
             screening_status="blocked",
