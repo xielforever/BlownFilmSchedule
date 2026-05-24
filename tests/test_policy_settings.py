@@ -745,6 +745,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "label": "完工延后",
                 "count": 1,
                 "order_ids": ["ORD-REVIEW"],
+                "affected_order_count": 1,
                 "max_actual_delta_mins": 31,
                 "max_excess_mins": 1,
                 "threshold_mins": 30,
@@ -754,6 +755,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "label": "换产增加",
                 "count": 1,
                 "order_ids": ["ORD-REVIEW"],
+                "affected_order_count": 1,
                 "max_actual_delta_mins": 21,
                 "max_excess_mins": 1,
                 "threshold_mins": 20,
@@ -763,6 +765,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "label": "逾期增加",
                 "count": 1,
                 "order_ids": ["ORD-REVIEW"],
+                "affected_order_count": 1,
                 "max_actual_delta_mins": 16,
                 "max_excess_mins": 1,
                 "threshold_mins": 15,
@@ -796,6 +799,38 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(summary["time_locked_count"], 1)
         self.assertEqual(summary["protected_order_ids"], ["ORD-MACHINE-LOCK", "ORD-TIME-LOCK"])
         self.assertEqual(summary["protected_machine_ids"], ["LINE-A", "LINE-B"])
+
+    def test_adjustment_review_reason_summary_deduplicates_affected_orders(self):
+        summary = schedule_router._manual_adjustment_review_reason_summary([
+            {
+                "order_id": "ORD-DUP",
+                "reason_details": [
+                    {
+                        "code": "end_delayed",
+                        "label": "完工延后",
+                        "actual_delta_mins": 20,
+                        "threshold_mins": 10,
+                    },
+                ],
+            },
+            {
+                "order_id": "ORD-DUP",
+                "reason_details": [
+                    {
+                        "code": "end_delayed",
+                        "label": "完工延后",
+                        "actual_delta_mins": 30,
+                        "threshold_mins": 10,
+                    },
+                ],
+            },
+        ])
+
+        self.assertEqual(summary["end_delayed"]["count"], 2)
+        self.assertEqual(summary["end_delayed"]["order_ids"], ["ORD-DUP"])
+        self.assertEqual(summary["end_delayed"]["affected_order_count"], 1)
+        self.assertEqual(summary["end_delayed"]["max_actual_delta_mins"], 30)
+        self.assertEqual(summary["end_delayed"]["max_excess_mins"], 20)
 
     def test_adjustment_reason_summary_groups_audit_causes_and_actors(self):
         summary = schedule_router._adjustment_reason_summary([

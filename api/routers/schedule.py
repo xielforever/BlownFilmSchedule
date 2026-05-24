@@ -959,7 +959,8 @@ def _manual_adjustment_review_reason_summary(review_reasons: list[dict[str, Any]
             })
             entry["count"] += 1
             if order_id:
-                entry["order_ids"].append(order_id)
+                entry["order_ids"] = list(dict.fromkeys([*entry["order_ids"], order_id]))
+                entry["affected_order_count"] = len(entry["order_ids"])
             entry["max_actual_delta_mins"] = max(
                 entry["max_actual_delta_mins"],
                 int(detail.get("actual_delta_mins") or 0),
