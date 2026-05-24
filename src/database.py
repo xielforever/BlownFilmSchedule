@@ -322,6 +322,7 @@ class DatabaseManager:
                     arc_pruning_max_setup_mins          INTEGER NOT NULL DEFAULT 0,
                     screening_due_risk_min_slack_mins   INTEGER NOT NULL DEFAULT 240,
                     screening_due_risk_duration_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.5,
+                    screening_required_positive_order_fields TEXT[] NOT NULL DEFAULT ARRAY['due_date_mins','target_thickness','target_width','total_quantity_kg']::TEXT[],
                     updated_at                          TIMESTAMPTZ DEFAULT NOW()
                 )
             """)

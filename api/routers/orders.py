@@ -659,7 +659,8 @@ def _load_order_screening_policy(cur) -> dict[str, Any]:
                 screening_due_risk_duration_multiplier,
                 screening_allowed_order_statuses,
                 screening_prohibited_override_codes,
-                screening_restricted_override_codes
+                screening_restricted_override_codes,
+                screening_required_positive_order_fields
             FROM schedule_settings
             WHERE id=TRUE
         """)
@@ -680,6 +681,10 @@ def _load_order_screening_policy(cur) -> dict[str, Any]:
         "restricted_override_codes": row.get(
             "screening_restricted_override_codes",
             DEFAULT_SCREENING_POLICY["restricted_override_codes"],
+        ),
+        "required_positive_order_fields": row.get(
+            "screening_required_positive_order_fields",
+            DEFAULT_SCREENING_POLICY["required_positive_order_fields"],
         ),
     }
 

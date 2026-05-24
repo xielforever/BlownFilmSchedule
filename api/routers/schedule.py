@@ -183,6 +183,7 @@ class ScheduleSettingsPayload(BaseModel):
     screening_allowed_order_statuses: Optional[list[str]] = None
     screening_prohibited_override_codes: Optional[list[str]] = None
     screening_restricted_override_codes: Optional[list[str]] = None
+    screening_required_positive_order_fields: Optional[list[str]] = None
     manual_adjust_review_delay_threshold_mins: Optional[int] = None
     manual_adjust_review_setup_threshold_mins: Optional[int] = None
     manual_adjust_review_tardiness_threshold_mins: Optional[int] = None
@@ -226,6 +227,7 @@ POLICY_VALUE_KEYS = (
     "screening_allowed_order_statuses",
     "screening_prohibited_override_codes",
     "screening_restricted_override_codes",
+    "screening_required_positive_order_fields",
     "manual_adjust_review_delay_threshold_mins",
     "manual_adjust_review_setup_threshold_mins",
     "manual_adjust_review_tardiness_threshold_mins",
@@ -266,6 +268,7 @@ POLICY_DEFAULTS = {
     "screening_allowed_order_statuses": DEFAULT_SCREENING_POLICY["allowed_order_statuses"],
     "screening_prohibited_override_codes": DEFAULT_SCREENING_POLICY["prohibited_override_codes"],
     "screening_restricted_override_codes": DEFAULT_SCREENING_POLICY["restricted_override_codes"],
+    "screening_required_positive_order_fields": DEFAULT_SCREENING_POLICY["required_positive_order_fields"],
     "manual_adjust_review_delay_threshold_mins": 0,
     "manual_adjust_review_setup_threshold_mins": 0,
     "manual_adjust_review_tardiness_threshold_mins": 0,
@@ -362,8 +365,9 @@ def _ensure_planning_schema_locked(db):
             screening_due_risk_min_slack_mins   INTEGER NOT NULL DEFAULT 240,
             screening_due_risk_duration_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.5,
             screening_allowed_order_statuses    TEXT[] NOT NULL DEFAULT ARRAY['PENDING']::TEXT[],
-            screening_prohibited_override_codes TEXT[] NOT NULL DEFAULT ARRAY['missing_product','missing_recipe','no_eligible_machine','status_not_pending']::TEXT[],
+            screening_prohibited_override_codes TEXT[] NOT NULL DEFAULT ARRAY['missing_product','missing_recipe','invalid_order_data','no_eligible_machine','status_not_pending']::TEXT[],
             screening_restricted_override_codes TEXT[] NOT NULL DEFAULT ARRAY['material_not_ready','due_risk']::TEXT[],
+            screening_required_positive_order_fields TEXT[] NOT NULL DEFAULT ARRAY['due_date_mins','target_thickness','target_width','total_quantity_kg']::TEXT[],
             manual_adjust_review_delay_threshold_mins INTEGER NOT NULL DEFAULT 0,
             manual_adjust_review_setup_threshold_mins INTEGER NOT NULL DEFAULT 0,
             manual_adjust_review_tardiness_threshold_mins INTEGER NOT NULL DEFAULT 0,
@@ -400,8 +404,9 @@ def _ensure_planning_schema_locked(db):
             ADD COLUMN IF NOT EXISTS screening_due_risk_min_slack_mins INTEGER NOT NULL DEFAULT 240,
             ADD COLUMN IF NOT EXISTS screening_due_risk_duration_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.5,
             ADD COLUMN IF NOT EXISTS screening_allowed_order_statuses TEXT[] NOT NULL DEFAULT ARRAY['PENDING']::TEXT[],
-            ADD COLUMN IF NOT EXISTS screening_prohibited_override_codes TEXT[] NOT NULL DEFAULT ARRAY['missing_product','missing_recipe','no_eligible_machine','status_not_pending']::TEXT[],
+            ADD COLUMN IF NOT EXISTS screening_prohibited_override_codes TEXT[] NOT NULL DEFAULT ARRAY['missing_product','missing_recipe','invalid_order_data','no_eligible_machine','status_not_pending']::TEXT[],
             ADD COLUMN IF NOT EXISTS screening_restricted_override_codes TEXT[] NOT NULL DEFAULT ARRAY['material_not_ready','due_risk']::TEXT[],
+            ADD COLUMN IF NOT EXISTS screening_required_positive_order_fields TEXT[] NOT NULL DEFAULT ARRAY['due_date_mins','target_thickness','target_width','total_quantity_kg']::TEXT[],
             ADD COLUMN IF NOT EXISTS manual_adjust_review_delay_threshold_mins INTEGER NOT NULL DEFAULT 0,
             ADD COLUMN IF NOT EXISTS manual_adjust_review_setup_threshold_mins INTEGER NOT NULL DEFAULT 0,
             ADD COLUMN IF NOT EXISTS manual_adjust_review_tardiness_threshold_mins INTEGER NOT NULL DEFAULT 0,
@@ -544,6 +549,7 @@ def _get_schedule_settings(db):
             screening_allowed_order_statuses,
             screening_prohibited_override_codes,
             screening_restricted_override_codes,
+            screening_required_positive_order_fields,
             manual_adjust_review_delay_threshold_mins,
             manual_adjust_review_setup_threshold_mins,
             manual_adjust_review_tardiness_threshold_mins,
@@ -647,6 +653,10 @@ def _policy_snapshot(settings: dict, enabled_rule_counts: dict | None = None) ->
             ),
             "prohibited_override_codes": prohibited_override_codes,
             "restricted_override_codes": restricted_override_codes,
+            "required_positive_order_fields": _policy_list(
+                settings,
+                "screening_required_positive_order_fields",
+            ),
         },
         "manual_adjustment_review": {
             "delay_threshold_mins": int(settings.get("manual_adjust_review_delay_threshold_mins") or 0),
@@ -716,6 +726,10 @@ def _order_screening_policy(settings: dict) -> dict[str, Any]:
         ),
         "prohibited_override_codes": prohibited_override_codes,
         "restricted_override_codes": restricted_override_codes,
+        "required_positive_order_fields": _policy_list(
+            settings,
+            "screening_required_positive_order_fields",
+        ),
     }
 
 
@@ -3680,6 +3694,10 @@ def update_schedule_settings(
             codes = _policy_list({key: value}, key)
             assignments.append(f"{key}=%s")
             params.append(codes)
+        elif key == "screening_required_positive_order_fields":
+            fields = _policy_list({key: value}, key)
+            assignments.append(f"{key}=%s")
+            params.append(fields)
         elif key in {
             "manual_adjust_review_delay_threshold_mins",
             "manual_adjust_review_setup_threshold_mins",

@@ -40,6 +40,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
             "screening_allowed_order_statuses",
             "screening_prohibited_override_codes",
             "screening_restricted_override_codes",
+            "screening_required_positive_order_fields",
             "manual_adjust_review_delay_threshold_mins",
             "manual_adjust_review_setup_threshold_mins",
             "manual_adjust_review_tardiness_threshold_mins",
@@ -71,6 +72,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
             "screening_allowed_order_statuses": ["PENDING", "RELEASED"],
             "screening_prohibited_override_codes": ["no_eligible_machine"],
             "screening_restricted_override_codes": ["material_not_ready", "due_risk"],
+            "screening_required_positive_order_fields": ["target_width", "total_quantity_kg"],
         })
 
         self.assertEqual(policy["due_risk_min_slack_mins"], 360)
@@ -78,6 +80,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(policy["allowed_order_statuses"], ["PENDING", "RELEASED"])
         self.assertEqual(policy["prohibited_override_codes"], ["no_eligible_machine"])
         self.assertEqual(policy["restricted_override_codes"], ["material_not_ready", "due_risk"])
+        self.assertEqual(policy["required_positive_order_fields"], ["target_width", "total_quantity_kg"])
 
     def test_order_screening_policy_normalizes_override_codes_for_audit_snapshot(self):
         settings = {
@@ -85,6 +88,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
             "screening_allowed_order_statuses": [" pending ", "released", "PENDING"],
             "screening_prohibited_override_codes": [" NO_ELIGIBLE_MACHINE ", "due_risk"],
             "screening_restricted_override_codes": ["due_risk", " MATERIAL_NOT_READY "],
+            "screening_required_positive_order_fields": [" total_quantity_kg ", "target_width", "target_width"],
         }
 
         policy = schedule_router._order_screening_policy(settings)
@@ -96,6 +100,10 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(snapshot["order_screening"]["allowed_order_statuses"], ["PENDING", "RELEASED"])
         self.assertEqual(snapshot["order_screening"]["prohibited_override_codes"], ["no_eligible_machine", "due_risk"])
         self.assertEqual(snapshot["order_screening"]["restricted_override_codes"], ["material_not_ready"])
+        self.assertEqual(snapshot["order_screening"]["required_positive_order_fields"], [
+            "total_quantity_kg",
+            "target_width",
+        ])
 
     def test_build_scheduler_passes_continuous_run_policy_to_solver(self):
         setup_mgr = SimpleNamespace(continuous_run_cleaning_time=55)
@@ -177,6 +185,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "screening_allowed_order_statuses": ["PENDING", "RELEASED"],
                 "screening_prohibited_override_codes": ["no_eligible_machine"],
                 "screening_restricted_override_codes": ["material_not_ready"],
+                "screening_required_positive_order_fields": ["due_date_mins", "total_quantity_kg"],
                 "manual_adjust_review_delay_threshold_mins": 30,
                 "manual_adjust_review_setup_threshold_mins": 20,
                 "manual_adjust_review_tardiness_threshold_mins": 15,
@@ -202,6 +211,10 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(snapshot["order_screening"]["allowed_order_statuses"], ["PENDING", "RELEASED"])
         self.assertEqual(snapshot["order_screening"]["prohibited_override_codes"], ["no_eligible_machine"])
         self.assertEqual(snapshot["order_screening"]["restricted_override_codes"], ["material_not_ready"])
+        self.assertEqual(snapshot["order_screening"]["required_positive_order_fields"], [
+            "due_date_mins",
+            "total_quantity_kg",
+        ])
         self.assertEqual(snapshot["manual_adjustment_review"]["delay_threshold_mins"], 30)
         self.assertEqual(snapshot["manual_adjustment_review"]["setup_threshold_mins"], 20)
         self.assertEqual(snapshot["manual_adjustment_review"]["tardiness_threshold_mins"], 15)
