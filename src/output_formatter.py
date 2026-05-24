@@ -316,6 +316,44 @@ def _manual_adjustment_impact_table(result: ScheduleResult) -> List[str]:
     return lines
 
 
+def _order_bucket_explanation_table(result: ScheduleResult) -> List[str]:
+    rows: List[Dict[str, Any]] = []
+    for item in getattr(result, "deferred_orders", []) or []:
+        rows.append({
+            "bucket": "deferred",
+            "order_id": item.get("order_id") or "-",
+            "planning_bucket": item.get("planning_bucket") or item.get("bucket") or "-",
+            "reason_code": item.get("deferred_reason_code") or item.get("reason_code") or item.get("reason") or "-",
+            "reason": item.get("reason") or item.get("bucket_reason") or "-",
+        })
+    for item in getattr(result, "unplaced_solver_failed_orders", []) or []:
+        rows.append({
+            "bucket": "unplaced_solver_failed",
+            "order_id": item.get("order_id") or "-",
+            "planning_bucket": item.get("planning_bucket") or item.get("bucket") or "-",
+            "reason_code": item.get("reason_code") or "-",
+            "reason": item.get("reason") or item.get("bucket_reason") or item.get("root_cause") or "-",
+        })
+    if not rows:
+        return ["当前无延后或求解未落位订单。"]
+
+    lines = [
+        "| 订单 | 结果桶 | 计划桶 | 原因代码 | 说明 |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for row in rows:
+        lines.append(
+            "| {order_id} | {bucket} | {planning_bucket} | {reason_code} | {reason} |".format(
+                order_id=row["order_id"],
+                bucket=row["bucket"],
+                planning_bucket=row["planning_bucket"],
+                reason_code=row["reason_code"],
+                reason=str(row["reason"]).replace("\n", " "),
+            )
+        )
+    return lines
+
+
 def export_schedule_report(result: ScheduleResult, path: str):
     """输出面向业务复盘的 Markdown 排程报告。"""
     ensure_output_dir()
@@ -358,6 +396,10 @@ def export_schedule_report(result: ScheduleResult, path: str):
         "## 机台排程摘要",
         "",
         *_machine_summary_table(result),
+        "",
+        "## 未进入本轮计划订单",
+        "",
+        *_order_bucket_explanation_table(result),
         "",
         "## 锁定任务保护",
         "",

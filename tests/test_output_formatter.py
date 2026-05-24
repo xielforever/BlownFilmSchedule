@@ -299,6 +299,38 @@ class TestOutputFormatter(unittest.TestCase):
         self.assertIn("120", text)
         self.assertIn("45", text)
 
+    def test_schedule_report_explains_deferred_and_unplaced_orders(self):
+        result = ScheduleResult()
+        result.status = "FEASIBLE"
+        result.deferred_orders = [
+            {
+                "order_id": "ORD-DEFERRED",
+                "planning_bucket": "candidate",
+                "deferred_reason_code": "candidate_optional_rejected",
+                "reason": "候选订单未被本轮接受",
+            }
+        ]
+        result.unplaced_solver_failed_orders = [
+            {
+                "order_id": "ORD-UNPLACED",
+                "planning_bucket": "must_schedule",
+                "reason": "锁定窗口下无可用空隙",
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "schedule_report.md")
+            export_schedule_report(result, path)
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
+
+        self.assertIn("## 未进入本轮计划订单", text)
+        self.assertIn("ORD-DEFERRED", text)
+        self.assertIn("candidate_optional_rejected", text)
+        self.assertIn("候选订单未被本轮接受", text)
+        self.assertIn("ORD-UNPLACED", text)
+        self.assertIn("锁定窗口下无可用空隙", text)
+
 
 if __name__ == "__main__":
     unittest.main()
