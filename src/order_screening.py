@@ -544,6 +544,16 @@ def override_decision_for_screening_item(item: dict, screening_policy: Optional[
 
 
 def build_screening_snapshot(screening: dict) -> dict:
+    def snapshot_override_decision(item: dict) -> dict | None:
+        decision = item.get("override_decision")
+        if not decision:
+            return None
+        return {
+            "allowed": bool(decision.get("allowed", False)),
+            "policy": decision.get("policy"),
+            "reason_code": decision.get("reason_code"),
+        }
+
     items = [
         {
             "order_id": item.get("order_id"),
@@ -552,6 +562,7 @@ def build_screening_snapshot(screening: dict) -> dict:
             "code": item.get("code"),
             "diagnostic_code": item.get("diagnostic_code"),
             "eligible_machine_count": item.get("eligible_machine_count"),
+            "override_decision": snapshot_override_decision(item),
         }
         for item in screening.get("items", [])
     ]

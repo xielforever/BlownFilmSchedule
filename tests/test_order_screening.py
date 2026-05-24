@@ -391,6 +391,21 @@ class TestOrderScreening(unittest.TestCase):
 
         self.assertEqual(snapshot["items"][0]["business_bucket"], "blocked_machine_capability")
 
+    def test_screening_snapshot_preserves_override_decision(self):
+        screening = screen_orders(
+            [_make_order("ORD-MATERIAL-SNAPSHOT", material_available_mins=6000, due_date_mins=5000)],
+            [_make_machine()],
+            scope="preplan",
+        )
+
+        snapshot = build_screening_snapshot(screening)
+
+        self.assertEqual(snapshot["items"][0]["override_decision"], {
+            "allowed": True,
+            "policy": "restricted",
+            "reason_code": "restricted_material_not_ready",
+        })
+
     def test_filter_screening_result_keeps_only_requested_status_and_business_bucket(self):
         screening = screen_orders(
             [
