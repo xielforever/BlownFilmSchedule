@@ -3648,14 +3648,14 @@ def update_schedule_settings(
     db=Depends(get_db),
     _=Depends(require_role("admin", "planner")),
 ):
-    fields = payload.model_dump(exclude_unset=True)
-    if not fields:
+    updated_fields = payload.model_dump(exclude_unset=True)
+    if not updated_fields:
         raise HTTPException(status_code=400, detail="No settings to update.")
-    change_reason = _require_policy_change_reason(fields.pop("change_reason", None))
+    change_reason = _require_policy_change_reason(updated_fields.pop("change_reason", None))
     allowed = set(POLICY_SETTING_KEYS) | set(POLICY_VALUE_KEYS)
     assignments = []
     params = []
-    for key, value in fields.items():
+    for key, value in updated_fields.items():
         if key in POLICY_SETTING_KEYS:
             assignments.append(f"{key}=%s")
             params.append(bool(value))
@@ -3725,9 +3725,9 @@ def update_schedule_settings(
             assignments.append(f"{key}=%s")
             params.append(codes)
         elif key == "screening_required_positive_order_fields":
-            fields = _policy_list({key: value}, key)
+            required_fields = _policy_list({key: value}, key)
             assignments.append(f"{key}=%s")
-            params.append(fields)
+            params.append(required_fields)
         elif key in {
             "manual_adjust_review_delay_threshold_mins",
             "manual_adjust_review_setup_threshold_mins",
@@ -3759,7 +3759,7 @@ def update_schedule_settings(
         VALUES (%s,%s,%s,%s,%s,%s,%s)
     """, (
         "schedule_policy",
-        ",".join(sorted(fields)),
+        ",".join(sorted(updated_fields)),
         "global",
         Json(_json_safe(before)),
         Json(_json_safe(after)),

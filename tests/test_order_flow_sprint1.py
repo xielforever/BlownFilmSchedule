@@ -3359,6 +3359,25 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         )
         self.assertEqual(len(db.config_change_audit), 1)
 
+    def test_policy_update_audits_screening_required_field_name(self):
+        db = _FakeDb()
+        payload = schedule_router.ScheduleSettingsPayload(
+            screening_required_positive_order_fields=["target_width", "due_date_mins"],
+            change_reason="tighten order screening completeness",
+        )
+
+        schedule_router.update_schedule_settings(
+            payload,
+            db=db,
+            _=SimpleNamespace(username="planner"),
+        )
+
+        self.assertEqual(len(db.config_change_audit), 1)
+        self.assertEqual(
+            db.config_change_audit[0]["config_key"],
+            "screening_required_positive_order_fields",
+        )
+
     def test_update_order_writes_diff_and_impacted_drafts(self):
         db = _FakeDb()
         db.products.add("Film-A")
