@@ -30,6 +30,7 @@ class BenchmarkCase:
     max_total_setup_time_mins: int | None = None
     arc_pruning_enabled: bool = False
     arc_pruning_max_setup_mins: int = 0
+    arc_pruning_top_k_per_order: int = 0
 
 
 def _make_setup_mgr() -> SetupMatricesManager:
@@ -58,6 +59,7 @@ def _case_config(case: BenchmarkCase) -> dict:
         "max_total_setup_time_mins": case.max_total_setup_time_mins,
         "arc_pruning_enabled": case.arc_pruning_enabled,
         "arc_pruning_max_setup_mins": case.arc_pruning_max_setup_mins,
+        "arc_pruning_top_k_per_order": case.arc_pruning_top_k_per_order,
     }
 
 
@@ -137,6 +139,7 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
         arc_pruning_policy={
             "enabled": case.arc_pruning_enabled,
             "max_setup_time_mins": case.arc_pruning_max_setup_mins,
+            "top_k_per_order": case.arc_pruning_top_k_per_order,
         },
     )
     result = aps.run(orders, machines)
@@ -202,6 +205,7 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
         "arc_pruning_policy": {
             "enabled": case.arc_pruning_enabled,
             "max_setup_time_mins": case.arc_pruning_max_setup_mins,
+            "top_k_per_order": case.arc_pruning_top_k_per_order,
         },
         "failed_checks": failed_checks,
         "machine_load": _machine_load(result.tasks),
@@ -261,6 +265,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-total-setup-time-mins", type=int, default=None)
     parser.add_argument("--arc-pruning-enabled", action="store_true")
     parser.add_argument("--arc-pruning-max-setup-mins", type=int, default=0)
+    parser.add_argument("--arc-pruning-top-k-per-order", type=int, default=0)
     parser.add_argument("--output", default="benchmark-summary.json")
     args = parser.parse_args(argv)
 
@@ -285,6 +290,7 @@ def main(argv: list[str] | None = None) -> int:
             ),
             arc_pruning_enabled=bool(args.arc_pruning_enabled),
             arc_pruning_max_setup_mins=max(0, int(args.arc_pruning_max_setup_mins)),
+            arc_pruning_top_k_per_order=max(0, int(args.arc_pruning_top_k_per_order)),
         )
         for profile in profiles
         for count in args.order_counts

@@ -32,6 +32,7 @@ class TestSolverBenchmark(unittest.TestCase):
             "max_total_setup_time_mins": None,
             "arc_pruning_enabled": False,
             "arc_pruning_max_setup_mins": 0,
+            "arc_pruning_top_k_per_order": 0,
         }])
         case = summary["cases"][0]
         self.assertEqual(case["name"], "tiny")
@@ -135,6 +136,7 @@ class TestSolverBenchmark(unittest.TestCase):
                 "--machine-count", "1",
                 "--arc-pruning-enabled",
                 "--arc-pruning-max-setup-mins", "999",
+                "--arc-pruning-top-k-per-order", "1",
                 "--output", path,
                 "--max-wall-time-seconds", "10",
             ])
@@ -145,10 +147,13 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(summary["case_configs"][0]["arc_pruning_enabled"], True)
         self.assertEqual(summary["case_configs"][0]["arc_pruning_max_setup_mins"], 999)
+        self.assertEqual(summary["case_configs"][0]["arc_pruning_top_k_per_order"], 1)
         self.assertEqual(case["arc_pruning_policy"], {
             "enabled": True,
             "max_setup_time_mins": 999,
+            "top_k_per_order": 1,
         })
+        self.assertEqual(case["model_size"]["arc_pruning_policy"]["top_k_per_order"], 1)
         self.assertGreaterEqual(case["model_size"]["pruned_arc_count"], 0)
 
 
