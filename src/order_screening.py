@@ -560,6 +560,7 @@ def build_screening_snapshot(screening: dict) -> dict:
             "screening_status": item.get("screening_status"),
             "business_bucket": item.get("business_bucket"),
             "code": item.get("code"),
+            "root_cause": item.get("root_cause"),
             "diagnostic_code": item.get("diagnostic_code"),
             "eligible_machine_count": item.get("eligible_machine_count"),
             "override_decision": snapshot_override_decision(item),
