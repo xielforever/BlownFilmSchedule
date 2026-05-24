@@ -22,6 +22,7 @@ class BenchmarkCase:
     profile: str = "fast"
     max_wall_time_seconds: float = 120.0
     max_gap: float | None = None
+    min_scheduled_ratio: float = 0.0
 
 
 def _make_setup_mgr() -> SetupMatricesManager:
@@ -103,7 +104,12 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
         if key.startswith("phase_")
     )
     gap = phase_metrics.get("gap")
-    passed = result.status in PASS_STATUSES and wall_time <= case.max_wall_time_seconds
+    scheduled_ratio = len(result.tasks) / max(1, case.order_count)
+    passed = (
+        result.status in PASS_STATUSES
+        and wall_time <= case.max_wall_time_seconds
+        and scheduled_ratio >= case.min_scheduled_ratio
+    )
     if case.max_gap is not None and gap is not None:
         passed = passed and float(gap) <= case.max_gap
 
@@ -117,6 +123,8 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
         "scheduled_order_count": len(result.tasks),
         "deferred_order_count": len(getattr(result, "deferred_orders", [])),
         "blocked_order_count": getattr(result, "blocked_order_count", 0),
+        "scheduled_ratio": scheduled_ratio,
+        "min_scheduled_ratio": case.min_scheduled_ratio,
         "wall_time_seconds": wall_time,
         "gap": gap,
         "model_size": result.solver_metrics.get("model_size", {}),
@@ -149,6 +157,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--profile", default="fast", choices=["fast", "standard", "deep"])
     parser.add_argument("--max-wall-time-seconds", type=float, default=120.0)
     parser.add_argument("--max-gap", type=float, default=None)
+    parser.add_argument("--min-scheduled-ratio", type=float, default=0.0)
     parser.add_argument("--output", default="benchmark-summary.json")
     args = parser.parse_args(argv)
 
@@ -160,6 +169,7 @@ def main(argv: list[str] | None = None) -> int:
             profile=args.profile,
             max_wall_time_seconds=args.max_wall_time_seconds,
             max_gap=args.max_gap,
+            min_scheduled_ratio=max(0.0, float(args.min_scheduled_ratio)),
         )
         for count in args.order_counts
     ]

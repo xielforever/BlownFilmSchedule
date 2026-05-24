@@ -24,6 +24,22 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertIn("solver_status", case)
         self.assertIn("model_size", case)
         self.assertIn("wall_time_seconds", case)
+        self.assertIn("scheduled_ratio", case)
+
+    def test_benchmark_case_fails_when_scheduled_ratio_is_below_threshold(self):
+        summary = run_benchmark_suite([
+            BenchmarkCase(
+                name="ratio-threshold",
+                order_count=3,
+                machine_count=1,
+                max_wall_time_seconds=10.0,
+                min_scheduled_ratio=1.1,
+            ),
+        ])
+
+        self.assertEqual(summary["status"], "FAIL")
+        self.assertFalse(summary["cases"][0]["passed"])
+        self.assertLess(summary["cases"][0]["scheduled_ratio"], 1.1)
 
     def test_benchmark_command_writes_summary_json(self):
         with tempfile.TemporaryDirectory() as tmp:
