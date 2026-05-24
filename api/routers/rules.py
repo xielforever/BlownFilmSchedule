@@ -9,6 +9,7 @@ from psycopg2.extras import Json
 
 from api.auth import get_current_user, require_role
 from api.deps import get_db
+from api.routers.orders import _mark_order_screening_cache_stale
 
 router = APIRouter(prefix="/api/rules", tags=["Rules"])
 
@@ -217,6 +218,7 @@ def _insert_config_audit(cur, payload: dict) -> None:
         payload.get("changed_by"),
         payload.get("reason_text"),
     ))
+    _mark_order_screening_cache_stale(cur, reason="rule_matrix_changed")
 
 
 def _load_rule_row(cur, table: str, row_id: int) -> dict | None:

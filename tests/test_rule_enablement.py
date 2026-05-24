@@ -121,6 +121,34 @@ class TestRuleEnablementContracts(unittest.TestCase):
         self.assertEqual(payload["changed_by"], "planner")
         self.assertEqual(payload["reason_text"], "供应商牌号停用")
 
+    def test_rule_config_audit_marks_screening_cache_stale(self):
+        class Cursor:
+            def __init__(self):
+                self.sql = []
+                self.rowcount = 0
+
+            def execute(self, sql, params=None):
+                self.sql.append(" ".join(sql.split()).lower())
+                if self.sql[-1].startswith("update order_screening_cache"):
+                    self.rowcount = 2
+
+        cur = Cursor()
+
+        rules_router._insert_config_audit(
+            cur,
+            {
+                "config_scope": "rule",
+                "config_key": "material_switch",
+                "entity_id": "12",
+                "before_state": {"is_enabled": True},
+                "after_state": {"is_enabled": False},
+                "changed_by": "planner",
+                "reason_text": "供应商牌号停用",
+            },
+        )
+
+        self.assertTrue(any(sql.startswith("update order_screening_cache") for sql in cur.sql))
+
 
 if __name__ == "__main__":
     unittest.main()
