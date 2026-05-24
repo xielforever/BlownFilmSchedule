@@ -163,6 +163,7 @@ class ScheduleSettingsPayload(BaseModel):
     due_date_optimization_enabled: Optional[bool] = None
     continuous_run_limit_mins: Optional[int] = None
     continuous_run_enforcement_mode: Optional[str] = None
+    phase2_feasible_tardiness_tolerance_mins: Optional[int] = None
     change_reason: Optional[str] = None
 
 
@@ -184,6 +185,7 @@ POLICY_SETTING_KEYS = (
 POLICY_VALUE_KEYS = (
     "continuous_run_limit_mins",
     "continuous_run_enforcement_mode",
+    "phase2_feasible_tardiness_tolerance_mins",
 )
 
 
@@ -202,6 +204,7 @@ POLICY_DEFAULTS = {
     "due_date_optimization_enabled": True,
     "continuous_run_limit_mins": CONTINUOUS_RUN_LIMIT_MINUTES,
     "continuous_run_enforcement_mode": "publish_blocker",
+    "phase2_feasible_tardiness_tolerance_mins": 0,
 }
 
 
@@ -278,6 +281,7 @@ def _ensure_planning_schema_locked(db):
             due_date_optimization_enabled       BOOLEAN NOT NULL DEFAULT TRUE,
             continuous_run_limit_mins           INTEGER NOT NULL DEFAULT 4320,
             continuous_run_enforcement_mode     VARCHAR(30) NOT NULL DEFAULT 'publish_blocker',
+            phase2_feasible_tardiness_tolerance_mins INTEGER NOT NULL DEFAULT 0,
             policy_version                      INTEGER NOT NULL DEFAULT 1,
             updated_by                          VARCHAR(50),
             change_reason                       TEXT,
@@ -294,6 +298,7 @@ def _ensure_planning_schema_locked(db):
             ADD COLUMN IF NOT EXISTS due_date_optimization_enabled BOOLEAN NOT NULL DEFAULT TRUE,
             ADD COLUMN IF NOT EXISTS continuous_run_limit_mins INTEGER NOT NULL DEFAULT 4320,
             ADD COLUMN IF NOT EXISTS continuous_run_enforcement_mode VARCHAR(30) NOT NULL DEFAULT 'publish_blocker',
+            ADD COLUMN IF NOT EXISTS phase2_feasible_tardiness_tolerance_mins INTEGER NOT NULL DEFAULT 0,
             ADD COLUMN IF NOT EXISTS policy_version INTEGER NOT NULL DEFAULT 1,
             ADD COLUMN IF NOT EXISTS updated_by VARCHAR(50),
             ADD COLUMN IF NOT EXISTS change_reason TEXT
@@ -422,7 +427,8 @@ def _get_schedule_settings(db):
             maintenance_constraint_enabled, setup_rules_enabled,
             cleanroom_constraint_enabled, machine_capability_constraint_enabled,
             due_date_optimization_enabled, continuous_run_limit_mins,
-            continuous_run_enforcement_mode, policy_version, updated_by,
+            continuous_run_enforcement_mode, phase2_feasible_tardiness_tolerance_mins,
+            policy_version, updated_by,
             change_reason, updated_at
         FROM schedule_settings WHERE id=TRUE
     """)
@@ -443,6 +449,11 @@ def _policy_snapshot(settings: dict, enabled_rule_counts: dict | None = None) ->
             "limit_mins": int(settings.get("continuous_run_limit_mins") or CONTINUOUS_RUN_LIMIT_MINUTES),
             "enforcement_mode": str(settings.get("continuous_run_enforcement_mode") or "publish_blocker"),
         },
+        "solver_quality": {
+            "phase2_feasible_tardiness_tolerance_mins": int(
+                settings.get("phase2_feasible_tardiness_tolerance_mins") or 0
+            ),
+        },
         "enabled_rule_counts": enabled_rule_counts or {},
         "runtime_rule_source": "db_only",
         "fallback_setup_used": False,
@@ -460,6 +471,8 @@ def _policy_snapshot_mismatch(saved: dict | None, current: dict | None) -> str |
         return "全局策略开关已变化，请重新预排后再发布。"
     if (saved.get("continuous_run") or {}) != (current.get("continuous_run") or {}):
         return "连续运行清场策略已变化，请重新预排后再发布。"
+    if (saved.get("solver_quality") or {}) != (current.get("solver_quality") or {}):
+        return "求解质量策略已变化，请重新预排后再发布。"
     if (saved.get("enabled_rule_counts") or {}) != (current.get("enabled_rule_counts") or {}):
         return "启用规则数量已变化，请重新预排后再发布。"
     return None
@@ -484,6 +497,11 @@ def _build_scheduler(setup_mgr, settings: dict) -> AdvancedMedicalAPS:
     return AdvancedMedicalAPS(
         setup_mgr,
         continuous_run_policy=_continuous_run_policy(settings, setup_mgr),
+        solver_quality_policy={
+            "phase2_feasible_tardiness_tolerance_mins": int(
+                settings.get("phase2_feasible_tardiness_tolerance_mins") or 0
+            ),
+        },
     )
 
 
@@ -2915,6 +2933,9 @@ def update_schedule_settings(
         elif key == "continuous_run_limit_mins":
             assignments.append(f"{key}=%s")
             params.append(max(1, int(value)))
+        elif key == "phase2_feasible_tardiness_tolerance_mins":
+            assignments.append(f"{key}=%s")
+            params.append(max(0, int(value)))
         elif key == "continuous_run_enforcement_mode":
             mode = str(value or "publish_blocker")
             if mode not in {"hard", "publish_blocker", "experimental_disabled"}:

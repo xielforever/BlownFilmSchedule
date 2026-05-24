@@ -296,6 +296,7 @@ class DatabaseManager:
                     auto_release_enabled                BOOLEAN NOT NULL DEFAULT FALSE,
                     continuous_run_limit_mins           INTEGER NOT NULL DEFAULT 4320,
                     continuous_run_enforcement_mode     VARCHAR(30) NOT NULL DEFAULT 'publish_blocker',
+                    phase2_feasible_tardiness_tolerance_mins INTEGER NOT NULL DEFAULT 0,
                     updated_at                          TIMESTAMPTZ DEFAULT NOW()
                 )
             """)
@@ -495,6 +496,7 @@ class DatabaseManager:
                 ADD COLUMN IF NOT EXISTS due_date_optimization_enabled BOOLEAN NOT NULL DEFAULT TRUE,
                 ADD COLUMN IF NOT EXISTS continuous_run_limit_mins INTEGER NOT NULL DEFAULT 4320,
                 ADD COLUMN IF NOT EXISTS continuous_run_enforcement_mode VARCHAR(30) NOT NULL DEFAULT 'publish_blocker',
+                ADD COLUMN IF NOT EXISTS phase2_feasible_tardiness_tolerance_mins INTEGER NOT NULL DEFAULT 0,
                 ADD COLUMN IF NOT EXISTS policy_version INTEGER NOT NULL DEFAULT 1,
                 ADD COLUMN IF NOT EXISTS updated_by VARCHAR(50),
                 ADD COLUMN IF NOT EXISTS change_reason TEXT
@@ -506,7 +508,8 @@ class DatabaseManager:
                 SELECT material_constraint_enabled, maintenance_constraint_enabled,
                     setup_rules_enabled, cleanroom_constraint_enabled,
                     machine_capability_constraint_enabled, due_date_optimization_enabled,
-                    continuous_run_limit_mins, continuous_run_enforcement_mode
+                    continuous_run_limit_mins, continuous_run_enforcement_mode,
+                    phase2_feasible_tardiness_tolerance_mins
                 FROM schedule_settings
                 WHERE id=TRUE
             """)
@@ -522,6 +525,7 @@ class DatabaseManager:
             "due_date_optimization_enabled": True,
             "continuous_run_limit_mins": 4320,
             "continuous_run_enforcement_mode": "publish_blocker",
+            "phase2_feasible_tardiness_tolerance_mins": 0,
         }
         return {**defaults, **dict(row or {})}
 

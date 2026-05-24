@@ -172,6 +172,16 @@ class TestSchedulerSequencing(unittest.TestCase):
         self.assertEqual(diagnostic.severity, "warning")
         self.assertTrue(any(item.metric == "phase2_status" and item.actual == "UNKNOWN" for item in diagnostic.evidence))
 
+    def test_phase2_tardiness_bound_uses_tolerance_only_when_phase1_not_optimal(self):
+        aps = AdvancedMedicalAPS(
+            _make_setup_mgr(),
+            solver_quality_policy={"phase2_feasible_tardiness_tolerance_mins": 30},
+        )
+
+        self.assertEqual(aps._phase2_tardiness_bound(120, "OPTIMAL"), 120)
+        self.assertEqual(aps._phase2_tardiness_bound(120, "FEASIBLE"), 150)
+        self.assertEqual(aps._phase2_tardiness_bound(120, "UNKNOWN"), 150)
+
     def test_material_matrix_missing_diagnostic_is_structured(self):
         result = ScheduleResult()
         setup_mgr = _make_setup_mgr()

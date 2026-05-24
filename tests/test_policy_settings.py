@@ -21,6 +21,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
             "due_date_optimization_enabled",
             "continuous_run_limit_mins",
             "continuous_run_enforcement_mode",
+            "phase2_feasible_tardiness_tolerance_mins",
             "change_reason",
         ]:
             self.assertIn(key, fields)
@@ -51,6 +52,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
                     **schedule_router.POLICY_DEFAULTS,
                     "continuous_run_limit_mins": 180,
                     "continuous_run_enforcement_mode": "publish_blocker",
+                    "phase2_feasible_tardiness_tolerance_mins": 20,
                 },
             )
 
@@ -61,6 +63,9 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "cleaning_mins": 55,
                 "enforcement_mode": "publish_blocker",
             },
+            solver_quality_policy={
+                "phase2_feasible_tardiness_tolerance_mins": 20,
+            },
         )
 
     def test_policy_snapshot_captures_continuous_run_strategy(self):
@@ -70,12 +75,14 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "policy_version": 6,
                 "continuous_run_limit_mins": 360,
                 "continuous_run_enforcement_mode": "publish_blocker",
+                "phase2_feasible_tardiness_tolerance_mins": 25,
             },
             {},
         )
 
         self.assertEqual(snapshot["continuous_run"]["limit_mins"], 360)
         self.assertEqual(snapshot["continuous_run"]["enforcement_mode"], "publish_blocker")
+        self.assertEqual(snapshot["solver_quality"]["phase2_feasible_tardiness_tolerance_mins"], 25)
 
     def test_policy_snapshot_captures_version_settings_and_rule_counts(self):
         snapshot = schedule_router._policy_snapshot(

@@ -316,10 +316,16 @@ class SetupCalculator:
 class AdvancedMedicalAPS:
     """基于 OR-Tools CP-SAT 的两阶段分层求解引擎"""
 
-    def __init__(self, setup_mgr: SetupMatricesManager, continuous_run_policy: Optional[Dict] = None):
+    def __init__(
+        self,
+        setup_mgr: SetupMatricesManager,
+        continuous_run_policy: Optional[Dict] = None,
+        solver_quality_policy: Optional[Dict] = None,
+    ):
         self.setup_calc = SetupCalculator(setup_mgr)
         self.setup_mgr = setup_mgr
         self.continuous_run_policy = self._normalize_continuous_run_policy(continuous_run_policy)
+        self.solver_quality_policy = self._normalize_solver_quality_policy(solver_quality_policy)
 
     @staticmethod
     def _normalize_continuous_run_policy(policy: Optional[Dict]) -> Dict:
@@ -332,6 +338,21 @@ class AdvancedMedicalAPS:
             "cleaning_mins": max(0, int(policy.get("cleaning_mins") or MANDATORY_CLEANING_DURATION_MINUTES)),
             "enforcement_mode": mode,
         }
+
+    @staticmethod
+    def _normalize_solver_quality_policy(policy: Optional[Dict]) -> Dict:
+        policy = policy or {}
+        return {
+            "phase2_feasible_tardiness_tolerance_mins": max(
+                0,
+                int(policy.get("phase2_feasible_tardiness_tolerance_mins") or 0),
+            ),
+        }
+
+    def _phase2_tardiness_bound(self, best_tardiness: int, phase1_status: str) -> int:
+        if phase1_status == "OPTIMAL":
+            return best_tardiness
+        return best_tardiness + self.solver_quality_policy["phase2_feasible_tardiness_tolerance_mins"]
 
     @staticmethod
     def _tardiness_weight(order: ProductionOrderModel) -> int:
@@ -501,9 +522,10 @@ class AdvancedMedicalAPS:
         # 第二阶段：锁死交期 → 最小化换产时间
         # ═══════════════════════════════════════════════════
         logger.info("═══ 第二阶段：压榨产能 ═══")
+        phase2_tardiness_bound = self._phase2_tardiness_bound(best_tardiness, status1)
         phase2_result = self._solve_phase(
             orders, machines, eligible, setup_cache, duration_cache,
-            H, phase=2, tardiness_bound=best_tardiness,
+            H, phase=2, tardiness_bound=phase2_tardiness_bound,
         )
         result.solver_metrics["phase_2"] = getattr(self, "_last_phase_metrics", {})
 
