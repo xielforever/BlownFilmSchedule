@@ -47,6 +47,7 @@ router = APIRouter(prefix="/api/schedule", tags=["Schedule"])
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _JOB_LOCK = threading.Lock()
 _PLANNING_SCHEMA_LOCK = threading.Lock()
+_PLANNING_SCHEMA_READY = set()
 _CURRENT_JOB = {
     "job_id": None,
     "state": "idle",
@@ -312,8 +313,21 @@ class QueueStatusUpdatePayload(BaseModel):
 
 
 def _ensure_planning_schema(db):
+    cache_key = _planning_schema_cache_key(db)
     with _PLANNING_SCHEMA_LOCK:
+        if cache_key and cache_key in _PLANNING_SCHEMA_READY:
+            return
         _ensure_planning_schema_locked(db)
+        if cache_key:
+            _PLANNING_SCHEMA_READY.add(cache_key)
+
+
+def _planning_schema_cache_key(db):
+    try:
+        params = db.get_dsn_parameters()
+    except Exception:
+        return None
+    return tuple((key, params.get(key)) for key in ("host", "port", "dbname", "user"))
 
 
 def _ensure_planning_schema_locked(db):
@@ -3966,6 +3980,22 @@ def apply_manual_adjustment(
     payload: ManualAdjustmentPayload,
     db=Depends(get_db),
     user=Depends(require_role("admin", "planner")),
+):
+    try:
+        return _apply_manual_adjustment_impl(run_id=run_id, payload=payload, db=db, user=user)
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        raise
+
+
+def _apply_manual_adjustment_impl(
+    run_id: int,
+    payload: ManualAdjustmentPayload,
+    db,
+    user,
 ):
     settings = _get_schedule_settings(db)
     if not settings["manual_adjust_enabled"]:
