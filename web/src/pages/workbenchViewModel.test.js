@@ -10,6 +10,8 @@ import {
   screeningOverrideDraftRisk,
   canCreateScreeningOverride,
   deferredReasonFilterOptions,
+  deriveReviewTabs,
+  deriveWorkflowStep,
   screeningPoolCounts,
   selectableOrderIds,
   staleOrderIds,
@@ -209,6 +211,30 @@ test('canCreateScreeningOverride follows operator role permissions', () => {
   assert.equal(canCreateScreeningOverride({ role: 'planner' }), true);
   assert.equal(canCreateScreeningOverride({ role: 'viewer' }), false);
   assert.equal(canCreateScreeningOverride(null), false);
+});
+
+test('deriveWorkflowStep returns cancelled drafts to the order pool', () => {
+  assert.equal(
+    deriveWorkflowStep({
+      activePlan: { run: { lifecycle_status: 'CANCELLED' } },
+      queue: [],
+    }),
+    'order_pool',
+  );
+});
+
+test('deriveReviewTabs keeps draft review compact for workers', () => {
+  assert.deepEqual(
+    deriveReviewTabs({
+      counts: { scheduled: 4, input: 7, blocked: 2, late: 1, schedulable: 5 },
+      needsActionCount: 3,
+    }).map(tab => ({ key: tab.key, label: tab.label, count: tab.count })),
+    [
+      { key: 'needs_action', label: '需处理', count: 3 },
+      { key: 'scheduled', label: '已排', count: 4 },
+      { key: 'input', label: '全部输入', count: 7 },
+    ],
+  );
 });
 
 test('screeningOverrideDraftRisk labels applied overrides for draft review', () => {

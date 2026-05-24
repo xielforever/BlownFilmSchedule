@@ -2,6 +2,19 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { login } from '../api/client';
 
+function formatLoginError(err) {
+  const detail = err.response?.data?.detail;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    const firstMessage = detail.find(item => item?.message || item?.msg);
+    return firstMessage?.message || firstMessage?.msg || '登录失败';
+  }
+  if (detail && typeof detail === 'object') {
+    return detail.message || detail.msg || '登录失败';
+  }
+  return err.message || '登录失败';
+}
+
 export default function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -18,7 +31,7 @@ export default function LoginPage() {
       localStorage.setItem('aps_token', res.data.access_token);
       navigate('/');
     } catch (err) {
-      setError(err.response?.data?.detail || '登录失败');
+      setError(formatLoginError(err));
     } finally {
       setLoading(false);
     }

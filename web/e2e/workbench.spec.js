@@ -39,6 +39,20 @@ async function login(request, page) {
   await expect(page.getByTestId('workbench-main-workspace')).toBeVisible();
 }
 
+async function loginAs(request, page, username, password) {
+  const response = await request.post(`${API_BASE_URL}/api/auth/login`, {
+    form: { username, password },
+  });
+  expect(response.ok()).toBeTruthy();
+  const nextToken = (await response.json()).access_token;
+
+  await page.goto('/login');
+  await page.evaluate(value => localStorage.setItem('aps_token', value), nextToken);
+  await page.goto('/workbench');
+  await expect(page.getByTestId('workbench-main-workspace')).toBeVisible();
+  await expect(page.getByTestId('workbench-main-workspace')).toHaveAttribute('data-loading', 'false');
+}
+
 async function configureWorkbenchSettings(request) {
   const settings = await apiJson(request, 'get', '/api/schedule/settings');
   expect(settings.ok()).toBeTruthy();
@@ -149,7 +163,7 @@ async function openOrderPoolIfCollapsed(page) {
 }
 
 async function ensureManualAdjustmentEnabled(page) {
-  await expect(page.getByTestId('workbench-policy-summary')).toContainText('人工调整开');
+  await expect(page.getByTestId('workbench-policy-summary')).toContainText('策略摘要');
 }
 
 async function currentRunId(page) {
@@ -288,6 +302,7 @@ test.describe.serial('schedule workbench closed loop', () => {
       { width: 1440, height: 900 },
       { width: 1280, height: 720 },
       { width: 1024, height: 768 },
+      { width: 280, height: 720 },
     ]) {
       await page.setViewportSize(viewport);
       await expect(page.getByTestId('workbench-main-workspace')).toBeVisible();
@@ -323,7 +338,7 @@ test.describe.serial('schedule workbench closed loop', () => {
     await page.getByTestId('workbench-search').fill(orderId);
     await expect(page.getByTestId(`workbench-pending-order-${testIdPart(orderId)}`)).toBeVisible();
     await expect(page.getByTestId(`workbench-screening-action-${testIdPart(orderId)}-expand_machine_capability`)).toContainText('调整机台规格能力');
-    await expect(page.getByTestId(`workbench-screening-override-${testIdPart(orderId)}`)).toContainText('\u7981\u6b62\u8c41\u514d');
+    await expect(page.getByTestId(`workbench-screening-override-${testIdPart(orderId)}`)).toContainText('禁止豁免');
   });
 
   test('records restricted screening override from the order pool', async ({ page, request }) => {
@@ -418,6 +433,7 @@ test.describe.serial('schedule workbench closed loop', () => {
     await expect(page.getByTestId('workbench-command-bar')).toContainText('待复核');
     await expect(page.getByTestId('workbench-primary-action')).toContainText('校验方案');
     await expect(page.getByTestId('workbench-order-tab-needs-action')).toBeVisible();
+    await expect(page.locator('.workbench-plan-tabs.compact button')).toHaveCount(3);
     await expect(page.getByTestId('workbench-version-drawer-toggle')).toBeVisible();
 
     await page.getByTestId('workbench-stage-order_pool').click();
@@ -491,6 +507,11 @@ test.describe.serial('schedule workbench closed loop', () => {
     await page.getByTestId('workbench-cancel-reason').fill('E2E two-step cancellation');
     await page.getByTestId('workbench-cancel-confirm').click();
     await expect(page.getByTestId('workbench-status')).toContainText(`草案 #${runId} 已废弃`);
+    await expect(page.getByTestId('workbench-stage-order_pool')).toHaveAttribute('aria-current', 'step');
+    await expect(page.getByTestId('workbench-stage-canvas')).toContainText('订单池');
+    await expect(page.getByTestId('workbench-validate-preplan')).toBeHidden();
+    await expect(page.getByTestId('workbench-confirm-preplan')).toBeHidden();
+    await expect(page.getByTestId('workbench-cancel-preplan')).toBeHidden();
     const cancelled = await detailForRun(request, runId);
     expect(cancelled.run.lifecycle_status).toBe('CANCELLED');
     expect(cancelled.run.cancel_reason).toBe('E2E two-step cancellation');
@@ -614,4 +635,12 @@ test.describe.serial('schedule workbench closed loop', () => {
     const clear = await apiJson(request, 'post', '/api/schedule/clear-active');
     expect(clear.ok()).toBeTruthy();
   });
+});
+
+test('hides advanced maintenance entry points for planner workers', async ({ page, request }) => {
+  await loginAs(request, page, 'planner', 'planner123');
+
+  await expect(page.getByTestId('workbench-maintenance-toggle')).toBeHidden();
+  await expect(page.getByText('清理孤立已排订单')).toBeHidden();
+  await expect(page.getByText('撤销当前排程')).toBeHidden();
 });

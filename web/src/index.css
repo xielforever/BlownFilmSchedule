@@ -65,6 +65,20 @@ h1, h2, h3, h4, h5, h6, .kpi-value, .machine-name {
 
 .sidebar-nav { flex: 1; padding: 0 16px; }
 
+.sidebar-admin-links {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.sidebar-admin-links summary {
+  padding: 8px 16px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .nav-item {
   display: flex;
   align-items: center;
@@ -1492,6 +1506,23 @@ h1, h2, h3, h4, h5, h6, .kpi-value, .machine-name {
   flex-wrap: wrap;
   gap: 6px;
 }
+.workbench-policy-details {
+  min-width: 0;
+}
+.workbench-policy-details summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  list-style-position: inside;
+}
+.workbench-policy-details .workbench-policy-chips {
+  margin-top: 8px;
+}
 .workbench-maintenance-panel {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) auto;
@@ -2851,5 +2882,105 @@ h1, h2, h3, h4, h5, h6, .kpi-value, .machine-name {
   }
   .machine-diagnostics-summary > div:last-child {
     justify-content: flex-start;
+  }
+}
+@media (max-width: 720px) {
+  .app-layout {
+    display: block;
+  }
+  .sidebar {
+    position: static;
+    width: 100%;
+    min-width: 0;
+    padding: 12px 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar-brand {
+    padding: 0 16px 10px;
+    margin-bottom: 0;
+  }
+  .sidebar-nav {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 0 12px 4px;
+  }
+  .nav-item {
+    flex: 0 0 auto;
+    gap: 8px;
+    min-height: 40px;
+    margin-bottom: 0;
+    padding: 8px 10px;
+    white-space: nowrap;
+  }
+  .sidebar-admin-links {
+    flex: 0 0 auto;
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+  }
+  .sidebar-admin-links summary {
+    min-height: 40px;
+    padding: 9px 10px;
+    white-space: nowrap;
+  }
+  .sidebar-footer {
+    display: none;
+  }
+  .main-content {
+    margin-left: 0;
+    min-width: 0;
+  }
+  .topbar {
+    min-height: 52px;
+    height: auto;
+    padding: 8px 12px;
+  }
+  .topbar-left {
+    min-width: 0;
+  }
+  .topbar-right {
+    min-width: 0;
+  }
+  .topbar-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .page-content {
+    padding: 14px !important;
+  }
+  .page-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .workbench-policy-summary,
+  .workbench-command-bar,
+  .workbench-stage-head,
+  .workbench-workspace-head {
+    grid-template-columns: 1fr;
+  }
+  .workbench-command-actions,
+  .workbench-command-metrics {
+    justify-content: flex-start;
+  }
+  .workbench-plan-summary {
+    grid-template-columns: 1fr;
+  }
+  .workbench-order-table table,
+  .queue-table table {
+    min-width: 0;
+  }
+  .plan-col-spec,
+  .plan-col-risk {
+    width: auto;
+  }
+  .workbench-plan-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+  .workbench-panel.workbench-inspector-drawer {
+    width: 100vw;
   }
 }

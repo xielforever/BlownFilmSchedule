@@ -70,6 +70,7 @@ export function isDraftStale(versionState) {
 export function deriveWorkflowStep({ activePlan, queue = [], draftVersionState = 'none', hasHardErrors = false }) {
   if (!activePlan) return 'order_pool';
   const lifecycle = activePlan.run?.lifecycle_status;
+  if (lifecycle === 'CANCELLED') return 'order_pool';
   if (lifecycle === 'CONFIRMED' || queue.some(item => item.run_id === activePlan.run?.run_id)) return 'manufacturing_queue';
   if (lifecycle === 'VALIDATED' && !isDraftStale(draftVersionState) && !hasHardErrors) return 'validate_publish';
   return 'draft_review';
@@ -182,15 +183,11 @@ export function derivePrimaryAction({
   return { key: 'blocked', label: publishBlockReason || '当前不可发布', disabled: true, target: 'none' };
 }
 
-export function deriveReviewTabs({ counts, hardErrorCount = 0, needsActionCount = 0 }) {
+export function deriveReviewTabs({ counts, needsActionCount = 0 }) {
   return [
     { key: 'needs_action', label: '需处理', count: needsActionCount, tone: needsActionCount ? 'danger' : 'neutral' },
-    { key: 'blockers', label: '草案阻断', count: hardErrorCount, tone: hardErrorCount ? 'danger' : 'neutral' },
-    { key: 'blocked', label: '未排订单', count: counts.blocked, tone: counts.blocked ? 'danger' : 'neutral' },
-    { key: 'late', label: '延期订单', count: counts.late, tone: counts.late ? 'warning' : 'neutral' },
-    { key: 'schedulable', label: '可排订单', count: counts.schedulable, tone: 'success' },
-    { key: 'scheduled', label: '已排订单', count: counts.scheduled, tone: 'success' },
-    { key: 'input', label: '输入订单', count: counts.input, tone: 'neutral' },
+    { key: 'scheduled', label: '已排', count: counts.scheduled, tone: 'success' },
+    { key: 'input', label: '全部输入', count: counts.input, tone: 'neutral' },
   ];
 }
 
@@ -235,6 +232,7 @@ export function derivePublishChecklist({
     { key: 'queue', label: '发布后队列', status: canConfirm || queueCount > 0 ? 'ready' : 'waiting', detail: queueCount > 0 ? `${queueCount} 项` : `${counts.scheduled} 单将进入队列` },
   ];
 }
+
 export function isSelectableScreeningStatus(screeningStatus) {
   return screeningStatus !== 'blocked';
 }

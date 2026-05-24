@@ -201,7 +201,11 @@ function toDatetimeLocal(value) {
 function formatError(err, fallback) {
   const detail = err.response?.data?.detail;
   if (typeof detail === 'string') return detail;
-  if (detail?.message) return detail.message;
+  if (Array.isArray(detail)) {
+    const firstMessage = detail.find(item => item?.message || item?.msg);
+    return firstMessage?.message || firstMessage?.msg || fallback;
+  }
+  if (detail && typeof detail === 'object') return detail.message || detail.msg || fallback;
   return err.message || fallback;
 }
 
@@ -382,19 +386,29 @@ function PaginationControls({ label, page, total, onPageChange, testIdBase, page
 function PolicySummary({ settings }) {
   if (!settings) return null;
   const keys = Object.keys(policySummaryLabels);
+  const disabledKeys = keys.filter(key => settings[key] === false);
+  const summary = disabledKeys.length
+    ? `${disabledKeys.length} 项约束关闭：${disabledKeys.map(key => policySummaryLabels[key]).join('、')}`
+    : '关键约束已启用';
   return (
     <div className="workbench-policy-summary" data-testid="workbench-policy-summary">
       <div>
         <strong>全局排程策略</strong>
         <span>版本 #{settings.policy_version || 1} · {settings.updated_by || '系统'} · {formatTime(settings.updated_at)}</span>
       </div>
-      <div className="workbench-policy-chips">
-        {keys.map(key => (
-          <Badge key={key} tone={settings[key] === false ? 'danger' : 'success'}>
-            {policySummaryLabels[key]}{settings[key] === false ? '关' : '开'}
-          </Badge>
-        ))}
-      </div>
+      <details className="workbench-policy-details">
+        <summary>
+          <span>策略摘要</span>
+          <Badge tone={disabledKeys.length ? 'warning' : 'success'}>{summary}</Badge>
+        </summary>
+        <div className="workbench-policy-chips">
+          {keys.map(key => (
+            <Badge key={key} tone={settings[key] === false ? 'danger' : 'success'}>
+              {policySummaryLabels[key]}{settings[key] === false ? '关' : '开'}
+            </Badge>
+          ))}
+        </div>
+      </details>
       <Link className="btn btn-ghost btn-small" to="/config?tab=policy">配置策略</Link>
     </div>
   );
@@ -767,6 +781,7 @@ export default function ScheduleWorkbench() {
   const canConfirm = canEditDraft && planTasks.length > 0 && !hasHardErrors && !warningPublishBlocked && !reviewValidationPending && !isDraftStale(draftVersionState);
   const canCancel = canEditDraft;
   const canAdjust = canEditDraft && Boolean(settings?.manual_adjust_enabled);
+  const canUseAdvancedMaintenance = currentUser?.role === 'admin';
   const canOverrideScreening = canCreateScreeningOverride(currentUser);
   const workbenchBusy = busy || loadingWorkbench;
   const isCancelledPlan = activePlan?.run?.lifecycle_status === 'CANCELLED';
@@ -1034,6 +1049,18 @@ export default function ScheduleWorkbench() {
     [activePlan, activeQueueSummary.total, canConfirm, draftVersionState, planOrderCounts, publishBlockReason, selectableSelectedIds.length, validation],
   );
   useEffect(() => {
+    let cancelled = false;
+    getMe()
+      .then(res => {
+        if (!cancelled) setCurrentUser(res.data);
+      })
+      .catch(() => {
+        if (!cancelled) setCurrentUser(null);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
     if (!activePlan || selectedPlanOrderId || workspaceView !== 'orders') return;
     const firstRow = visiblePlanOrderRows[0];
     if (firstRow?.order_id) setSelectedPlanOrderId(firstRow.order_id);
@@ -1124,18 +1151,6 @@ export default function ScheduleWorkbench() {
 
   useEffect(() => {
     let cancelled = false;
-    getMe()
-      .then(res => {
-        if (!cancelled) setCurrentUser(res.data);
-      })
-      .catch(() => {
-        if (!cancelled) setCurrentUser(null);
-      });
-    return () => { cancelled = true; };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
     setLoadingWorkbench(true);
     Promise.resolve().then(async () => {
       try {
@@ -1155,8 +1170,8 @@ export default function ScheduleWorkbench() {
       setStatus({
         tone: 'error',
         message: screening?.is_stale
-          ? '\u8ba2\u5355\u7b5b\u9009\u7ed3\u679c\u5df2\u8fc7\u671f\uff0c\u8bf7\u5148\u91cd\u65b0\u7b5b\u9009\u540e\u518d\u8fdb\u5165\u9884\u6392\u3002'
-          : '\u963b\u65ad\u8ba2\u5355\u9700\u8981\u5148\u5904\u7406\u5f02\u5e38\uff0c\u4e0d\u80fd\u76f4\u63a5\u8fdb\u5165\u9884\u6392\u3002',
+          ? '订单筛选结果已过期，请先重新筛选后再进入预排。'
+          : '阻断订单需要先处理异常，不能直接进入预排。',
       });
       return;
     }
@@ -1184,9 +1199,9 @@ export default function ScheduleWorkbench() {
       });
       const refreshedCount = res.data.items?.length || 0;
       await loadAll(Boolean(activePlan));
-      setStatus({ tone: 'ok', message: `\u5df2\u91cd\u65b0\u7b5b\u9009 ${refreshedCount} \u5355\u3002` });
+      setStatus({ tone: 'ok', message: `已重新筛选 ${refreshedCount} 单。` });
     } catch (err) {
-      setStatus({ tone: 'error', message: formatError(err, '\u91cd\u65b0\u7b5b\u9009\u8ba2\u5355\u5931\u8d25\u3002') });
+      setStatus({ tone: 'error', message: formatError(err, '重新筛选订单失败。') });
     } finally {
       setBusy(false);
     }
@@ -1619,16 +1634,16 @@ export default function ScheduleWorkbench() {
             清空已选
           </button>
           <button className="btn btn-ghost btn-small" type="button" disabled={!staleFilteredOrderIds.length || workbenchBusy} data-testid="workbench-refresh-stale-orders" onClick={refreshStaleOrders}>
-            {'\u91cd\u65b0\u7b5b\u9009'} {staleFilteredOrderIds.length || ''}
+            重新筛选 {staleFilteredOrderIds.length || ''}
           </button>
           <span>{selectedFilteredCount} 单已在当前筛选中</span>
         </div>
         {orderScreening.summary && (
           <div className="workbench-select-actions">
-            <Badge tone="success">{'\u53ef\u6392'} {screeningCounts.ready_count}</Badge>
-            <Badge tone="warning">{'\u98ce\u9669'} {screeningCounts.risk_count}</Badge>
-            <Badge tone="danger">{'\u963b\u65ad'} {screeningCounts.blocked_count}</Badge>
-            <Badge tone={screeningCounts.stale_count ? 'warning' : 'neutral'}>{'\u9700\u91cd\u7b5b'} {screeningCounts.stale_count}</Badge>
+            <Badge tone="success">可排 {screeningCounts.ready_count}</Badge>
+            <Badge tone="warning">风险 {screeningCounts.risk_count}</Badge>
+            <Badge tone="danger">阻断 {screeningCounts.blocked_count}</Badge>
+            <Badge tone={screeningCounts.stale_count ? 'warning' : 'neutral'}>需重筛 {screeningCounts.stale_count}</Badge>
           </div>
         )}
         {orderScreening.error && <div className="config-status error">{orderScreening.error}</div>}
@@ -1726,6 +1741,7 @@ export default function ScheduleWorkbench() {
           <h2>排程工作台</h2>
           <p className="page-subtitle">系统生成预排程，人负责复核和必要调整；所有人工改动都会进入审计记录。</p>
         </div>
+        {canUseAdvancedMaintenance && (
         <div className="page-toolbar">
           <button
             className="btn btn-ghost"
@@ -1737,8 +1753,10 @@ export default function ScheduleWorkbench() {
             高级维护
           </button>
         </div>
+        )}
       </div>
 
+      {canUseAdvancedMaintenance && (
       <section className="workbench-maintenance-panel" data-testid="workbench-maintenance-panel" hidden={!maintenanceOpen}>
         <div>
           <h3>高级维护</h3>
@@ -1759,6 +1777,7 @@ export default function ScheduleWorkbench() {
           )}
         </div>
       </section>
+      )}
 
       {status.message && <div className={`config-status ${status.tone === 'error' ? 'error' : 'ok'}`} data-testid="workbench-status">{status.message}</div>}
 

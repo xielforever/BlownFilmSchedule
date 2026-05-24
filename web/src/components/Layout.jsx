@@ -15,13 +15,15 @@ export default function Layout() {
     navigate('/login');
   };
 
-  const links = [
+  const workerLinks = [
     { to: '/', icon: '仪', label: '仪表盘' },
     { to: '/workbench', icon: '排', label: '排程工作台' },
-    { to: '/gantt', icon: '甘', label: '甘特图' },
     { to: '/orders', icon: '单', label: '订单' },
-    { to: '/machines', icon: '机', label: '机台' },
-    { to: '/config', icon: '配', label: '配置' },
+    { to: '/gantt', icon: '甘', label: '甘特图' },
+  ];
+  const adminLinks = [
+    { to: '/machines', icon: '机', label: '机台状态' },
+    { to: '/config', icon: '配', label: '配置中心' },
   ];
 
   return (
@@ -32,12 +34,23 @@ export default function Layout() {
           <h1 style={{ fontSize: '18px', background: 'none', WebkitTextFillColor: '#fff', letterSpacing: '0' }}>APS 排程系统</h1>
         </div>
         <nav className="sidebar-nav">
-          {links.map(link => (
+          {workerLinks.map(link => (
             <NavLink key={link.to} to={link.to} end className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
               <span className="nav-icon" style={{ fontSize: '13px', fontWeight: 700 }}>{link.icon}</span>
               {link.label}
             </NavLink>
           ))}
+          {user?.role === 'admin' && (
+            <details className="sidebar-admin-links">
+              <summary>管理入口</summary>
+              {adminLinks.map(link => (
+                <NavLink key={link.to} to={link.to} end className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+                  <span className="nav-icon" style={{ fontSize: '13px', fontWeight: 700 }}>{link.icon}</span>
+                  {link.label}
+                </NavLink>
+              ))}
+            </details>
+          )}
         </nav>
         <div className="sidebar-footer">
           <button className="btn btn-ghost" style={{ width: '100%', fontSize: 13 }} onClick={handleLogout}>退出登录</button>
@@ -48,9 +61,8 @@ export default function Layout() {
           <div className="topbar-left">
             <span className="topbar-text">APS 排程工作台</span>
           </div>
-          <div className="topbar-right" style={{ display: 'flex', alignItems: 'center', gap: '20px', color: '#94a3b8', fontSize: '18px' }}>
-            <NavLink className="topbar-link" to="/config">设置</NavLink>
-            <span className="topbar-text">告警</span>
+          <div className="topbar-right" style={{ display: 'flex', alignItems: 'center', gap: '12px', color: '#94a3b8', fontSize: '18px' }}>
+            <span className="topbar-text">{user ? `${user.name} · ${user.role}` : '未登录'}</span>
             <div className="avatar" style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#38bdf8', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', fontWeight: 'bold' }}>
               {user ? user.name[0] : 'U'}
             </div>
