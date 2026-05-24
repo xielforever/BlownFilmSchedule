@@ -241,3 +241,9 @@ export function selectableOrderIds(orders = [], screeningByOrderId = new Map()) 
     .filter(order => isSelectableScreening(screeningByOrderId.get(order.order_id)))
     .map(order => order.order_id);
 }
+
+export function staleOrderIds(orders = [], screeningByOrderId = new Map()) {
+  return orders
+    .filter(order => Boolean(screeningByOrderId.get(order.order_id)?.is_stale))
+    .map(order => order.order_id);
+}

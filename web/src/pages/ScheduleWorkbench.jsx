@@ -30,6 +30,7 @@ import {
   isSelectableScreening,
   matchesScreeningFilter,
   selectableOrderIds,
+  staleOrderIds,
   summarizeQueue,
   workbenchStageLabels,
   workbenchStages,
@@ -619,6 +620,10 @@ export default function ScheduleWorkbench() {
     () => selectableOrderIds(filteredOrders, screeningByOrderId),
     [filteredOrders, screeningByOrderId],
   );
+  const staleFilteredOrderIds = useMemo(
+    () => staleOrderIds(filteredOrders, screeningByOrderId),
+    [filteredOrders, screeningByOrderId],
+  );
   const selectedPendingOrder = useMemo(
     () => {
       if (selectedContext?.type === 'pending_order') {
@@ -1128,6 +1133,24 @@ export default function ScheduleWorkbench() {
     if (selectedContext?.type === 'pending_order') setSelectedContext(null);
   };
 
+  const refreshStaleOrders = async () => {
+    if (!staleFilteredOrderIds.length) return;
+    setBusy(true);
+    try {
+      const res = await screenOrders({
+        scope: 'selected',
+        order_ids: staleFilteredOrderIds,
+      });
+      const refreshedCount = res.data.items?.length || 0;
+      await loadAll(Boolean(activePlan));
+      setStatus({ tone: 'ok', message: `\u5df2\u91cd\u65b0\u7b5b\u9009 ${refreshedCount} \u5355\u3002` });
+    } catch (err) {
+      setStatus({ tone: 'error', message: formatError(err, '\u91cd\u65b0\u7b5b\u9009\u8ba2\u5355\u5931\u8d25\u3002') });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleResetOrders = async () => {
     if (!resetConfirming) {
       setResetConfirming(true);
@@ -1529,6 +1552,9 @@ export default function ScheduleWorkbench() {
           </button>
           <button className="btn btn-ghost btn-small" type="button" disabled={!selected.length} data-testid="workbench-clear-selected" onClick={clearSelectedOrders}>
             清空已选
+          </button>
+          <button className="btn btn-ghost btn-small" type="button" disabled={!staleFilteredOrderIds.length || workbenchBusy} data-testid="workbench-refresh-stale-orders" onClick={refreshStaleOrders}>
+            {'\u91cd\u65b0\u7b5b\u9009'} {staleFilteredOrderIds.length || ''}
           </button>
           <span>{selectedFilteredCount} 单已在当前筛选中</span>
         </div>
