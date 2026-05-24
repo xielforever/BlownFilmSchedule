@@ -216,6 +216,26 @@ class TestSchedulerSequencing(unittest.TestCase):
         overlaps_locked = task.start_mins < locked_task.end_mins and task.end_mins > locked_task.start_mins
         self.assertFalse(overlaps_locked)
 
+    def test_solver_metrics_record_locked_task_counts(self):
+        locked_order = _make_order("ORD-LOCKED-METRIC")
+        external_order = _make_order("ORD-EXTERNAL-METRIC")
+        order = _make_order("ORD-METRIC-FREE")
+        machine = _make_machine()
+        aps = AdvancedMedicalAPS(_make_setup_mgr())
+
+        result = aps.run(
+            [locked_order, order],
+            [machine],
+            locked_tasks=[
+                ScheduledTask(locked_order, machine, 120, 180, 120, 0, 0),
+                ScheduledTask(external_order, machine, 240, 300, 0, 0, 0),
+            ],
+        )
+
+        model_size = result.solver_metrics["model_size"]
+        self.assertEqual(model_size["locked_order_count"], 1)
+        self.assertEqual(model_size["external_locked_interval_count"], 1)
+
     def test_validation_catches_machine_overlap(self):
         order_a = _make_order("ORD-A")
         order_b = _make_order("ORD-B")

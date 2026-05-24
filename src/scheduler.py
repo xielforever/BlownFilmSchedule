@@ -554,6 +554,8 @@ class AdvancedMedicalAPS:
             machines,
             eligible,
             setup_cache,
+            locked_tasks_by_order_id,
+            external_locked_tasks,
         )
         logger.info("开始排程: %d 笔订单, %d 台机台, 计划域=%d min", n, M, H)
 
@@ -868,7 +870,11 @@ class AdvancedMedicalAPS:
         machines: List[BlownFilmMachineModel],
         eligible: Dict[int, List[int]],
         setup_cache: Dict[Tuple[int, int, int], int],
+        locked_tasks_by_order_id: Optional[Dict[str, ScheduledTask]] = None,
+        external_locked_tasks: Optional[List[ScheduledTask]] = None,
     ) -> Dict:
+        locked_tasks_by_order_id = locked_tasks_by_order_id or {}
+        external_locked_tasks = external_locked_tasks or []
         eligible_orders_per_machine: Dict[str, int] = {}
         arc_count = 0
         pruned_arc_count = 0
@@ -898,6 +904,10 @@ class AdvancedMedicalAPS:
             "arc_count": arc_count,
             "pruned_arc_count": pruned_arc_count,
             "setup_cache_size": len(setup_cache),
+            "locked_order_count": sum(
+                1 for order in orders if order.order_id in locked_tasks_by_order_id
+            ),
+            "external_locked_interval_count": len(external_locked_tasks),
         }
 
     def _solve_phase(
