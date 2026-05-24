@@ -940,6 +940,7 @@ def list_orders(
     screening_status: Optional[str] = None,
     screening_bucket: Optional[str] = None,
     screening_stale: Optional[bool] = None,
+    screening_action_status: Optional[str] = None,
     q: Optional[str] = Query(default=None, min_length=1),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=50, ge=1, le=500),
@@ -969,6 +970,12 @@ def list_orders(
     if screening_stale is not None:
         where_clauses.append("COALESCE(osc.is_stale, FALSE)=%s")
         params.append(bool(screening_stale))
+    if screening_action_status:
+        normalized_action_status = screening_action_status.lower()
+        if normalized_action_status not in SCREENING_HANDLING_STATUSES:
+            raise HTTPException(status_code=400, detail="Invalid screening action status.")
+        where_clauses.append("LOWER(latest_action.handling_status)=%s")
+        params.append(normalized_action_status)
     if q:
         like = f"%{q.strip()}%"
         where_clauses.append(
@@ -1089,6 +1096,13 @@ def list_orders(
         LEFT JOIN scheduled_tasks t ON o.order_id = t.order_id
             AND t.run_id = (SELECT run_id FROM schedule_runs WHERE is_active=TRUE ORDER BY run_id DESC LIMIT 1)
         LEFT JOIN order_screening_cache osc ON osc.order_id = o.order_id
+        LEFT JOIN LATERAL (
+            SELECT handling_status
+            FROM order_screening_action_audit saa
+            WHERE saa.order_id = o.order_id
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+        ) latest_action ON TRUE
         {where}
     """, params)
     total = cur.fetchone()["cnt"]
