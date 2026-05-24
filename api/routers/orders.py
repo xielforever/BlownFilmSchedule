@@ -210,6 +210,27 @@ def _ensure_order_import_schema(db) -> None:
     """)
 
 
+def _ensure_order_screening_schema(db) -> None:
+    cur = db.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS order_screening_cache (
+            order_id            VARCHAR(20)  PRIMARY KEY REFERENCES production_orders(order_id),
+            screening_status    VARCHAR(20)  NOT NULL,
+            code                VARCHAR(80),
+            root_cause          TEXT,
+            result              JSONB        NOT NULL,
+            summary             JSONB        NOT NULL DEFAULT '{}'::jsonb,
+            scope               VARCHAR(30)  NOT NULL DEFAULT 'selected',
+            is_stale            BOOLEAN      NOT NULL DEFAULT FALSE,
+            computed_at         TIMESTAMPTZ  DEFAULT NOW()
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_order_screening_cache_status
+        ON order_screening_cache(screening_status, is_stale)
+    """)
+
+
 def _find_impacted_draft_run_ids(cur, order_id: str) -> list[int]:
     cur.execute("""
         SELECT run_id
@@ -583,6 +604,34 @@ def _run_order_screening(db, *, order_ids: list[str] | None, scope: str):
     return result
 
 
+def _persist_order_screening_result(cur, result: dict) -> None:
+    summary = result.get("summary") or {}
+    scope = result.get("scope") or "selected"
+    for item in result.get("items", []):
+        cur.execute("""
+            INSERT INTO order_screening_cache
+                (order_id, screening_status, code, root_cause, result, summary, scope, is_stale)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,FALSE)
+            ON CONFLICT (order_id) DO UPDATE SET
+                screening_status=EXCLUDED.screening_status,
+                code=EXCLUDED.code,
+                root_cause=EXCLUDED.root_cause,
+                result=EXCLUDED.result,
+                summary=EXCLUDED.summary,
+                scope=EXCLUDED.scope,
+                is_stale=FALSE,
+                computed_at=NOW()
+        """, (
+            item.get("order_id"),
+            item.get("screening_status"),
+            item.get("code"),
+            item.get("root_cause"),
+            Json(item),
+            Json(summary),
+            scope,
+        ))
+
+
 def _screening_summary(items: list[dict]) -> dict:
     return {
         "total_orders": len(items),
@@ -710,6 +759,7 @@ def create_order(
         raise HTTPException(status_code=400, detail="客户信息不能为空。")
 
     _ensure_order_revision_schema(db)
+    _ensure_order_screening_schema(db)
     cur = db.cursor()
     try:
         cur.execute("SELECT 1 FROM production_orders WHERE order_id=%s", (payload.order_id,))
@@ -769,6 +819,7 @@ def create_order(
         )
         screening_result = _run_order_screening(db, order_ids=[payload.order_id], scope="selected")
         screening_item = screening_result["items"][0] if screening_result.get("items") else None
+        _persist_order_screening_result(cur, screening_result)
         db.commit()
         return {
             "order_id": payload.order_id,

@@ -163,10 +163,16 @@ class _FakeCursor:
         if normalized.startswith("create table if not exists order_ingestion_rows"):
             self._rows = []
             return
+        if normalized.startswith("create table if not exists order_screening_cache"):
+            self._rows = []
+            return
         if normalized.startswith("create index if not exists idx_order_revision_audit_order"):
             self._rows = []
             return
         if normalized.startswith("create index if not exists idx_order_ingestion_rows_batch"):
+            self._rows = []
+            return
+        if normalized.startswith("create index if not exists idx_order_screening_cache_status"):
             self._rows = []
             return
         if normalized.startswith("alter table schedule_runs"):
@@ -415,6 +421,21 @@ class _FakeCursor:
             self._rows = []
             self.rowcount = 1
             return
+        if normalized.startswith("insert into order_screening_cache"):
+            order_id, screening_status, code, root_cause, result, summary, scope = params
+            self.db.order_screening_cache[order_id] = {
+                "order_id": order_id,
+                "screening_status": screening_status,
+                "code": code,
+                "root_cause": root_cause,
+                "result": self._unwrap(result),
+                "summary": self._unwrap(summary),
+                "scope": scope,
+                "is_stale": False,
+            }
+            self._rows = []
+            self.rowcount = 1
+            return
 
         raise AssertionError(f"Unhandled SQL: {sql}")
 
@@ -454,6 +475,7 @@ class _FakeDb:
         self.order_revision_audit = []
         self.order_ingestion_batches = []
         self.order_ingestion_rows = []
+        self.order_screening_cache = {}
         self.schedule_settings = {
             "policy_version": 1,
             "review_required": True,
@@ -509,6 +531,7 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         self.assertEqual(result["impacted_draft_run_ids"], [])
         self.assertEqual(result["screening"]["screening_status"], "ready")
         self.assertEqual(db.production_orders["ORD-NEW-001"]["status"], "PENDING")
+        self.assertEqual(db.order_screening_cache["ORD-NEW-001"]["screening_status"], "ready")
         self.assertEqual(len(db.order_revision_audit), 1)
         self.assertEqual(db.order_revision_audit[0]["action_type"], "CREATE")
         self.assertEqual(db.commit_count, 1)
