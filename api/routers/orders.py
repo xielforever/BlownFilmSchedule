@@ -1424,6 +1424,32 @@ def get_order_screening_overrides(
     }
 
 
+@router.get("/{order_id}/screening-actions")
+def get_order_screening_actions(
+    order_id: str,
+    db=Depends(get_db),
+    _=Depends(get_current_user),
+):
+    _ensure_order_screening_action_schema(db)
+    cur = db.cursor()
+    cur.execute("""
+        SELECT id, order_id, screening_status, business_bucket, screening_code,
+            action_type, handling_status, reason_text, assignee, actor, details,
+            created_at
+        FROM order_screening_action_audit
+        WHERE order_id=%s
+        ORDER BY created_at DESC, id DESC
+        LIMIT 50
+    """, (order_id,))
+    return {
+        "order_id": order_id,
+        "items": [
+            _screening_action_audit_row_to_dict(row)
+            for row in cur.fetchall()
+        ],
+    }
+
+
 @router.post("/import-preview")
 def import_orders_preview(
     payload: OrderImportPreviewPayload,

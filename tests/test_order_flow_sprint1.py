@@ -736,6 +736,16 @@ class _FakeCursor:
             rows.sort(key=lambda item: (item.get("created_at"), item["id"]), reverse=True)
             self._rows = rows[:50]
             return
+        if normalized.startswith("select id, order_id, screening_status, business_bucket, screening_code"):
+            order_id = params[0]
+            rows = [
+                dict(row)
+                for row in self.db.order_screening_action_audit
+                if row["order_id"] == order_id
+            ]
+            rows.sort(key=lambda item: (item.get("created_at"), item["id"]), reverse=True)
+            self._rows = rows[:50]
+            return
         if normalized.startswith("select distinct on (order_id)"):
             order_ids = set(params[0])
             rows = [
@@ -1364,6 +1374,51 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         self.assertEqual(latest_action["action_type"], "request_data_fix")
         self.assertEqual(latest_action["handling_status"], "in_progress")
         self.assertEqual(latest_action["reason_text"], "目标幅宽疑似录入错误，已退回订单维护")
+
+    def test_screening_exception_actions_can_be_listed_for_an_order(self):
+        db = _FakeDb()
+        db.order_screening_action_audit.extend([
+            {
+                "id": 30,
+                "order_id": "ORD-ACTION-HISTORY",
+                "screening_status": "blocked",
+                "business_bucket": "blocked_machine_capability",
+                "screening_code": "no_eligible_machine",
+                "action_type": "request_data_fix",
+                "handling_status": "in_progress",
+                "reason_text": "先退回订单维护",
+                "assignee": "order-admin",
+                "actor": "planner-a",
+                "details": {},
+                "created_at": datetime(2026, 5, 24, 8, 0, tzinfo=timezone.utc),
+            },
+            {
+                "id": 31,
+                "order_id": "ORD-ACTION-HISTORY",
+                "screening_status": "blocked",
+                "business_bucket": "blocked_machine_capability",
+                "screening_code": "no_eligible_machine",
+                "action_type": "mark_resolved",
+                "handling_status": "resolved",
+                "reason_text": "订单宽度已修正",
+                "assignee": "order-admin",
+                "actor": "planner-b",
+                "details": {},
+                "created_at": datetime(2026, 5, 24, 9, 0, tzinfo=timezone.utc),
+            },
+        ])
+
+        result = orders_router.get_order_screening_actions(
+            "ORD-ACTION-HISTORY",
+            db=db,
+            _=SimpleNamespace(username="planner"),
+        )
+
+        self.assertEqual(result["order_id"], "ORD-ACTION-HISTORY")
+        self.assertEqual([item["id"] for item in result["items"]], [31, 30])
+        self.assertEqual(result["items"][0]["handling_status"], "resolved")
+        self.assertEqual(result["items"][0]["reason_text"], "订单宽度已修正")
+        self.assertEqual(result["items"][1]["actor"], "planner-a")
 
     def test_list_orders_filters_by_latest_screening_action_status(self):
         db = _FakeDb()
