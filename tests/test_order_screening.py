@@ -318,22 +318,36 @@ class TestOrderScreening(unittest.TestCase):
 
         self.assertEqual(snapshot["items"][0]["business_bucket"], "blocked_machine_capability")
 
-    def test_filter_screening_result_keeps_only_requested_status(self):
+    def test_filter_screening_result_keeps_only_requested_status_and_business_bucket(self):
         screening = screen_orders(
             [
                 _make_order("ORD-READY"),
                 _make_order("ORD-BLOCKED", target_width=9999),
+                _make_order("ORD-MATERIAL", material_available_mins=6000, due_date_mins=5000),
             ],
             [_make_machine()],
             scope="pending",
         )
 
-        filtered = orders_router._filter_screening_result(screening, "blocked")
+        filtered = orders_router._filter_screening_result(
+            screening,
+            "blocked",
+            "blocked_machine_capability",
+        )
 
         self.assertEqual(filtered["summary"]["total_orders"], 1)
         self.assertEqual(filtered["summary"]["ready_count"], 0)
         self.assertEqual(filtered["summary"]["blocked_count"], 1)
         self.assertEqual([item["order_id"] for item in filtered["items"]], ["ORD-BLOCKED"])
+        self.assertEqual(filtered["screening_bucket_filter"], "blocked_machine_capability")
+
+    def test_screening_payload_accepts_business_bucket_filter(self):
+        payload = orders_router.OrderScreeningPayload(
+            screening_status="blocked",
+            screening_bucket="blocked_material",
+        )
+
+        self.assertEqual(payload.screening_bucket, "blocked_material")
 
     def test_override_decision_allows_risk_but_blocks_hard_capability_errors(self):
         risk_item = screen_orders(

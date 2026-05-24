@@ -101,6 +101,7 @@ class OrderScreeningPayload(BaseModel):
     order_ids: list[str] = Field(default_factory=list)
     scope: str = "selected"
     screening_status: Optional[str] = None
+    screening_bucket: Optional[str] = None
 
 
 class OrderScreeningOverridePayload(BaseModel):
@@ -775,23 +776,46 @@ def _screening_summary(items: list[dict]) -> dict:
     }
 
 
-def _filter_screening_result(result: dict, screening_status: str | None) -> dict:
-    if not screening_status:
-        return result
-    status = screening_status.lower()
-    if status not in {"ready", "risk", "blocked"}:
+SCREENING_BUSINESS_BUCKETS = {
+    "ready",
+    "risk",
+    "blocked_data_error",
+    "blocked_machine_capability",
+    "blocked_cleanroom",
+    "blocked_material",
+    "blocked_policy",
+}
+
+
+def _filter_screening_result(
+    result: dict,
+    screening_status: str | None,
+    screening_bucket: str | None = None,
+) -> dict:
+    status = screening_status.lower() if screening_status else None
+    bucket = screening_bucket.lower() if screening_bucket else None
+    if status and status not in {"ready", "risk", "blocked"}:
         raise HTTPException(status_code=400, detail="初筛状态无效。")
+    if bucket and bucket not in SCREENING_BUSINESS_BUCKETS:
+        raise HTTPException(status_code=400, detail="初筛业务桶无效。")
+    if not status and not bucket:
+        return result
     items = [
         item
         for item in result.get("items", [])
-        if item.get("screening_status") == status
+        if (not status or item.get("screening_status") == status)
+        and (not bucket or item.get("business_bucket") == bucket)
     ]
-    return {
+    filtered = {
         **result,
         "items": items,
         "summary": _screening_summary(items),
-        "screening_status_filter": status,
     }
+    if status:
+        filtered["screening_status_filter"] = status
+    if bucket:
+        filtered["screening_bucket_filter"] = bucket
+    return filtered
 
 
 @router.get("")
@@ -820,16 +844,7 @@ def list_orders(
         params.append(normalized_screening_status)
     if screening_bucket:
         normalized_screening_bucket = screening_bucket.lower()
-        allowed_buckets = {
-            "ready",
-            "risk",
-            "blocked_data_error",
-            "blocked_machine_capability",
-            "blocked_cleanroom",
-            "blocked_material",
-            "blocked_policy",
-        }
-        if normalized_screening_bucket not in allowed_buckets:
+        if normalized_screening_bucket not in SCREENING_BUSINESS_BUCKETS:
             raise HTTPException(status_code=400, detail="Invalid screening bucket.")
         where_clauses.append("LOWER(osc.result->>'business_bucket')=%s")
         params.append(normalized_screening_bucket)
@@ -1035,7 +1050,7 @@ def screen_orders_endpoint(
     _ensure_order_screening_schema(db)
     _persist_order_screening_result(db.cursor(), result)
     db.commit()
-    return _filter_screening_result(result, payload.screening_status)
+    return _filter_screening_result(result, payload.screening_status, payload.screening_bucket)
 
 
 @router.get("/{order_id}/screening")
