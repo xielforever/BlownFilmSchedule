@@ -900,6 +900,25 @@ def _manual_adjustment_review_policy(settings: dict | None = None) -> dict[str, 
     }
 
 
+ADJUSTMENT_REVIEW_REASON_DETAILS = {
+    "end_delayed": {
+        "code": "end_delayed",
+        "label": "完工延后",
+        "description": "调整后完工时间超过复核阈值。",
+    },
+    "setup_increased": {
+        "code": "setup_increased",
+        "label": "换产增加",
+        "description": "调整后换产时间超过复核阈值。",
+    },
+    "tardiness_increased": {
+        "code": "tardiness_increased",
+        "label": "逾期增加",
+        "description": "调整后逾期时间超过复核阈值。",
+    },
+}
+
+
 def _manual_adjustment_impact_summary(
     adjustments: list[dict[str, Any]],
     review_policy: dict[str, Any] | None = None,
@@ -936,7 +955,11 @@ def _manual_adjustment_impact_summary(
             reasons.append("tardiness_increased")
         if order_id and reasons:
             negative_impact_order_ids.append(order_id)
-            review_reasons.append({"order_id": order_id, "reasons": reasons})
+            review_reasons.append({
+                "order_id": order_id,
+                "reasons": reasons,
+                "reason_details": [ADJUSTMENT_REVIEW_REASON_DETAILS[reason] for reason in reasons],
+            })
         for key in ("start_delta_mins", "end_delta_mins"):
             value = impact.get(key)
             if value is not None and int(value) > 0:

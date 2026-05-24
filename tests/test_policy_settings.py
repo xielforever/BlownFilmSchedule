@@ -653,6 +653,23 @@ class TestSchedulePolicySettings(unittest.TestCase):
             {
                 "order_id": "ORD-A",
                 "reasons": ["end_delayed", "setup_increased", "tardiness_increased"],
+                "reason_details": [
+                    {
+                        "code": "end_delayed",
+                        "label": "完工延后",
+                        "description": "调整后完工时间超过复核阈值。",
+                    },
+                    {
+                        "code": "setup_increased",
+                        "label": "换产增加",
+                        "description": "调整后换产时间超过复核阈值。",
+                    },
+                    {
+                        "code": "tardiness_increased",
+                        "label": "逾期增加",
+                        "description": "调整后逾期时间超过复核阈值。",
+                    },
+                ],
             }
         ])
         self.assertEqual(summary["affected_order_ids"], ["ORD-A", "ORD-B"])
@@ -689,6 +706,23 @@ class TestSchedulePolicySettings(unittest.TestCase):
             {
                 "order_id": "ORD-REVIEW",
                 "reasons": ["end_delayed", "setup_increased", "tardiness_increased"],
+                "reason_details": [
+                    {
+                        "code": "end_delayed",
+                        "label": "完工延后",
+                        "description": "调整后完工时间超过复核阈值。",
+                    },
+                    {
+                        "code": "setup_increased",
+                        "label": "换产增加",
+                        "description": "调整后换产时间超过复核阈值。",
+                    },
+                    {
+                        "code": "tardiness_increased",
+                        "label": "逾期增加",
+                        "description": "调整后逾期时间超过复核阈值。",
+                    },
+                ],
             }
         ])
         self.assertEqual(summary["review_required_count"], 1)
