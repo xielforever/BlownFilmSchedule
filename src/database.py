@@ -332,8 +332,17 @@ class DatabaseManager:
                     manual_adjust_review_delay_threshold_mins INTEGER NOT NULL DEFAULT 0,
                     manual_adjust_review_setup_threshold_mins INTEGER NOT NULL DEFAULT 0,
                     manual_adjust_review_tardiness_threshold_mins INTEGER NOT NULL DEFAULT 0,
+                    policy_version                      INTEGER NOT NULL DEFAULT 1,
+                    updated_by                          VARCHAR(50),
+                    change_reason                       TEXT,
                     updated_at                          TIMESTAMPTZ DEFAULT NOW()
                 )
+            """)
+            cur.execute("""
+                ALTER TABLE schedule_settings
+                    ADD COLUMN IF NOT EXISTS policy_version INTEGER NOT NULL DEFAULT 1,
+                    ADD COLUMN IF NOT EXISTS updated_by VARCHAR(50),
+                    ADD COLUMN IF NOT EXISTS change_reason TEXT
             """)
             cur.execute("""
                 INSERT INTO schedule_settings (id)
@@ -436,8 +445,29 @@ class DatabaseManager:
                 )
             """)
             cur.execute("""
+                CREATE TABLE IF NOT EXISTS config_change_audit (
+                    id              SERIAL       PRIMARY KEY,
+                    config_scope    VARCHAR(40)  NOT NULL,
+                    config_key      TEXT,
+                    entity_id       VARCHAR(80),
+                    before_state    JSONB,
+                    after_state     JSONB,
+                    changed_by      VARCHAR(50),
+                    reason_text     TEXT,
+                    created_at      TIMESTAMPTZ  DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                ALTER TABLE config_change_audit
+                    ALTER COLUMN config_key TYPE TEXT
+            """)
+            cur.execute("""
                 CREATE INDEX IF NOT EXISTS idx_schedule_publish_audit_run
                 ON schedule_publish_audit(run_id, created_at DESC)
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_config_change_audit_created
+                ON config_change_audit(created_at DESC, id DESC)
             """)
             cur.execute("""
                 CREATE INDEX IF NOT EXISTS idx_schedule_runs_lifecycle

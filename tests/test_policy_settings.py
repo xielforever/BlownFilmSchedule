@@ -9,6 +9,47 @@ from src.models import BlownFilmMachineModel, ProductionOrderModel
 
 
 class TestSchedulePolicySettings(unittest.TestCase):
+    def test_database_manager_planning_schema_creates_policy_audit_contract(self):
+        class Cursor:
+            def __init__(self):
+                self.sql = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def execute(self, sql):
+                self.sql.append(sql)
+
+        class Conn:
+            def __init__(self):
+                self.cursor_obj = Cursor()
+                self.commits = 0
+
+            def cursor(self):
+                return self.cursor_obj
+
+            def commit(self):
+                self.commits += 1
+
+        manager = object.__new__(database.DatabaseManager)
+        manager.conn = Conn()
+
+        manager.ensure_planning_schema()
+
+        ddl = "\n".join(manager.conn.cursor_obj.sql)
+        for key in [
+            "policy_version",
+            "updated_by",
+            "change_reason",
+            "config_change_audit",
+            "idx_config_change_audit_created",
+        ]:
+            self.assertIn(key, ddl)
+        self.assertEqual(manager.conn.commits, 1)
+
     def test_database_policy_loader_exposes_candidate_acceptance_limits(self):
         class Cursor:
             def __init__(self):
