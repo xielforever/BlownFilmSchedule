@@ -377,6 +377,7 @@ class _FakeCursor:
             screening_stale_filter = None
             screening_action_status_filter = None
             screening_action_type_filter = None
+            screening_action_assignee_filter = None
             if "o.status=%s" in normalized:
                 status_filter = params[param_index]
                 param_index += 1
@@ -394,6 +395,9 @@ class _FakeCursor:
                 param_index += 1
             if "lower(latest_action.action_type)=%s" in normalized:
                 screening_action_type_filter = params[param_index]
+                param_index += 1
+            if "lower(latest_action.assignee)=%s" in normalized:
+                screening_action_assignee_filter = params[param_index]
                 param_index += 1
             screening_action_unhandled_filter = "latest_action.handling_status is null" in normalized
             rows = []
@@ -432,6 +436,11 @@ class _FakeCursor:
                 if (
                     screening_action_type_filter
                     and (latest_action.get("action_type") or "").lower() != screening_action_type_filter
+                ):
+                    continue
+                if (
+                    screening_action_assignee_filter
+                    and (latest_action.get("assignee") or "").lower() != screening_action_assignee_filter
                 ):
                     continue
                 rows.append({
@@ -484,6 +493,7 @@ class _FakeCursor:
             screening_stale_filter = None
             screening_action_status_filter = None
             screening_action_type_filter = None
+            screening_action_assignee_filter = None
             if "o.status=%s" in normalized:
                 status_filter = params[param_index]
                 param_index += 1
@@ -501,6 +511,9 @@ class _FakeCursor:
                 param_index += 1
             if "lower(latest_action.action_type)=%s" in normalized:
                 screening_action_type_filter = params[param_index]
+                param_index += 1
+            if "lower(latest_action.assignee)=%s" in normalized:
+                screening_action_assignee_filter = params[param_index]
                 param_index += 1
             screening_action_unhandled_filter = "latest_action.handling_status is null" in normalized
             count = 0
@@ -534,6 +547,11 @@ class _FakeCursor:
                     and (latest_action.get("action_type") or "").lower() != screening_action_type_filter
                 ):
                     continue
+                if (
+                    screening_action_assignee_filter
+                    and (latest_action.get("assignee") or "").lower() != screening_action_assignee_filter
+                ):
+                    continue
                 count += 1
             self._rows = [{"cnt": count}]
             return
@@ -545,6 +563,7 @@ class _FakeCursor:
             screening_stale_filter = None
             screening_action_status_filter = None
             screening_action_type_filter = None
+            screening_action_assignee_filter = None
             if "o.status=%s" in normalized:
                 status_filter = params[param_index]
                 param_index += 1
@@ -562,6 +581,9 @@ class _FakeCursor:
                 param_index += 1
             if "lower(latest_action.action_type)=%s" in normalized:
                 screening_action_type_filter = params[param_index]
+                param_index += 1
+            if "lower(latest_action.assignee)=%s" in normalized:
+                screening_action_assignee_filter = params[param_index]
                 param_index += 1
             screening_action_unhandled_filter = "latest_action.handling_status is null" in normalized
             counts = {}
@@ -593,6 +615,11 @@ class _FakeCursor:
                 if (
                     screening_action_type_filter
                     and (latest_action.get("action_type") or "").lower() != screening_action_type_filter
+                ):
+                    continue
+                if (
+                    screening_action_assignee_filter
+                    and (latest_action.get("assignee") or "").lower() != screening_action_assignee_filter
                 ):
                     continue
                 key = latest_action.get("handling_status") or "unhandled"
@@ -610,6 +637,7 @@ class _FakeCursor:
             screening_stale_filter = None
             screening_action_status_filter = None
             screening_action_type_filter = None
+            screening_action_assignee_filter = None
             if "o.status=%s" in normalized:
                 status_filter = params[param_index]
                 param_index += 1
@@ -627,6 +655,9 @@ class _FakeCursor:
                 param_index += 1
             if "lower(latest_action.action_type)=%s" in normalized:
                 screening_action_type_filter = params[param_index]
+                param_index += 1
+            if "lower(latest_action.assignee)=%s" in normalized:
+                screening_action_assignee_filter = params[param_index]
                 param_index += 1
             screening_action_unhandled_filter = "latest_action.handling_status is null" in normalized
             counts = {}
@@ -658,6 +689,11 @@ class _FakeCursor:
                 if (
                     screening_action_type_filter
                     and (latest_action.get("action_type") or "").lower() != screening_action_type_filter
+                ):
+                    continue
+                if (
+                    screening_action_assignee_filter
+                    and (latest_action.get("assignee") or "").lower() != screening_action_assignee_filter
                 ):
                     continue
                 key = latest_action.get("action_type") or "unhandled"
@@ -1793,6 +1829,81 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         self.assertEqual(result["total"], 1)
         self.assertEqual([item["order_id"] for item in result["items"]], ["ORD-FIX-DATA"])
         self.assertEqual(result["items"][0]["screening"]["latest_action"]["action_type"], "request_data_fix")
+
+    def test_list_orders_filters_by_latest_screening_action_assignee(self):
+        db = _FakeDb()
+        db.products.add("Film-A")
+        for order_id in ["ORD-ORDER-ADMIN", "ORD-MATERIAL-ADMIN"]:
+            db.production_orders[order_id] = {
+                "order_id": order_id,
+                "customer_id": "STANDARD",
+                "product_type": "Film-A",
+                "target_width": 9999,
+                "target_thickness": 35,
+                "total_quantity_kg": 1200,
+                "cleanroom_req": "Class_10K",
+                "order_class": "NORMAL",
+                "corona_req": False,
+                "core_size_inch": 3,
+                "order_date": None,
+                "due_date": datetime(2026, 5, 28, 8, 30, tzinfo=timezone.utc),
+                "material_available_time": None,
+                "status": "PENDING",
+                "priority_override": None,
+                "created_at": datetime(2026, 5, 22, 8, 0, tzinfo=timezone.utc),
+                "updated_at": datetime(2026, 5, 22, 8, 0, tzinfo=timezone.utc),
+            }
+            db.order_screening_cache[order_id] = {
+                "screening_status": "blocked",
+                "code": "no_eligible_machine",
+                "root_cause": "幅宽超出机台能力",
+                "business_bucket": "blocked_machine_capability",
+                "result": {"business_bucket": "blocked_machine_capability"},
+                "is_stale": False,
+            }
+        db.order_screening_action_audit.extend([
+            {
+                "id": 31,
+                "order_id": "ORD-ORDER-ADMIN",
+                "screening_status": "blocked",
+                "business_bucket": "blocked_machine_capability",
+                "screening_code": "no_eligible_machine",
+                "action_type": "request_data_fix",
+                "handling_status": "in_progress",
+                "reason_text": "退回订单数据修正",
+                "assignee": "order-admin",
+                "actor": "planner",
+                "details": {},
+                "created_at": datetime(2026, 5, 24, 8, 0, tzinfo=timezone.utc),
+            },
+            {
+                "id": 32,
+                "order_id": "ORD-MATERIAL-ADMIN",
+                "screening_status": "blocked",
+                "business_bucket": "blocked_material",
+                "screening_code": "material_not_ready",
+                "action_type": "confirm_material",
+                "handling_status": "in_progress",
+                "reason_text": "确认替代物料",
+                "assignee": "material-admin",
+                "actor": "planner",
+                "details": {},
+                "created_at": datetime(2026, 5, 24, 9, 0, tzinfo=timezone.utc),
+            },
+        ])
+
+        result = orders_router.list_orders(
+            status="PENDING",
+            screening_action_assignee="order-admin",
+            q=None,
+            page=1,
+            size=50,
+            db=db,
+        )
+
+        self.assertEqual(result["total"], 1)
+        self.assertEqual([item["order_id"] for item in result["items"]], ["ORD-ORDER-ADMIN"])
+        self.assertEqual(result["items"][0]["screening"]["latest_action"]["assignee"], "order-admin")
 
     def test_list_orders_filters_unhandled_screening_exceptions(self):
         db = _FakeDb()
