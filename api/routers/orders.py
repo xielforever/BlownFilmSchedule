@@ -1564,6 +1564,7 @@ def get_order_screening_overrides(
 def get_order_screening_actions(
     order_id: str,
     handling_status: Optional[str] = None,
+    action_type: Optional[str] = None,
     assignee: Optional[str] = None,
     db=Depends(get_db),
     _=Depends(get_current_user),
@@ -1578,6 +1579,12 @@ def get_order_screening_actions(
             raise HTTPException(status_code=400, detail="Invalid screening action status.")
         where += " AND handling_status=%s"
         params.append(normalized_status)
+    if action_type:
+        normalized_action_type = action_type.lower()
+        if normalized_action_type not in SCREENING_ACTION_TYPES:
+            raise HTTPException(status_code=400, detail="Invalid screening action type.")
+        where += " AND action_type=%s"
+        params.append(normalized_action_type)
     if assignee:
         normalized_assignee = assignee.strip().lower()
         if normalized_assignee == "unassigned":

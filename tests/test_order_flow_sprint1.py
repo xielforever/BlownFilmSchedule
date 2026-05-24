@@ -1025,16 +1025,25 @@ class _FakeCursor:
             return
         if normalized.startswith("select id, order_id, screening_status, business_bucket, screening_code"):
             order_id = params[0]
-            handling_status_filter = params[1] if "and handling_status=%s" in normalized else None
+            param_index = 1
+            handling_status_filter = None
+            action_type_filter = None
+            if "and handling_status=%s" in normalized:
+                handling_status_filter = params[param_index]
+                param_index += 1
+            if "and action_type=%s" in normalized:
+                action_type_filter = params[param_index]
+                param_index += 1
             assignee_filter = None
             if "lower(trim(assignee))=%s" in normalized:
-                assignee_filter = params[2 if handling_status_filter else 1]
+                assignee_filter = params[param_index]
             unassigned_filter = "assignee is null" in normalized
             rows = [
                 dict(row)
                 for row in self.db.order_screening_action_audit
                 if row["order_id"] == order_id
                 and (not handling_status_filter or row.get("handling_status") == handling_status_filter)
+                and (not action_type_filter or row.get("action_type") == action_type_filter)
                 and (not assignee_filter or (row.get("assignee") or "").strip().lower() == assignee_filter)
                 and (not unassigned_filter or not row.get("assignee"))
             ]
@@ -1757,6 +1766,61 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
 
         self.assertEqual([item["id"] for item in result["items"]], [41])
         self.assertEqual(result["items"][0]["handling_status"], "resolved")
+
+    def test_screening_exception_actions_can_be_filtered_by_action_type(self):
+        db = _FakeDb()
+        db.order_screening_action_audit.extend([
+            {
+                "id": 45,
+                "order_id": "ORD-ACTION-TYPE-FILTER",
+                "screening_status": "blocked",
+                "business_bucket": "blocked_machine_capability",
+                "screening_code": "no_eligible_machine",
+                "action_type": "request_data_fix",
+                "handling_status": "in_progress",
+                "reason_text": "退回订单维护",
+                "assignee": "order-admin",
+                "actor": "planner-a",
+                "details": {},
+                "created_at": datetime(2026, 5, 24, 8, 0, tzinfo=timezone.utc),
+            },
+            {
+                "id": 46,
+                "order_id": "ORD-ACTION-TYPE-FILTER",
+                "screening_status": "blocked",
+                "business_bucket": "blocked_machine_capability",
+                "screening_code": "no_eligible_machine",
+                "action_type": "mark_resolved",
+                "handling_status": "resolved",
+                "reason_text": "已处理",
+                "assignee": "order-admin",
+                "actor": "planner-b",
+                "details": {},
+                "created_at": datetime(2026, 5, 24, 9, 0, tzinfo=timezone.utc),
+            },
+        ])
+
+        result = orders_router.get_order_screening_actions(
+            "ORD-ACTION-TYPE-FILTER",
+            action_type="request_data_fix",
+            db=db,
+            _=SimpleNamespace(username="planner"),
+        )
+
+        self.assertEqual([item["id"] for item in result["items"]], [45])
+        self.assertEqual(result["items"][0]["action_type"], "request_data_fix")
+
+    def test_screening_exception_actions_reject_invalid_action_type_filter(self):
+        with self.assertRaises(HTTPException) as ctx:
+            orders_router.get_order_screening_actions(
+                "ORD-ACTION-TYPE-FILTER",
+                action_type="not_a_real_action",
+                db=_FakeDb(),
+                _=SimpleNamespace(username="planner"),
+            )
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertEqual(ctx.exception.detail, "Invalid screening action type.")
 
     def test_screening_exception_actions_can_be_filtered_by_assignee(self):
         db = _FakeDb()
