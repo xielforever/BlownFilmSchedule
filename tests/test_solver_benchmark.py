@@ -25,6 +25,12 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertIn("model_size", case)
         self.assertIn("wall_time_seconds", case)
         self.assertIn("scheduled_ratio", case)
+        self.assertIn("late_order_count", case)
+        self.assertIn("weighted_tardiness", case)
+        self.assertIn("total_setup_time_mins", case)
+        self.assertIn("machine_load", case)
+        self.assertIn("phase_metrics", case)
+        self.assertIsInstance(case["machine_load"], dict)
 
     def test_benchmark_case_fails_when_scheduled_ratio_is_below_threshold(self):
         summary = run_benchmark_suite([

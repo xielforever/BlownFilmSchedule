@@ -82,6 +82,21 @@ def build_benchmark_dataset(case: BenchmarkCase) -> tuple[List[ProductionOrderMo
     return orders, machines, _make_setup_mgr()
 
 
+def _machine_load(tasks) -> dict:
+    load = {}
+    for task in tasks:
+        machine_id = task.machine.machine_id
+        item = load.setdefault(machine_id, {
+            "task_count": 0,
+            "production_mins": 0,
+            "setup_mins": 0,
+        })
+        item["task_count"] += 1
+        item["production_mins"] += max(0, task.end_mins - task.start_mins)
+        item["setup_mins"] += max(0, task.setup_time)
+    return load
+
+
 def run_benchmark_case(case: BenchmarkCase) -> dict:
     orders, machines, setup_mgr = build_benchmark_dataset(case)
     aps = AdvancedMedicalAPS(
@@ -105,6 +120,13 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
     )
     gap = phase_metrics.get("gap")
     scheduled_ratio = len(result.tasks) / max(1, case.order_count)
+    late_order_count = sum(1 for task in result.tasks if task.end_mins > task.order.due_date_mins)
+    weighted_tardiness = sum(
+        max(0, task.end_mins - task.order.due_date_mins)
+        * AdvancedMedicalAPS._tardiness_weight(task.order)
+        for task in result.tasks
+    )
+    total_setup_time_mins = sum(max(0, task.setup_time) for task in result.tasks)
     passed = (
         result.status in PASS_STATUSES
         and wall_time <= case.max_wall_time_seconds
@@ -127,6 +149,15 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
         "min_scheduled_ratio": case.min_scheduled_ratio,
         "wall_time_seconds": wall_time,
         "gap": gap,
+        "late_order_count": late_order_count,
+        "weighted_tardiness": weighted_tardiness,
+        "total_setup_time_mins": total_setup_time_mins,
+        "machine_load": _machine_load(result.tasks),
+        "phase_metrics": {
+            key: value
+            for key, value in result.solver_metrics.items()
+            if key.startswith("phase_")
+        },
         "model_size": result.solver_metrics.get("model_size", {}),
     }
 
