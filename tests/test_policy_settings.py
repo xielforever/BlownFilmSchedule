@@ -293,6 +293,40 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(params["preplan_screening"], screening_snapshot)
         self.assertEqual(params["summary"]["input_order_count"], 2)
 
+    def test_run_row_to_dict_exposes_preplan_screening_snapshot(self):
+        screening_snapshot = {
+            "summary": {"ready_count": 1, "risk_count": 0, "blocked_count": 0},
+            "items": [{"order_id": "ORD-READY", "screening_status": "ready"}],
+        }
+        row = {
+            "run_id": 42,
+            "run_time": None,
+            "baseline_time": None,
+            "triggered_by": "planner",
+            "status": "FEASIBLE",
+            "mode": "AUTO",
+            "lifecycle_status": "DRAFT",
+            "total_orders": 1,
+            "total_machines_used": 1,
+            "total_setup_time_mins": 0,
+            "total_scrap_kg": 0,
+            "total_late_orders": 0,
+            "is_active": False,
+            "solver_params": {
+                "selected_order_ids": ["ORD-READY"],
+                "preplan_screening": screening_snapshot,
+            },
+            "confirmed_by": None,
+            "confirmed_at": None,
+            "cancelled_by": None,
+            "cancelled_at": None,
+            "cancel_reason": None,
+        }
+
+        data = schedule_router._run_row_to_dict(row)
+
+        self.assertEqual(data["preplan_screening"], screening_snapshot)
+
     def test_task_row_to_dict_exposes_prev_order_and_setup_detail(self):
         row = {
             "id": 1,

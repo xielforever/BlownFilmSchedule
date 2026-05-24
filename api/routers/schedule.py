@@ -541,6 +541,7 @@ def _run_row_to_dict(row):
         "order_snapshots": params.get("order_snapshots") or [],
         "policy_snapshot": params.get("policy_snapshot"),
         "input_snapshot": params.get("input_snapshot"),
+        "preplan_screening": params.get("preplan_screening"),
         "last_validated_at": params.get("last_validated_at"),
         "last_validation_summary": params.get("last_validation_summary"),
         "summary": summary,
