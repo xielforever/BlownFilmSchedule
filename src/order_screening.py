@@ -19,6 +19,16 @@ DEFAULT_SCREENING_POLICY = {
     "due_risk_min_slack_mins": 240,
     "due_risk_duration_multiplier": 1.5,
     "allowed_order_statuses": ["PENDING"],
+    "prohibited_override_codes": [
+        "missing_product",
+        "missing_recipe",
+        "no_eligible_machine",
+        "status_not_pending",
+    ],
+    "restricted_override_codes": [
+        "material_not_ready",
+        "due_risk",
+    ],
 }
 
 
@@ -206,6 +216,7 @@ def _item(
     diagnostic_code: Optional[str] = None,
     best_duration_mins: Optional[int] = None,
     slack_mins: Optional[int] = None,
+    override_policy: Optional[dict] = None,
 ) -> dict:
     item = {
         "order_id": order.order_id,
@@ -229,7 +240,7 @@ def _item(
         "evidence": evidence or [],
         "recommendations": recommendations or _screening_recommendations(order.order_id, code, diagnostic_code),
     }
-    item["override_decision"] = override_decision_for_screening_item(item)
+    item["override_decision"] = override_decision_for_screening_item(item, override_policy)
     return item
 
 
@@ -246,6 +257,7 @@ def _due_risk_item(
     eligible_machine_count: int,
     best_duration_mins: int,
     blocked: bool,
+    override_policy: Optional[dict] = None,
 ) -> dict:
     earliest_start = max(order.order_date_mins or 0, order.material_available_mins or 0)
     earliest_finish = earliest_start + best_duration_mins
@@ -273,6 +285,7 @@ def _due_risk_item(
             slack_mins=slack,
         ),
         recommendations=_screening_recommendations(order.order_id, "due_risk"),
+        override_policy=override_policy,
     )
 
 
@@ -290,6 +303,14 @@ def _normalize_screening_policy(policy: Optional[dict] = None) -> dict:
         "allowed_order_statuses",
         DEFAULT_SCREENING_POLICY["allowed_order_statuses"],
     )
+    prohibited_override_codes = policy.get(
+        "prohibited_override_codes",
+        DEFAULT_SCREENING_POLICY["prohibited_override_codes"],
+    )
+    restricted_override_codes = policy.get(
+        "restricted_override_codes",
+        DEFAULT_SCREENING_POLICY["restricted_override_codes"],
+    )
     return {
         "due_risk_min_slack_mins": max(0, int(min_slack)),
         "due_risk_duration_multiplier": max(0.0, float(duration_multiplier)),
@@ -298,6 +319,16 @@ def _normalize_screening_policy(policy: Optional[dict] = None) -> dict:
             for status in allowed_statuses
             if str(status).strip()
         } or set(DEFAULT_SCREENING_POLICY["allowed_order_statuses"]),
+        "prohibited_override_codes": {
+            str(code).strip()
+            for code in prohibited_override_codes
+            if str(code).strip()
+        },
+        "restricted_override_codes": {
+            str(code).strip()
+            for code in restricted_override_codes
+            if str(code).strip()
+        },
     }
 
 
@@ -331,6 +362,7 @@ def screen_order(
             candidate_machine_count=candidate_machine_count,
             eligible_machine_count=eligible_machine_count,
             evidence=_evidence(order_status=status),
+            override_policy=policy,
         )
 
     if not product_exists:
@@ -344,6 +376,7 @@ def screen_order(
             eligible_machine_count=0,
             evidence=_evidence(product_type=order.product_type),
             recommendations=_screening_recommendations(order.order_id, "missing_product"),
+            override_policy=policy,
         )
 
     if not order.recipe_materials:
@@ -357,6 +390,7 @@ def screen_order(
             eligible_machine_count=0,
             evidence=_evidence(product_type=order.product_type, recipe_layers=0),
             recommendations=_screening_recommendations(order.order_id, "missing_recipe"),
+            override_policy=policy,
         )
 
     if eligible_machine_count == 0:
@@ -373,6 +407,7 @@ def screen_order(
             evidence=diagnostic_dict["evidence"],
             recommendations=_screening_recommendations(order.order_id, "no_eligible_machine", diagnostic.code),
             diagnostic_code=diagnostic.code,
+            override_policy=policy,
         )
 
     if order.material_available_mins and order.material_available_mins > order.due_date_mins:
@@ -389,6 +424,7 @@ def screen_order(
                 due_date_mins=order.due_date_mins,
             ),
             recommendations=_screening_recommendations(order.order_id, "material_not_ready"),
+            override_policy=policy,
         )
 
     best_duration_mins = _best_duration(order, eligible_machines)
@@ -402,6 +438,7 @@ def screen_order(
                 eligible_machine_count=eligible_machine_count,
                 best_duration_mins=best_duration_mins,
                 blocked=True,
+                override_policy=policy,
             )
         risk_threshold = max(
             policy["due_risk_min_slack_mins"],
@@ -414,6 +451,7 @@ def screen_order(
                 eligible_machine_count=eligible_machine_count,
                 best_duration_mins=best_duration_mins,
                 blocked=False,
+                override_policy=policy,
             )
 
     return _item(
@@ -431,6 +469,7 @@ def screen_order(
             best_duration_mins=best_duration_mins,
         ),
         recommendations=[],
+        override_policy=policy,
     )
 
 
@@ -460,7 +499,10 @@ RESTRICTED_OVERRIDE_CODES = {
 }
 
 
-def override_decision_for_screening_item(item: dict) -> dict:
+def override_decision_for_screening_item(item: dict, screening_policy: Optional[dict] = None) -> dict:
+    policy = _normalize_screening_policy(screening_policy)
+    prohibited_codes = policy["prohibited_override_codes"]
+    restricted_codes = policy["restricted_override_codes"]
     status = item.get("screening_status")
     code = item.get("code")
     if status == "risk":
@@ -470,7 +512,7 @@ def override_decision_for_screening_item(item: dict) -> dict:
             "requires_reason": True,
             "reason_code": f"risk_{code or 'screening'}",
         }
-    if code in RESTRICTED_OVERRIDE_CODES:
+    if code in restricted_codes:
         return {
             "allowed": True,
             "policy": "restricted",
@@ -484,7 +526,7 @@ def override_decision_for_screening_item(item: dict) -> dict:
             "requires_reason": False,
             "reason_code": "already_schedulable",
         }
-    if code in PROHIBITED_OVERRIDE_CODES or status == "blocked":
+    if code in prohibited_codes or status == "blocked":
         return {
             "allowed": False,
             "policy": "prohibited",
