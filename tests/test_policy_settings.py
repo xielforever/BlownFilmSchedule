@@ -748,6 +748,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "affected_order_count": 1,
                 "max_actual_delta_mins": 31,
                 "max_excess_mins": 1,
+                "total_excess_mins": 1,
                 "threshold_mins": 30,
             },
             "setup_increased": {
@@ -758,6 +759,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "affected_order_count": 1,
                 "max_actual_delta_mins": 21,
                 "max_excess_mins": 1,
+                "total_excess_mins": 1,
                 "threshold_mins": 20,
             },
             "tardiness_increased": {
@@ -768,6 +770,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "affected_order_count": 1,
                 "max_actual_delta_mins": 16,
                 "max_excess_mins": 1,
+                "total_excess_mins": 1,
                 "threshold_mins": 15,
             },
         })
@@ -831,6 +834,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(summary["end_delayed"]["affected_order_count"], 1)
         self.assertEqual(summary["end_delayed"]["max_actual_delta_mins"], 30)
         self.assertEqual(summary["end_delayed"]["max_excess_mins"], 20)
+        self.assertEqual(summary["end_delayed"]["total_excess_mins"], 30)
 
     def test_adjustment_reason_summary_groups_audit_causes_and_actors(self):
         summary = schedule_router._adjustment_reason_summary([
