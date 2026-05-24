@@ -1207,7 +1207,7 @@ class _FakeCursor:
                 and (not handling_status_filter or row.get("handling_status") == handling_status_filter)
                 and (not action_type_filter or row.get("action_type") == action_type_filter)
                 and (not assignee_filter or (row.get("assignee") or "").strip().lower() == assignee_filter)
-                and (not unassigned_filter or not row.get("assignee"))
+                and (not unassigned_filter or not (row.get("assignee") or "").strip())
                 and (not actor_filter or (row.get("actor") or "").strip().lower() == actor_filter)
                 and (not actor_unassigned_filter or not (row.get("actor") or "").strip())
             ]
@@ -2146,6 +2146,20 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
                 "details": {},
                 "created_at": datetime(2026, 5, 24, 9, 0, tzinfo=timezone.utc),
             },
+            {
+                "id": 54,
+                "order_id": "ORD-ACTION-UNASSIGNED",
+                "screening_status": "blocked",
+                "business_bucket": "blocked_machine_capability",
+                "screening_code": "no_eligible_machine",
+                "action_type": "request_data_fix",
+                "handling_status": "open",
+                "reason_text": "璐熻矗浜轰粎鏈夌┖鐧?",
+                "assignee": "   ",
+                "actor": "planner-a",
+                "details": {},
+                "created_at": datetime(2026, 5, 24, 7, 30, tzinfo=timezone.utc),
+            },
         ])
 
         result = orders_router.get_order_screening_actions(
@@ -2155,8 +2169,9 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
             _=SimpleNamespace(username="planner"),
         )
 
-        self.assertEqual([item["id"] for item in result["items"]], [52])
+        self.assertEqual([item["id"] for item in result["items"]], [52, 54])
         self.assertIsNone(result["items"][0]["assignee"])
+        self.assertEqual(result["items"][1]["assignee"], "   ")
 
     def test_screening_action_options_are_exposed_for_ui_configuration(self):
         db = _FakeDb()

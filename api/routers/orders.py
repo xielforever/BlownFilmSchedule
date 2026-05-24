@@ -1632,7 +1632,7 @@ def get_order_screening_actions(
     if assignee:
         normalized_assignee = assignee.strip().lower()
         if normalized_assignee == "unassigned":
-            where += " AND assignee IS NULL"
+            where += " AND (assignee IS NULL OR TRIM(assignee)='')"
         else:
             where += " AND LOWER(TRIM(assignee))=%s"
             params.append(normalized_assignee)
