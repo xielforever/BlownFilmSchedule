@@ -157,7 +157,16 @@ class _FakeCursor:
         if normalized.startswith("create table if not exists order_revision_audit"):
             self._rows = []
             return
+        if normalized.startswith("create table if not exists order_ingestion_batches"):
+            self._rows = []
+            return
+        if normalized.startswith("create table if not exists order_ingestion_rows"):
+            self._rows = []
+            return
         if normalized.startswith("create index if not exists idx_order_revision_audit_order"):
+            self._rows = []
+            return
+        if normalized.startswith("create index if not exists idx_order_ingestion_rows_batch"):
             self._rows = []
             return
         if normalized.startswith("alter table schedule_runs"):
@@ -212,6 +221,17 @@ class _FakeCursor:
         if normalized.startswith("select 1 from products where product_type=%s"):
             product_type = params[0]
             self._rows = [{"exists": 1}] if product_type in self.db.products else []
+            return
+        if normalized.startswith("select order_id from production_orders where order_id = any"):
+            order_ids = params[0]
+            self._rows = [
+                {"order_id": order_id}
+                for order_id in order_ids
+                if order_id in self.db.production_orders
+            ]
+            return
+        if normalized.startswith("select product_type from products"):
+            self._rows = [{"product_type": product_type} for product_type in sorted(self.db.products)]
             return
         if "from schedule_settings where id=true" in normalized:
             self._rows = [dict(self.db.schedule_settings)]
@@ -355,6 +375,46 @@ class _FakeCursor:
             self._rows = [{"id": row["id"]}]
             self.rowcount = 1
             return
+        if normalized.startswith("insert into order_ingestion_batches"):
+            source_name, conflict_policy, total_rows, accepted_rows, rejected_rows, created_by = params
+            row = {
+                "id": self.db.next_batch_id,
+                "source_name": source_name,
+                "conflict_policy": conflict_policy,
+                "total_rows": total_rows,
+                "accepted_rows": accepted_rows,
+                "rejected_rows": rejected_rows,
+                "created_by": created_by,
+            }
+            self.db.next_batch_id += 1
+            self.db.order_ingestion_batches.append(row)
+            self._rows = [{"id": row["id"]}]
+            self.rowcount = 1
+            return
+        if normalized.startswith("insert into order_ingestion_rows"):
+            (
+                batch_id,
+                row_index,
+                order_id,
+                row_status,
+                normalized_order,
+                errors,
+                warnings,
+                created_order,
+            ) = params
+            self.db.order_ingestion_rows.append({
+                "batch_id": batch_id,
+                "row_index": row_index,
+                "order_id": order_id,
+                "row_status": row_status,
+                "normalized_order": self._unwrap(normalized_order),
+                "errors": self._unwrap(errors),
+                "warnings": self._unwrap(warnings),
+                "created_order": created_order,
+            })
+            self._rows = []
+            self.rowcount = 1
+            return
 
         raise AssertionError(f"Unhandled SQL: {sql}")
 
@@ -392,6 +452,8 @@ class _FakeDb:
         self.recipes = {"Film-A": ["L1", "L2", "L3", "L4", "L5"]}
         self.schedule_runs = []
         self.order_revision_audit = []
+        self.order_ingestion_batches = []
+        self.order_ingestion_rows = []
         self.schedule_settings = {
             "policy_version": 1,
             "review_required": True,
@@ -410,6 +472,7 @@ class _FakeDb:
             "updated_at": None,
         }
         self.next_audit_id = 1
+        self.next_batch_id = 1
         self.commit_count = 0
         self.rollback_count = 0
 
@@ -490,6 +553,33 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 409)
         self.assertEqual(len(db.order_revision_audit), 0)
         self.assertEqual(db.rollback_count, 1)
+
+    def test_import_commit_returns_screening_for_created_orders(self):
+        db = _FakeDb()
+        db.products.add("Film-A")
+        payload = orders_router.OrderImportCommitPayload(
+            rows=[
+                {
+                    "order_id": "ORD-IMP-READY",
+                    "product_type": "Film-A",
+                    "target_width": "520",
+                    "target_thickness": "35",
+                    "total_quantity_kg": "1200",
+                    "cleanroom_req": "Class_10K",
+                    "order_class": "NORMAL",
+                    "due_date": "2026-05-28T08:30:00+08:00",
+                }
+            ],
+            source_name="unit-test-import",
+        )
+
+        result = orders_router.import_orders_commit(payload, db=db, user=SimpleNamespace(username="planner"))
+
+        self.assertEqual(result["created_order_ids"], ["ORD-IMP-READY"])
+        self.assertEqual(result["screening"]["summary"]["ready_count"], 1)
+        self.assertEqual(result["screening"]["items"][0]["order_id"], "ORD-IMP-READY")
+        self.assertEqual(result["screening"]["items"][0]["screening_status"], "ready")
+        self.assertEqual(db.commit_count, 1)
 
     def test_update_order_writes_diff_and_impacted_drafts(self):
         db = _FakeDb()

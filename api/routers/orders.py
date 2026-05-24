@@ -897,12 +897,14 @@ def import_orders_commit(
                 created_order,
             ))
 
+        screening_result = _run_order_screening(db, order_ids=created_order_ids, scope="selected")
         db.commit()
         return {
             "batch_id": batch_id,
             "created_order_ids": created_order_ids,
             "created_count": len(created_order_ids),
             "summary": preview["summary"],
+            "screening": screening_result,
             "rows": preview["rows"],
         }
     except HTTPException:
