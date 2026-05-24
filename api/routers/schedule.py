@@ -18,6 +18,7 @@ from psycopg2.extras import Json
 
 from api.auth import get_current_user, require_role
 from api.deps import get_db
+from api.routers.orders import _ensure_order_screening_schema, _mark_order_screening_cache_stale
 from src.config import BASELINE_TIME
 from src.diagnostics import (
     Diagnostic,
@@ -2756,6 +2757,8 @@ def update_schedule_settings(
         _.username,
         change_reason,
     ))
+    _ensure_order_screening_schema(db)
+    _mark_order_screening_cache_stale(cur, reason="schedule_policy_changed")
     db.commit()
     return after
 

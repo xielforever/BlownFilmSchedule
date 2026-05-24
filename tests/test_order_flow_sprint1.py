@@ -190,6 +190,20 @@ class _FakeCursor:
         if normalized.startswith("insert into schedule_settings"):
             self._rows = []
             return
+        if normalized.startswith("update schedule_settings set"):
+            set_clause = sql.split("SET", 1)[1].split("WHERE", 1)[0]
+            field_names = [
+                part.split("=", 1)[0].strip()
+                for part in set_clause.split(",")
+                if "%s" in part
+            ]
+            for field, value in zip(field_names, params):
+                self.db.schedule_settings[field] = value
+            self.db.schedule_settings["policy_version"] = int(self.db.schedule_settings["policy_version"]) + 1
+            self.db.schedule_settings["updated_at"] = datetime(2026, 5, 24, 8, 0, tzinfo=timezone.utc)
+            self._rows = []
+            self.rowcount = 1
+            return
         if normalized.startswith("create table if not exists config_change_audit"):
             self._rows = []
             return
@@ -406,6 +420,28 @@ class _FakeCursor:
             self._rows = [{"id": row["id"]}]
             self.rowcount = 1
             return
+        if normalized.startswith("insert into config_change_audit"):
+            (
+                config_scope,
+                config_key,
+                entity_id,
+                before_state,
+                after_state,
+                changed_by,
+                reason_text,
+            ) = params
+            self.db.config_change_audit.append({
+                "config_scope": config_scope,
+                "config_key": config_key,
+                "entity_id": entity_id,
+                "before_state": self._unwrap(before_state),
+                "after_state": self._unwrap(after_state),
+                "changed_by": changed_by,
+                "reason_text": reason_text,
+            })
+            self._rows = []
+            self.rowcount = 1
+            return
         if normalized.startswith("insert into order_ingestion_batches"):
             source_name, conflict_policy, total_rows, accepted_rows, rejected_rows, created_by = params
             row = {
@@ -515,6 +551,7 @@ class _FakeDb:
         self.order_ingestion_batches = []
         self.order_ingestion_rows = []
         self.order_screening_cache = {}
+        self.config_change_audit = []
         self.schedule_settings = {
             "policy_version": 1,
             "review_required": True,
@@ -759,6 +796,31 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
             "machine_capability_changed",
         )
         self.assertIs(db.order_screening_cache["ORD-FRESH"]["is_stale"], False)
+
+    def test_policy_update_marks_screening_cache_stale(self):
+        db = _FakeDb()
+        db.order_screening_cache["ORD-POLICY-STALE"] = {
+            "screening_status": "ready",
+            "is_stale": False,
+        }
+        payload = schedule_router.ScheduleSettingsPayload(
+            material_constraint_enabled=False,
+            change_reason="policy change affects order screening",
+        )
+
+        result = schedule_router.update_schedule_settings(
+            payload,
+            db=db,
+            _=SimpleNamespace(username="planner"),
+        )
+
+        self.assertEqual(result["policy_version"], 2)
+        self.assertIs(db.order_screening_cache["ORD-POLICY-STALE"]["is_stale"], True)
+        self.assertEqual(
+            db.order_screening_cache["ORD-POLICY-STALE"]["stale_reason"],
+            "schedule_policy_changed",
+        )
+        self.assertEqual(len(db.config_change_audit), 1)
 
     def test_update_order_writes_diff_and_impacted_drafts(self):
         db = _FakeDb()
