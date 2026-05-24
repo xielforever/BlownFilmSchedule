@@ -161,6 +161,30 @@ class TestSchedulerSequencing(unittest.TestCase):
         self.assertEqual(model_size["arc_count"], 7)
         self.assertEqual([task.order.order_id for task in result.tasks], ["ORD-PRUNE-MUST"])
 
+    def test_arc_pruning_policy_keeps_top_k_successor_arcs_per_order(self):
+        orders = [_make_order(f"ORD-TOPK-{i}") for i in range(3)]
+        machine = _make_machine()
+        aps = AdvancedMedicalAPS(
+            _make_setup_mgr(),
+            arc_pruning_policy={
+                "enabled": True,
+                "max_setup_time_mins": 999,
+                "top_k_per_order": 1,
+            },
+        )
+
+        result = aps.run(orders, [machine])
+
+        model_size = result.solver_metrics["model_size"]
+        self.assertIn(result.status, {"OPTIMAL", "FEASIBLE"})
+        self.assertEqual(model_size["arc_pruning_policy"], {
+            "enabled": True,
+            "max_setup_time_mins": 999,
+            "top_k_per_order": 1,
+        })
+        self.assertEqual(model_size["pruned_arc_count"], 3)
+        self.assertEqual(model_size["arc_count"], 13)
+
     def test_locked_task_keeps_machine_and_time(self):
         locked_order = _make_order("ORD-LOCKED")
         next_order = _make_order("ORD-NEXT")

@@ -404,11 +404,43 @@ class AdvancedMedicalAPS:
         return {
             "enabled": bool(policy.get("enabled", False)),
             "max_setup_time_mins": max(0, int(policy.get("max_setup_time_mins") or 0)),
+            "top_k_per_order": max(0, int(policy.get("top_k_per_order") or 0)),
         }
 
     def _should_prune_order_arc(self, setup_time_mins: int) -> bool:
         policy = self.arc_pruning_policy
         return policy["enabled"] and setup_time_mins > policy["max_setup_time_mins"]
+
+    def _pruned_order_arcs_for_machine(
+        self,
+        m_orders: List[int],
+        m_idx: int,
+        setup_cache: Dict[Tuple[int, int, int], int],
+        orders: List[ProductionOrderModel],
+    ) -> set[Tuple[int, int]]:
+        policy = self.arc_pruning_policy
+        if not policy["enabled"]:
+            return set()
+
+        pruned: set[Tuple[int, int]] = set()
+        for i in m_orders:
+            candidates = []
+            for j in m_orders:
+                if i == j:
+                    continue
+                setup_time = setup_cache[(i, j, m_idx)]
+                if self._should_prune_order_arc(setup_time):
+                    pruned.add((i, j))
+                    continue
+                candidates.append((setup_time, orders[j].order_id, j))
+
+            top_k = policy["top_k_per_order"]
+            if top_k and len(candidates) > top_k:
+                keep = {j for _setup_time, _order_id, j in sorted(candidates)[:top_k]}
+                for _setup_time, _order_id, j in candidates:
+                    if j not in keep:
+                        pruned.add((i, j))
+        return pruned
 
     def _apply_solver_profile(self, solver) -> None:
         policy = self.solver_profile_policy
@@ -905,14 +937,20 @@ class AdvancedMedicalAPS:
             eligible_orders_per_machine[machine.machine_id] = order_count
             if order_count:
                 arc_count += 1 + (3 * order_count)
+                m_orders = [i for i in range(len(orders)) if m_idx in eligible.get(i, [])]
+                pruned_arcs = self._pruned_order_arcs_for_machine(
+                    m_orders,
+                    m_idx,
+                    setup_cache,
+                    orders,
+                )
                 for i in range(len(orders)):
                     if m_idx not in eligible.get(i, []):
                         continue
                     for j in range(len(orders)):
                         if i == j or m_idx not in eligible.get(j, []):
                             continue
-                        setup_time = setup_cache[(i, j, m_idx)]
-                        if self._should_prune_order_arc(setup_time):
+                        if (i, j) in pruned_arcs:
                             pruned_arc_count += 1
                         else:
                             arc_count += 1
@@ -927,6 +965,7 @@ class AdvancedMedicalAPS:
             "pruned_arc_count": pruned_arc_count,
             "setup_cache_size": len(setup_cache),
             "candidate_acceptance_policy": dict(self.candidate_acceptance_policy),
+            "arc_pruning_policy": dict(self.arc_pruning_policy),
             "locked_order_count": sum(
                 1 for order in orders if order.order_id in locked_tasks_by_order_id
             ),
@@ -1070,12 +1109,18 @@ class AdvancedMedicalAPS:
                 model.add(arc_var <= presence[i][m_idx])
 
             # 订单间弧
+            pruned_arcs = self._pruned_order_arcs_for_machine(
+                m_orders,
+                m_idx,
+                setup_cache,
+                orders,
+            )
             for i in m_orders:
                 for j in m_orders:
                     if i == j:
                         continue
                     setup_t = setup_cache[(i, j, m_idx)]
-                    if self._should_prune_order_arc(setup_t):
+                    if (i, j) in pruned_arcs:
                         continue
                     i_node = node_of[i]
                     j_node = node_of[j]
