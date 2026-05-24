@@ -5,6 +5,7 @@
 import os
 import sys
 import unittest
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -181,6 +182,28 @@ class TestSchedulerSequencing(unittest.TestCase):
         self.assertEqual(aps._phase2_tardiness_bound(120, "OPTIMAL"), 120)
         self.assertEqual(aps._phase2_tardiness_bound(120, "FEASIBLE"), 150)
         self.assertEqual(aps._phase2_tardiness_bound(120, "UNKNOWN"), 150)
+
+    def test_solver_profile_policy_sets_cp_sat_parameters(self):
+        aps = AdvancedMedicalAPS(
+            _make_setup_mgr(),
+            solver_profile_policy={
+                "profile": "fast",
+                "time_limit_seconds": 3.5,
+                "relative_gap_limit": 0.15,
+                "random_seed": 42,
+                "num_workers": 2,
+                "log_search_progress": True,
+            },
+        )
+        solver = SimpleNamespace(parameters=SimpleNamespace())
+
+        aps._apply_solver_profile(solver)
+
+        self.assertEqual(solver.parameters.max_time_in_seconds, 3.5)
+        self.assertEqual(solver.parameters.relative_gap_limit, 0.15)
+        self.assertEqual(solver.parameters.random_seed, 42)
+        self.assertEqual(solver.parameters.num_workers, 2)
+        self.assertTrue(solver.parameters.log_search_progress)
 
     def test_material_matrix_missing_diagnostic_is_structured(self):
         result = ScheduleResult()

@@ -164,6 +164,12 @@ class ScheduleSettingsPayload(BaseModel):
     continuous_run_limit_mins: Optional[int] = None
     continuous_run_enforcement_mode: Optional[str] = None
     phase2_feasible_tardiness_tolerance_mins: Optional[int] = None
+    solver_profile: Optional[str] = None
+    solver_time_limit_seconds: Optional[float] = None
+    solver_relative_gap_limit: Optional[float] = None
+    solver_random_seed: Optional[int] = None
+    solver_num_workers: Optional[int] = None
+    solver_log_search_progress: Optional[bool] = None
     change_reason: Optional[str] = None
 
 
@@ -186,6 +192,12 @@ POLICY_VALUE_KEYS = (
     "continuous_run_limit_mins",
     "continuous_run_enforcement_mode",
     "phase2_feasible_tardiness_tolerance_mins",
+    "solver_profile",
+    "solver_time_limit_seconds",
+    "solver_relative_gap_limit",
+    "solver_random_seed",
+    "solver_num_workers",
+    "solver_log_search_progress",
 )
 
 
@@ -205,6 +217,12 @@ POLICY_DEFAULTS = {
     "continuous_run_limit_mins": CONTINUOUS_RUN_LIMIT_MINUTES,
     "continuous_run_enforcement_mode": "publish_blocker",
     "phase2_feasible_tardiness_tolerance_mins": 0,
+    "solver_profile": "standard",
+    "solver_time_limit_seconds": 120.0,
+    "solver_relative_gap_limit": 0.0,
+    "solver_random_seed": 0,
+    "solver_num_workers": 8,
+    "solver_log_search_progress": False,
 }
 
 
@@ -282,6 +300,12 @@ def _ensure_planning_schema_locked(db):
             continuous_run_limit_mins           INTEGER NOT NULL DEFAULT 4320,
             continuous_run_enforcement_mode     VARCHAR(30) NOT NULL DEFAULT 'publish_blocker',
             phase2_feasible_tardiness_tolerance_mins INTEGER NOT NULL DEFAULT 0,
+            solver_profile                      VARCHAR(30) NOT NULL DEFAULT 'standard',
+            solver_time_limit_seconds           DOUBLE PRECISION NOT NULL DEFAULT 120,
+            solver_relative_gap_limit           DOUBLE PRECISION NOT NULL DEFAULT 0,
+            solver_random_seed                  INTEGER NOT NULL DEFAULT 0,
+            solver_num_workers                  INTEGER NOT NULL DEFAULT 8,
+            solver_log_search_progress          BOOLEAN NOT NULL DEFAULT FALSE,
             policy_version                      INTEGER NOT NULL DEFAULT 1,
             updated_by                          VARCHAR(50),
             change_reason                       TEXT,
@@ -299,6 +323,12 @@ def _ensure_planning_schema_locked(db):
             ADD COLUMN IF NOT EXISTS continuous_run_limit_mins INTEGER NOT NULL DEFAULT 4320,
             ADD COLUMN IF NOT EXISTS continuous_run_enforcement_mode VARCHAR(30) NOT NULL DEFAULT 'publish_blocker',
             ADD COLUMN IF NOT EXISTS phase2_feasible_tardiness_tolerance_mins INTEGER NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS solver_profile VARCHAR(30) NOT NULL DEFAULT 'standard',
+            ADD COLUMN IF NOT EXISTS solver_time_limit_seconds DOUBLE PRECISION NOT NULL DEFAULT 120,
+            ADD COLUMN IF NOT EXISTS solver_relative_gap_limit DOUBLE PRECISION NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS solver_random_seed INTEGER NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS solver_num_workers INTEGER NOT NULL DEFAULT 8,
+            ADD COLUMN IF NOT EXISTS solver_log_search_progress BOOLEAN NOT NULL DEFAULT FALSE,
             ADD COLUMN IF NOT EXISTS policy_version INTEGER NOT NULL DEFAULT 1,
             ADD COLUMN IF NOT EXISTS updated_by VARCHAR(50),
             ADD COLUMN IF NOT EXISTS change_reason TEXT
@@ -428,6 +458,8 @@ def _get_schedule_settings(db):
             cleanroom_constraint_enabled, machine_capability_constraint_enabled,
             due_date_optimization_enabled, continuous_run_limit_mins,
             continuous_run_enforcement_mode, phase2_feasible_tardiness_tolerance_mins,
+            solver_profile, solver_time_limit_seconds, solver_relative_gap_limit,
+            solver_random_seed, solver_num_workers, solver_log_search_progress,
             policy_version, updated_by,
             change_reason, updated_at
         FROM schedule_settings WHERE id=TRUE
@@ -454,6 +486,14 @@ def _policy_snapshot(settings: dict, enabled_rule_counts: dict | None = None) ->
                 settings.get("phase2_feasible_tardiness_tolerance_mins") or 0
             ),
         },
+        "solver_profile": {
+            "profile": str(settings.get("solver_profile") or "standard"),
+            "time_limit_seconds": float(settings.get("solver_time_limit_seconds") or 120.0),
+            "relative_gap_limit": float(settings.get("solver_relative_gap_limit") or 0.0),
+            "random_seed": int(settings.get("solver_random_seed") or 0),
+            "num_workers": int(settings.get("solver_num_workers") or 8),
+            "log_search_progress": bool(settings.get("solver_log_search_progress", False)),
+        },
         "enabled_rule_counts": enabled_rule_counts or {},
         "runtime_rule_source": "db_only",
         "fallback_setup_used": False,
@@ -473,6 +513,8 @@ def _policy_snapshot_mismatch(saved: dict | None, current: dict | None) -> str |
         return "连续运行清场策略已变化，请重新预排后再发布。"
     if (saved.get("solver_quality") or {}) != (current.get("solver_quality") or {}):
         return "求解质量策略已变化，请重新预排后再发布。"
+    if (saved.get("solver_profile") or {}) != (current.get("solver_profile") or {}):
+        return "求解 profile 已变化，请重新预排后再发布。"
     if (saved.get("enabled_rule_counts") or {}) != (current.get("enabled_rule_counts") or {}):
         return "启用规则数量已变化，请重新预排后再发布。"
     return None
@@ -501,6 +543,14 @@ def _build_scheduler(setup_mgr, settings: dict) -> AdvancedMedicalAPS:
             "phase2_feasible_tardiness_tolerance_mins": int(
                 settings.get("phase2_feasible_tardiness_tolerance_mins") or 0
             ),
+        },
+        solver_profile_policy={
+            "profile": str(settings.get("solver_profile") or "standard"),
+            "time_limit_seconds": float(settings.get("solver_time_limit_seconds") or 120.0),
+            "relative_gap_limit": float(settings.get("solver_relative_gap_limit") or 0.0),
+            "random_seed": int(settings.get("solver_random_seed") or 0),
+            "num_workers": int(settings.get("solver_num_workers") or 8),
+            "log_search_progress": bool(settings.get("solver_log_search_progress", False)),
         },
     )
 
@@ -2936,6 +2986,27 @@ def update_schedule_settings(
         elif key == "phase2_feasible_tardiness_tolerance_mins":
             assignments.append(f"{key}=%s")
             params.append(max(0, int(value)))
+        elif key == "solver_profile":
+            profile = str(value or "standard")
+            if profile not in {"fast", "standard", "deep"}:
+                raise HTTPException(status_code=400, detail="Invalid solver profile.")
+            assignments.append(f"{key}=%s")
+            params.append(profile)
+        elif key == "solver_time_limit_seconds":
+            assignments.append(f"{key}=%s")
+            params.append(max(0.1, float(value)))
+        elif key == "solver_relative_gap_limit":
+            assignments.append(f"{key}=%s")
+            params.append(max(0.0, float(value)))
+        elif key == "solver_random_seed":
+            assignments.append(f"{key}=%s")
+            params.append(max(0, int(value)))
+        elif key == "solver_num_workers":
+            assignments.append(f"{key}=%s")
+            params.append(max(1, int(value)))
+        elif key == "solver_log_search_progress":
+            assignments.append(f"{key}=%s")
+            params.append(bool(value))
         elif key == "continuous_run_enforcement_mode":
             mode = str(value or "publish_blocker")
             if mode not in {"hard", "publish_blocker", "experimental_disabled"}:

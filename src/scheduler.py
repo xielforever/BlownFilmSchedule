@@ -321,11 +321,13 @@ class AdvancedMedicalAPS:
         setup_mgr: SetupMatricesManager,
         continuous_run_policy: Optional[Dict] = None,
         solver_quality_policy: Optional[Dict] = None,
+        solver_profile_policy: Optional[Dict] = None,
     ):
         self.setup_calc = SetupCalculator(setup_mgr)
         self.setup_mgr = setup_mgr
         self.continuous_run_policy = self._normalize_continuous_run_policy(continuous_run_policy)
         self.solver_quality_policy = self._normalize_solver_quality_policy(solver_quality_policy)
+        self.solver_profile_policy = self._normalize_solver_profile_policy(solver_profile_policy)
 
     @staticmethod
     def _normalize_continuous_run_policy(policy: Optional[Dict]) -> Dict:
@@ -348,6 +350,32 @@ class AdvancedMedicalAPS:
                 int(policy.get("phase2_feasible_tardiness_tolerance_mins") or 0),
             ),
         }
+
+    @staticmethod
+    def _normalize_solver_profile_policy(policy: Optional[Dict]) -> Dict:
+        policy = policy or {}
+        profile = str(policy.get("profile") or "standard")
+        if profile not in {"fast", "standard", "deep"}:
+            profile = "standard"
+        return {
+            "profile": profile,
+            "time_limit_seconds": max(
+                0.1,
+                float(policy.get("time_limit_seconds") or SOLVER_TIME_LIMIT_SECONDS),
+            ),
+            "relative_gap_limit": max(0.0, float(policy.get("relative_gap_limit") or 0.0)),
+            "random_seed": max(0, int(policy.get("random_seed") or 0)),
+            "num_workers": max(1, int(policy.get("num_workers") or 8)),
+            "log_search_progress": bool(policy.get("log_search_progress", False)),
+        }
+
+    def _apply_solver_profile(self, solver) -> None:
+        policy = self.solver_profile_policy
+        solver.parameters.max_time_in_seconds = policy["time_limit_seconds"]
+        solver.parameters.relative_gap_limit = policy["relative_gap_limit"]
+        solver.parameters.random_seed = policy["random_seed"]
+        solver.parameters.num_workers = policy["num_workers"]
+        solver.parameters.log_search_progress = policy["log_search_progress"]
 
     def _phase2_tardiness_bound(self, best_tardiness: int, phase1_status: str) -> int:
         if phase1_status == "OPTIMAL":
@@ -972,8 +1000,7 @@ class AdvancedMedicalAPS:
 
         # ─── 求解 ───
         solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = SOLVER_TIME_LIMIT_SECONDS
-        solver.parameters.num_workers = 8
+        self._apply_solver_profile(solver)
         status = solver.solve(model)
 
         status_map = {

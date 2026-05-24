@@ -22,6 +22,12 @@ class TestSchedulePolicySettings(unittest.TestCase):
             "continuous_run_limit_mins",
             "continuous_run_enforcement_mode",
             "phase2_feasible_tardiness_tolerance_mins",
+            "solver_profile",
+            "solver_time_limit_seconds",
+            "solver_relative_gap_limit",
+            "solver_random_seed",
+            "solver_num_workers",
+            "solver_log_search_progress",
             "change_reason",
         ]:
             self.assertIn(key, fields)
@@ -53,6 +59,12 @@ class TestSchedulePolicySettings(unittest.TestCase):
                     "continuous_run_limit_mins": 180,
                     "continuous_run_enforcement_mode": "publish_blocker",
                     "phase2_feasible_tardiness_tolerance_mins": 20,
+                    "solver_profile": "fast",
+                    "solver_time_limit_seconds": 5.0,
+                    "solver_relative_gap_limit": 0.2,
+                    "solver_random_seed": 7,
+                    "solver_num_workers": 2,
+                    "solver_log_search_progress": True,
                 },
             )
 
@@ -66,6 +78,14 @@ class TestSchedulePolicySettings(unittest.TestCase):
             solver_quality_policy={
                 "phase2_feasible_tardiness_tolerance_mins": 20,
             },
+            solver_profile_policy={
+                "profile": "fast",
+                "time_limit_seconds": 5.0,
+                "relative_gap_limit": 0.2,
+                "random_seed": 7,
+                "num_workers": 2,
+                "log_search_progress": True,
+            },
         )
 
     def test_policy_snapshot_captures_continuous_run_strategy(self):
@@ -76,6 +96,12 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "continuous_run_limit_mins": 360,
                 "continuous_run_enforcement_mode": "publish_blocker",
                 "phase2_feasible_tardiness_tolerance_mins": 25,
+                "solver_profile": "deep",
+                "solver_time_limit_seconds": 180.0,
+                "solver_relative_gap_limit": 0.01,
+                "solver_random_seed": 11,
+                "solver_num_workers": 4,
+                "solver_log_search_progress": True,
             },
             {},
         )
@@ -83,6 +109,9 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(snapshot["continuous_run"]["limit_mins"], 360)
         self.assertEqual(snapshot["continuous_run"]["enforcement_mode"], "publish_blocker")
         self.assertEqual(snapshot["solver_quality"]["phase2_feasible_tardiness_tolerance_mins"], 25)
+        self.assertEqual(snapshot["solver_profile"]["profile"], "deep")
+        self.assertEqual(snapshot["solver_profile"]["time_limit_seconds"], 180.0)
+        self.assertEqual(snapshot["solver_profile"]["relative_gap_limit"], 0.01)
 
     def test_policy_snapshot_captures_version_settings_and_rule_counts(self):
         snapshot = schedule_router._policy_snapshot(
