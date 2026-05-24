@@ -1150,12 +1150,36 @@ def list_orders(
     for row in cur.fetchall():
         status_key = row.get("handling_status") or "unhandled"
         action_status_counts[status_key] = int(row.get("cnt") or 0)
+    action_type_counts = {value: 0 for value in SCREENING_ACTION_TYPES}
+    action_type_counts["unhandled"] = 0
+    cur.execute(f"""
+        SELECT COALESCE(latest_action.action_type, 'unhandled') AS action_type,
+               count(DISTINCT o.order_id) AS cnt
+        FROM production_orders o
+        LEFT JOIN customers c ON o.customer_id = c.customer_id
+        LEFT JOIN scheduled_tasks t ON o.order_id = t.order_id
+            AND t.run_id = (SELECT run_id FROM schedule_runs WHERE is_active=TRUE ORDER BY run_id DESC LIMIT 1)
+        LEFT JOIN order_screening_cache osc ON osc.order_id = o.order_id
+        LEFT JOIN LATERAL (
+            SELECT action_type, handling_status
+            FROM order_screening_action_audit saa
+            WHERE saa.order_id = o.order_id
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+        ) latest_action ON TRUE
+        {where}
+        GROUP BY COALESCE(latest_action.action_type, 'unhandled')
+    """, params)
+    for row in cur.fetchall():
+        action_type_key = row.get("action_type") or "unhandled"
+        action_type_counts[action_type_key] = int(row.get("cnt") or 0)
     return {
         "items": items,
         "total": total,
         "page": page,
         "size": size,
         "screening_action_status_counts": action_status_counts,
+        "screening_action_type_counts": action_type_counts,
     }
 
 
