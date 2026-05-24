@@ -29,6 +29,7 @@ import {
   isDraftStale,
   isSelectableScreening,
   matchesScreeningFilter,
+  screeningOverrideBadge,
   screeningPoolCounts,
   selectableOrderIds,
   staleOrderIds,
@@ -1577,6 +1578,7 @@ export default function ScheduleWorkbench() {
         {pagedFilteredOrders.map(order => {
           const screening = screeningByOrderId.get(order.order_id);
           const selectable = isSelectableScreening(screening);
+          const overrideBadge = screeningOverrideBadge(screening);
           return (
             <div
               key={order.order_id}
@@ -1600,8 +1602,14 @@ export default function ScheduleWorkbench() {
               <div className="workbench-order-meta">
                 <Badge tone={order.order_class === 'URGENT' ? 'danger' : 'neutral'}>{orderClassLabels[order.order_class] || order.order_class}</Badge>
                 {screening && <Badge tone={screeningTones[screening.screening_status] || 'neutral'}>{screeningLabels[screening.screening_status] || screening.screening_status}</Badge>}
+                {overrideBadge && (
+                  <span data-testid={`workbench-screening-override-${testIdPart(order.order_id)}`}>
+                    <Badge tone={overrideBadge.tone}>{overrideBadge.label}</Badge>
+                  </span>
+                )}
                 <span>{formatTime(order.due_date)}</span>
               </div>
+              {overrideBadge?.detail && screening?.screening_status !== 'ready' && <small>{overrideBadge.detail}</small>}
               {screening && screening.screening_status !== 'ready' && <small>{screening.root_cause}</small>}
               {!!screening?.recommendations?.length && screening.screening_status !== 'ready' && (
                 <div className="workbench-screening-actions">

@@ -317,6 +317,7 @@ test.describe.serial('schedule workbench closed loop', () => {
     await page.getByTestId('workbench-search').fill(orderId);
     await expect(page.getByTestId(`workbench-pending-order-${testIdPart(orderId)}`)).toBeVisible();
     await expect(page.getByTestId(`workbench-screening-action-${testIdPart(orderId)}-expand_machine_capability`)).toContainText('调整机台规格能力');
+    await expect(page.getByTestId(`workbench-screening-override-${testIdPart(orderId)}`)).toContainText('\u7981\u6b62\u8c41\u514d');
   });
 
   test('paginates long order pools and draft order reviews', async ({ page, request }) => {
