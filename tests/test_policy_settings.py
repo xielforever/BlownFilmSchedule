@@ -272,6 +272,10 @@ class TestSchedulePolicySettings(unittest.TestCase):
         })()
         snapshot = {"policy_version": 5, "settings": {"review_required": True}}
         input_snapshot = {"hash": "input-v1", "orders": {"count": 2}}
+        screening_snapshot = {
+            "summary": {"ready_count": 1, "risk_count": 1, "blocked_count": 0},
+            "items": [{"order_id": "ORD-1", "screening_status": "ready"}],
+        }
 
         params = database._build_schedule_run_solver_params(
             result=result,
@@ -281,10 +285,12 @@ class TestSchedulePolicySettings(unittest.TestCase):
             mode="AUTO",
             policy_snapshot=snapshot,
             input_snapshot=input_snapshot,
+            screening_snapshot=screening_snapshot,
         )
 
         self.assertEqual(params["policy_snapshot"], snapshot)
         self.assertEqual(params["input_snapshot"], input_snapshot)
+        self.assertEqual(params["preplan_screening"], screening_snapshot)
         self.assertEqual(params["summary"]["input_order_count"], 2)
 
     def test_task_row_to_dict_exposes_prev_order_and_setup_detail(self):

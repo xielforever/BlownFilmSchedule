@@ -196,6 +196,7 @@ def _build_schedule_run_solver_params(
     mode: str,
     policy_snapshot: Optional[dict] = None,
     input_snapshot: Optional[dict] = None,
+    screening_snapshot: Optional[dict] = None,
 ) -> dict:
     payload = {
         "diagnostics": diagnostics_payload,
@@ -212,6 +213,8 @@ def _build_schedule_run_solver_params(
         payload["policy_snapshot"] = policy_snapshot
     if input_snapshot is not None:
         payload["input_snapshot"] = input_snapshot
+    if screening_snapshot is not None:
+        payload["preplan_screening"] = screening_snapshot
     return payload
 
 
@@ -909,6 +912,7 @@ class DatabaseManager:
         lifecycle_status: Optional[str] = None,
         selected_order_ids: Optional[List[str]] = None,
         policy_snapshot: Optional[dict] = None,
+        screening_snapshot: Optional[dict] = None,
     ):
         """保存排程结果到数据库"""
         self.ensure_planning_schema()
@@ -986,6 +990,7 @@ class DatabaseManager:
                     mode=mode,
                     policy_snapshot=policy_snapshot,
                     input_snapshot=input_snapshot,
+                    screening_snapshot=screening_snapshot,
                 )), run_id),
             )
 

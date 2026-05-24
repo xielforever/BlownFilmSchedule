@@ -2825,6 +2825,7 @@ def create_preplan(
             lifecycle_status="DRAFT",
             selected_order_ids=order_ids,
             policy_snapshot=policy_snapshot,
+            screening_snapshot=screening,
         )
 
     if settings["auto_release_enabled"] and not settings["review_required"]:
