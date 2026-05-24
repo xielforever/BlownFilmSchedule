@@ -224,6 +224,41 @@ export function isSelectableScreening(screening) {
   return isSelectableScreeningStatus(screening.screening_status);
 }
 
+export function screeningOverrideBadge(screening) {
+  if (!screening) return null;
+  if (screening.applied_override) {
+    return {
+      label: '已豁免',
+      tone: 'warning',
+      detail: screening.applied_override.reason_text || '已记录豁免审计',
+    };
+  }
+  const decision = screening.override_decision;
+  if (!decision) return null;
+  if (decision.policy === 'restricted' && decision.allowed) {
+    return {
+      label: '可受限豁免',
+      tone: 'warning',
+      detail: decision.requires_reason ? '需要权限和原因' : '需要权限确认',
+    };
+  }
+  if (decision.policy === 'prohibited') {
+    return {
+      label: '禁止豁免',
+      tone: 'danger',
+      detail: '需先修正订单或主数据',
+    };
+  }
+  if (decision.policy === 'not_required') {
+    return {
+      label: '无需豁免',
+      tone: 'success',
+      detail: '订单可直接进入排程池',
+    };
+  }
+  return null;
+}
+
 export function matchesScreeningFilter(screeningOrStatus, filter) {
   const screening = typeof screeningOrStatus === 'object' && screeningOrStatus !== null
     ? screeningOrStatus

@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { matchesScreeningFilter, screeningPoolCounts, selectableOrderIds, staleOrderIds } from './workbenchViewModel.js';
+import {
+  matchesScreeningFilter,
+  screeningOverrideBadge,
+  screeningPoolCounts,
+  selectableOrderIds,
+  staleOrderIds,
+} from './workbenchViewModel.js';
 
 test('selectableOrderIds excludes blocked screening orders', () => {
   const orders = [
@@ -67,4 +73,26 @@ test('screeningPoolCounts includes stale count without changing status counts', 
     blocked_count: 1,
     stale_count: 2,
   });
+});
+
+test('screeningOverrideBadge explains override boundaries and applied overrides', () => {
+  assert.deepEqual(
+    screeningOverrideBadge({
+      override_decision: { allowed: true, policy: 'restricted', requires_reason: true },
+    }),
+    { label: '可受限豁免', tone: 'warning', detail: '需要权限和原因' },
+  );
+  assert.deepEqual(
+    screeningOverrideBadge({
+      override_decision: { allowed: false, policy: 'prohibited' },
+    }),
+    { label: '禁止豁免', tone: 'danger', detail: '需先修正订单或主数据' },
+  );
+  assert.deepEqual(
+    screeningOverrideBadge({
+      applied_override: { audit_id: 7, reason_text: '物料替代方案已确认' },
+      override_decision: { allowed: true, policy: 'restricted' },
+    }),
+    { label: '已豁免', tone: 'warning', detail: '物料替代方案已确认' },
+  );
 });
