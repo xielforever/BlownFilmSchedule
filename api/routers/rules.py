@@ -311,6 +311,7 @@ def create_material_switch_rule(
         fields.get("disabled_reason"), _.username,
     ))
     rule_id = cur.fetchone()["id"]
+    _mark_order_screening_cache_stale(cur, reason="rule_matrix_changed")
     db.commit()
     return {"id": rule_id}
 

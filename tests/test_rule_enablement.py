@@ -1,4 +1,6 @@
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from api.routers import rules as rules_router
 from src import database
@@ -148,6 +150,46 @@ class TestRuleEnablementContracts(unittest.TestCase):
         )
 
         self.assertTrue(any(sql.startswith("update order_screening_cache") for sql in cur.sql))
+
+    def test_create_material_switch_rule_marks_screening_cache_stale(self):
+        class Cursor:
+            rowcount = 0
+
+            def execute(self, sql, params=None):
+                self.last_sql = " ".join(sql.split()).lower()
+
+            def fetchone(self):
+                return {"id": 31}
+
+        class Db:
+            def __init__(self):
+                self.cursor_obj = Cursor()
+                self.commit_count = 0
+
+            def cursor(self):
+                return self.cursor_obj
+
+            def commit(self):
+                self.commit_count += 1
+
+        db = Db()
+        payload = rules_router.MaterialSwitchRule(
+            from_material="A",
+            to_material="B",
+            switch_time_mins=30,
+        )
+
+        with patch.object(rules_router, "ensure_rule_enablement_schema"), \
+             patch.object(rules_router, "_mark_order_screening_cache_stale") as mark_stale:
+            result = rules_router.create_material_switch_rule(
+                payload,
+                db=db,
+                _=SimpleNamespace(username="planner"),
+            )
+
+        self.assertEqual(result["id"], 31)
+        mark_stale.assert_called_once_with(db.cursor_obj, reason="rule_matrix_changed")
+        self.assertEqual(db.commit_count, 1)
 
 
 if __name__ == "__main__":
