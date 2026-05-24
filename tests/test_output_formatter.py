@@ -93,6 +93,28 @@ class TestOutputFormatter(unittest.TestCase):
         self.assertEqual(data["deferred_order_count"], 1)
         self.assertEqual(data["deferred_orders"], result.deferred_orders)
 
+    def test_schedule_json_exports_deferred_reason_counts(self):
+        result = ScheduleResult()
+        result.status = "FEASIBLE"
+        result.deferred_orders = [
+            {"order_id": "ORD-CANDIDATE-A", "reason": "candidate_optional_rejected"},
+            {"order_id": "ORD-CANDIDATE-B", "deferred_reason_code": "candidate_optional_rejected"},
+            {"order_id": "ORD-WINDOW", "reason": "planning_window_deferred"},
+            {"order_id": "ORD-UNKNOWN"},
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "schedule.json")
+            export_schedule_json(result, path)
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+
+        self.assertEqual(data["deferred_reason_counts"], {
+            "candidate_optional_rejected": 2,
+            "planning_window_deferred": 1,
+            "unknown": 1,
+        })
+
     def test_schedule_json_exports_result_bucket_counts(self):
         result = ScheduleResult()
         result.status = "INVALID"

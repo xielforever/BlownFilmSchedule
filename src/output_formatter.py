@@ -31,16 +31,26 @@ def ensure_output_dir():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
+def _deferred_reason_counts(deferred_orders: Iterable[Dict]) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for order in deferred_orders or []:
+        reason = order.get("deferred_reason_code") or order.get("reason") or "unknown"
+        counts[reason] = counts.get(reason, 0) + 1
+    return counts
+
+
 def export_schedule_json(result: ScheduleResult, path: str):
     """输出结构化 JSON 排程结果"""
     ensure_output_dir()
+    deferred_orders = getattr(result, "deferred_orders", [])
     data = {
         "status": result.status,
         "input_order_count": getattr(result, "input_order_count", len(result.tasks)),
         "scheduled_order_count": len(result.tasks),
         "blocked_order_count": getattr(result, "blocked_order_count", 0),
-        "deferred_order_count": len(getattr(result, "deferred_orders", [])),
-        "deferred_orders": getattr(result, "deferred_orders", []),
+        "deferred_order_count": len(deferred_orders),
+        "deferred_orders": deferred_orders,
+        "deferred_reason_counts": _deferred_reason_counts(deferred_orders),
         "unplaced_solver_failed_order_count": len(getattr(result, "unplaced_solver_failed_orders", [])),
         "unplaced_solver_failed_orders": getattr(result, "unplaced_solver_failed_orders", []),
         "phase1_tardiness_score": result.phase1_score,
