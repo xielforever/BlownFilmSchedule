@@ -259,7 +259,8 @@ def update_machine(
     }
 
     cur = db.cursor()
-    if any(k in fields for k in machine_keys):
+    machine_table_changed = any(k in fields for k in machine_keys)
+    if machine_table_changed:
         assignments = []
         params = []
         for key in sorted(machine_keys.intersection(fields.keys())):
@@ -306,6 +307,8 @@ def update_machine(
                     fields.get("current_core_size", 3),
                 ),
             )
+        if not machine_table_changed:
+            _mark_order_screening_cache_stale(cur, reason="machine_state_changed")
 
     db.commit()
     return {"machine_id": machine_id, "updated": sorted(fields.keys())}

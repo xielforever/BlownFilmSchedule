@@ -76,6 +76,42 @@ class TestMachineStateHelpers(unittest.TestCase):
         mark_stale.assert_called_once_with(db.cursor_obj, reason="machine_capability_changed")
         self.assertEqual(db.commit_count, 1)
 
+    def test_machine_state_update_marks_screening_cache_stale(self):
+        class Cursor:
+            def __init__(self):
+                self.rowcount = 0
+                self.sql = []
+
+            def execute(self, sql, params=None):
+                self.sql.append(" ".join(sql.split()).lower())
+                if self.sql[-1].startswith("update machine_current_state"):
+                    self.rowcount = 1
+
+        class Db:
+            def __init__(self):
+                self.cursor_obj = Cursor()
+                self.commit_count = 0
+
+            def cursor(self):
+                return self.cursor_obj
+
+            def commit(self):
+                self.commit_count += 1
+
+        db = Db()
+
+        with patch.object(machines_router, "_mark_order_screening_cache_stale") as mark_stale:
+            result = machines_router.update_machine(
+                "LINE-01",
+                machines_router.MachineUpdate(current_materials=["A", "B", "A"]),
+                db=db,
+                _=SimpleNamespace(username="planner"),
+            )
+
+        self.assertEqual(result, {"machine_id": "LINE-01", "updated": ["current_materials"]})
+        mark_stale.assert_called_once_with(db.cursor_obj, reason="machine_state_changed")
+        self.assertEqual(db.commit_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
