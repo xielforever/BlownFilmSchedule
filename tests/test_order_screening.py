@@ -463,6 +463,23 @@ class TestOrderScreening(unittest.TestCase):
         self.assertFalse(decision["allowed"])
         self.assertEqual(decision["policy"], "prohibited")
 
+    def test_prohibited_override_policy_applies_to_risk_items(self):
+        risk_item = screen_orders(
+            [_make_order("ORD-RISK-PROHIBITED", due_date_mins=150)],
+            [_make_machine(hourly_output_kg=600)],
+            screening_policy={
+                "prohibited_override_codes": ["due_risk"],
+                "restricted_override_codes": [],
+            },
+        )["items"][0]
+
+        decision = risk_item["override_decision"]
+
+        self.assertEqual(risk_item["screening_status"], "risk")
+        self.assertFalse(decision["allowed"])
+        self.assertEqual(decision["policy"], "prohibited")
+        self.assertEqual(decision["reason_code"], "prohibited_due_risk")
+
     def test_override_policy_codes_are_case_insensitive(self):
         material_item = screen_orders(
             [_make_order("ORD-MATERIAL-UPPER", material_available_mins=6000, due_date_mins=5000)],
