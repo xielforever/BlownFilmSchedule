@@ -418,6 +418,21 @@ class TestOrderScreening(unittest.TestCase):
         self.assertEqual(decision["policy"], "prohibited")
         self.assertEqual(decision["reason_code"], "prohibited_material_not_ready")
 
+    def test_prohibited_override_policy_takes_precedence_over_restricted(self):
+        material_item = screen_orders(
+            [_make_order("ORD-MATERIAL-CONFLICT", material_available_mins=6000, due_date_mins=5000)],
+            [_make_machine()],
+            screening_policy={
+                "prohibited_override_codes": ["material_not_ready"],
+                "restricted_override_codes": ["material_not_ready"],
+            },
+        )["items"][0]
+
+        decision = material_item["override_decision"]
+
+        self.assertFalse(decision["allowed"])
+        self.assertEqual(decision["policy"], "prohibited")
+
     def test_screening_items_expose_override_decision(self):
         screening = screen_orders(
             [

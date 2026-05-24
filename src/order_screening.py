@@ -512,13 +512,6 @@ def override_decision_for_screening_item(item: dict, screening_policy: Optional[
             "requires_reason": True,
             "reason_code": f"risk_{code or 'screening'}",
         }
-    if code in restricted_codes:
-        return {
-            "allowed": True,
-            "policy": "restricted",
-            "requires_reason": True,
-            "reason_code": f"restricted_{code}",
-        }
     if status == "ready":
         return {
             "allowed": False,
@@ -526,7 +519,21 @@ def override_decision_for_screening_item(item: dict, screening_policy: Optional[
             "requires_reason": False,
             "reason_code": "already_schedulable",
         }
-    if code in prohibited_codes or status == "blocked":
+    if code in prohibited_codes:
+        return {
+            "allowed": False,
+            "policy": "prohibited",
+            "requires_reason": False,
+            "reason_code": f"prohibited_{code or 'blocked'}",
+        }
+    if code in restricted_codes:
+        return {
+            "allowed": True,
+            "policy": "restricted",
+            "requires_reason": True,
+            "reason_code": f"restricted_{code}",
+        }
+    if status == "blocked":
         return {
             "allowed": False,
             "policy": "prohibited",
