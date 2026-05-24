@@ -9,6 +9,37 @@ from src.models import BlownFilmMachineModel, ProductionOrderModel
 
 
 class TestSchedulePolicySettings(unittest.TestCase):
+    def test_database_policy_loader_exposes_candidate_acceptance_limits(self):
+        class Cursor:
+            def __init__(self):
+                self.sql = ""
+
+            def execute(self, sql):
+                self.sql = sql
+
+            def fetchone(self):
+                return {
+                    "candidate_max_deferred_count": 3,
+                    "candidate_min_acceptance_ratio": 0.6,
+                }
+
+        cur = Cursor()
+        manager = object.__new__(database.DatabaseManager)
+
+        policy = manager._load_schedule_policy(cur)
+
+        self.assertIn("candidate_max_deferred_count", cur.sql)
+        self.assertIn("candidate_min_acceptance_ratio", cur.sql)
+        self.assertEqual(policy["candidate_max_deferred_count"], 3)
+        self.assertEqual(policy["candidate_min_acceptance_ratio"], 0.6)
+
+    def test_database_fresh_schema_declares_candidate_acceptance_limits(self):
+        with open(database.DDL_PATH, encoding="utf-8") as schema:
+            ddl = schema.read()
+
+        self.assertIn("candidate_max_deferred_count", ddl)
+        self.assertIn("candidate_min_acceptance_ratio", ddl)
+
     def test_policy_payload_exposes_global_constraint_switches(self):
         fields = schedule_router.ScheduleSettingsPayload.model_fields
 
