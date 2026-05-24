@@ -999,8 +999,12 @@ def list_orders(
         where_clauses.append("LOWER(latest_action.action_type)=%s")
         params.append(normalized_action_type)
     if screening_action_assignee:
-        where_clauses.append("LOWER(latest_action.assignee)=%s")
-        params.append(screening_action_assignee.strip().lower())
+        normalized_action_assignee = screening_action_assignee.strip().lower()
+        if normalized_action_assignee == "unassigned":
+            where_clauses.append("latest_action.assignee IS NULL")
+        else:
+            where_clauses.append("LOWER(latest_action.assignee)=%s")
+            params.append(normalized_action_assignee)
     if q:
         like = f"%{q.strip()}%"
         where_clauses.append(
