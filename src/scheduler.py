@@ -621,6 +621,18 @@ class AdvancedMedicalAPS:
             external_locked_tasks=external_locked_tasks,
         )
         result.solver_metrics["phase_2"] = getattr(self, "_last_phase_metrics", {})
+        result.solver_metrics["phase_2"].update({
+            "tardiness_bound": phase2_tardiness_bound,
+            "phase1_status_basis": status1,
+            "tardiness_bound_source": (
+                "phase1_optimal"
+                if status1 == "OPTIMAL"
+                else "phase1_feasible_with_configured_tolerance"
+            ),
+            "configured_tardiness_tolerance_mins": self.solver_quality_policy[
+                "phase2_feasible_tardiness_tolerance_mins"
+            ],
+        })
 
         if phase2_result is None:
             # 回退使用第一阶段结果

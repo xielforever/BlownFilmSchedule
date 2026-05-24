@@ -104,6 +104,22 @@ class TestSchedulerSequencing(unittest.TestCase):
             self.assertIn(key, phase1)
         self.assertGreaterEqual(phase1["wall_time"], 0)
 
+    def test_phase2_metrics_explain_tardiness_bound_source(self):
+        orders = [_make_order(f"ORD-BOUND-{i}") for i in range(2)]
+        machine = _make_machine()
+        aps = AdvancedMedicalAPS(
+            _make_setup_mgr(),
+            solver_quality_policy={"phase2_feasible_tardiness_tolerance_mins": 15},
+        )
+
+        result = aps.run(orders, [machine])
+
+        phase2 = result.solver_metrics["phase_2"]
+        self.assertEqual(phase2["tardiness_bound"], result.phase1_score)
+        self.assertEqual(phase2["phase1_status_basis"], result.solver_metrics["phase_1"]["status"])
+        self.assertEqual(phase2["tardiness_bound_source"], "phase1_optimal")
+        self.assertEqual(phase2["configured_tardiness_tolerance_mins"], 15)
+
     def test_solver_metrics_record_model_size(self):
         orders = [
             _make_order("ORD-MODEL-MUST"),
