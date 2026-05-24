@@ -979,10 +979,13 @@ def list_orders(
         params.append(bool(screening_stale))
     if screening_action_status:
         normalized_action_status = screening_action_status.lower()
-        if normalized_action_status not in SCREENING_HANDLING_STATUSES:
+        if normalized_action_status == "unhandled":
+            where_clauses.append("latest_action.handling_status IS NULL")
+        elif normalized_action_status not in SCREENING_HANDLING_STATUSES:
             raise HTTPException(status_code=400, detail="Invalid screening action status.")
-        where_clauses.append("LOWER(latest_action.handling_status)=%s")
-        params.append(normalized_action_status)
+        else:
+            where_clauses.append("LOWER(latest_action.handling_status)=%s")
+            params.append(normalized_action_status)
     if q:
         like = f"%{q.strip()}%"
         where_clauses.append(
