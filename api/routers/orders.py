@@ -10,7 +10,7 @@ from api.deps import get_db
 from api.auth import get_current_user, require_role
 from src.config import BASELINE_TIME
 from src.models import BlownFilmMachineModel, ProductionOrderModel
-from src.order_screening import screen_orders
+from src.order_screening import DEFAULT_SCREENING_POLICY, screen_orders
 
 router = APIRouter(prefix="/api/orders", tags=["Orders"])
 
@@ -656,7 +656,10 @@ def _load_order_screening_policy(cur) -> dict[str, Any]:
     try:
         cur.execute("""
             SELECT screening_due_risk_min_slack_mins,
-                screening_due_risk_duration_multiplier
+                screening_due_risk_duration_multiplier,
+                screening_allowed_order_statuses,
+                screening_prohibited_override_codes,
+                screening_restricted_override_codes
             FROM schedule_settings
             WHERE id=TRUE
         """)
@@ -666,6 +669,18 @@ def _load_order_screening_policy(cur) -> dict[str, Any]:
     return {
         "due_risk_min_slack_mins": int(row.get("screening_due_risk_min_slack_mins") or 240),
         "due_risk_duration_multiplier": float(row.get("screening_due_risk_duration_multiplier") or 1.5),
+        "allowed_order_statuses": row.get(
+            "screening_allowed_order_statuses",
+            DEFAULT_SCREENING_POLICY["allowed_order_statuses"],
+        ),
+        "prohibited_override_codes": row.get(
+            "screening_prohibited_override_codes",
+            DEFAULT_SCREENING_POLICY["prohibited_override_codes"],
+        ),
+        "restricted_override_codes": row.get(
+            "screening_restricted_override_codes",
+            DEFAULT_SCREENING_POLICY["restricted_override_codes"],
+        ),
     }
 
 

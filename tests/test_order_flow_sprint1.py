@@ -1473,6 +1473,39 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         self.assertEqual(result["items"][0]["screening_status"], "ready")
         self.assertEqual(db.order_screening_cache["ORD-BULK-READY"]["screening_status"], "ready")
 
+    def test_screening_endpoint_uses_configured_allowed_order_statuses(self):
+        db = _FakeDb()
+        db.products.add("Film-A")
+        db.schedule_settings["screening_allowed_order_statuses"] = ["PENDING", "SCHEDULED"]
+        db.production_orders["ORD-SCHEDULED-RESCREEN"] = {
+            "order_id": "ORD-SCHEDULED-RESCREEN",
+            "customer_id": "STANDARD",
+            "product_type": "Film-A",
+            "target_width": 520,
+            "target_thickness": 35,
+            "total_quantity_kg": 1200,
+            "cleanroom_req": "Class_10K",
+            "order_class": "NORMAL",
+            "corona_req": False,
+            "core_size_inch": 3,
+            "order_date": None,
+            "due_date": datetime(2026, 5, 28, 8, 30, tzinfo=timezone.utc),
+            "material_available_time": None,
+            "status": "SCHEDULED",
+            "priority_override": None,
+            "created_at": datetime(2026, 5, 22, 8, 0, tzinfo=timezone.utc),
+            "updated_at": datetime(2026, 5, 22, 8, 0, tzinfo=timezone.utc),
+        }
+        payload = orders_router.OrderScreeningPayload(
+            order_ids=["ORD-SCHEDULED-RESCREEN"],
+            scope="selected",
+        )
+
+        result = orders_router.screen_orders_endpoint(payload, db=db)
+
+        self.assertEqual(result["items"][0]["screening_status"], "ready")
+        self.assertEqual(db.order_screening_cache["ORD-SCHEDULED-RESCREEN"]["screening_status"], "ready")
+
     def test_screening_override_requires_reason_and_writes_audit(self):
         db = _FakeDb()
         db.products.add("Film-A")
