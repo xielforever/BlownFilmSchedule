@@ -222,6 +222,8 @@ def _ensure_order_screening_schema(db) -> None:
             summary             JSONB        NOT NULL DEFAULT '{}'::jsonb,
             scope               VARCHAR(30)  NOT NULL DEFAULT 'selected',
             is_stale            BOOLEAN      NOT NULL DEFAULT FALSE,
+            stale_reason        VARCHAR(120),
+            stale_at            TIMESTAMPTZ,
             computed_at         TIMESTAMPTZ  DEFAULT NOW()
         )
     """)
@@ -630,6 +632,31 @@ def _persist_order_screening_result(cur, result: dict) -> None:
             Json(summary),
             scope,
         ))
+
+
+def _mark_order_screening_cache_stale(
+    cur,
+    *,
+    order_ids: list[str] | None = None,
+    reason: str = "dependency_changed",
+) -> int:
+    if order_ids:
+        order_ids = list(dict.fromkeys(order_id for order_id in order_ids if order_id))
+        if not order_ids:
+            return 0
+        cur.execute("""
+            UPDATE order_screening_cache
+            SET is_stale=TRUE, stale_reason=%s, stale_at=NOW()
+            WHERE order_id = ANY(%s)
+              AND is_stale=FALSE
+        """, (reason, order_ids))
+    else:
+        cur.execute("""
+            UPDATE order_screening_cache
+            SET is_stale=TRUE, stale_reason=%s, stale_at=NOW()
+            WHERE is_stale=FALSE
+        """, (reason,))
+    return int(getattr(cur, "rowcount", 0) or 0)
 
 
 def _screening_summary(items: list[dict]) -> dict:

@@ -460,6 +460,20 @@ class _FakeCursor:
             self._rows = []
             self.rowcount = 1
             return
+        if normalized.startswith("update order_screening_cache"):
+            reason = params[0]
+            order_ids = params[1] if len(params) > 1 else list(self.db.order_screening_cache)
+            updated = 0
+            for order_id in order_ids:
+                row = self.db.order_screening_cache.get(order_id)
+                if not row or row.get("is_stale"):
+                    continue
+                row["is_stale"] = True
+                row["stale_reason"] = reason
+                updated += 1
+            self._rows = []
+            self.rowcount = updated
+            return
 
         raise AssertionError(f"Unhandled SQL: {sql}")
 
@@ -720,6 +734,25 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         self.assertEqual(result["items"][0]["screening"]["screening_status"], "blocked")
         self.assertEqual(result["items"][0]["screening"]["code"], "no_eligible_machine")
         self.assertIs(result["items"][0]["screening"]["is_stale"], False)
+
+    def test_mark_order_screening_cache_stale_marks_requested_orders(self):
+        db = _FakeDb()
+        db.order_screening_cache["ORD-STALE-1"] = {"screening_status": "ready", "is_stale": False}
+        db.order_screening_cache["ORD-FRESH"] = {"screening_status": "ready", "is_stale": False}
+
+        updated = orders_router._mark_order_screening_cache_stale(
+            db.cursor(),
+            order_ids=["ORD-STALE-1"],
+            reason="machine_capability_changed",
+        )
+
+        self.assertEqual(updated, 1)
+        self.assertIs(db.order_screening_cache["ORD-STALE-1"]["is_stale"], True)
+        self.assertEqual(
+            db.order_screening_cache["ORD-STALE-1"]["stale_reason"],
+            "machine_capability_changed",
+        )
+        self.assertIs(db.order_screening_cache["ORD-FRESH"]["is_stale"], False)
 
     def test_update_order_writes_diff_and_impacted_drafts(self):
         db = _FakeDb()
