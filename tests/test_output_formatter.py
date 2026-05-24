@@ -185,6 +185,44 @@ class TestOutputFormatter(unittest.TestCase):
         self.assertIn("LINE-R 高负载", text)
         self.assertIn("## 机台排程摘要", text)
 
+    def test_schedule_report_contains_locked_task_protection_summary(self):
+        result = ScheduleResult()
+        result.status = "FEASIBLE"
+        result.solver_metrics = {
+            "locked_task_protection": {
+                "locked_input_order_count": 1,
+                "external_locked_interval_count": 1,
+                "items": [
+                    {
+                        "order_id": "ORD-LOCKED",
+                        "machine_id": "LINE-R",
+                        "start_mins": 120,
+                        "end_mins": 180,
+                        "protection_mode": "machine_and_time",
+                    },
+                    {
+                        "order_id": "ORD-EXTERNAL",
+                        "machine_id": "LINE-R",
+                        "start_mins": 240,
+                        "end_mins": 300,
+                        "protection_mode": "external_interval",
+                    },
+                ],
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "schedule_report.md")
+            export_schedule_report(result, path)
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
+
+        self.assertIn("## 锁定任务保护", text)
+        self.assertIn("ORD-LOCKED", text)
+        self.assertIn("machine_and_time", text)
+        self.assertIn("ORD-EXTERNAL", text)
+        self.assertIn("external_interval", text)
+
 
 if __name__ == "__main__":
     unittest.main()

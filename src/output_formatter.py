@@ -242,6 +242,32 @@ def _machine_summary_table(result: ScheduleResult) -> List[str]:
     return lines
 
 
+def _locked_task_protection_table(result: ScheduleResult) -> List[str]:
+    protection = (getattr(result, "solver_metrics", {}) or {}).get("locked_task_protection") or {}
+    items = protection.get("items") or []
+    if not items:
+        return ["当前无锁定任务或外部占用窗口。"]
+
+    lines = [
+        f"- 本轮输入锁定订单：{protection.get('locked_input_order_count', 0)}",
+        f"- 外部锁定窗口：{protection.get('external_locked_interval_count', 0)}",
+        "",
+        "| 订单 | 机台 | 开始(min) | 结束(min) | 保护模式 |",
+        "| --- | --- | ---: | ---: | --- |",
+    ]
+    for item in items:
+        lines.append(
+            "| {order_id} | {machine_id} | {start} | {end} | {mode} |".format(
+                order_id=item.get("order_id") or "-",
+                machine_id=item.get("machine_id") or "-",
+                start=item.get("start_mins", "-"),
+                end=item.get("end_mins", "-"),
+                mode=item.get("protection_mode") or "-",
+            )
+        )
+    return lines
+
+
 def export_schedule_report(result: ScheduleResult, path: str):
     """输出面向业务复盘的 Markdown 排程报告。"""
     ensure_output_dir()
@@ -284,6 +310,10 @@ def export_schedule_report(result: ScheduleResult, path: str):
         "## 机台排程摘要",
         "",
         *_machine_summary_table(result),
+        "",
+        "## 锁定任务保护",
+        "",
+        *_locked_task_protection_table(result),
         "",
         "## 后续指导方向",
         "",
