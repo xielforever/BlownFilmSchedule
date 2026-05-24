@@ -29,6 +29,7 @@ import {
   isDraftStale,
   isSelectableScreening,
   matchesScreeningFilter,
+  screeningPoolCounts,
   selectableOrderIds,
   staleOrderIds,
   summarizeQueue,
@@ -581,6 +582,10 @@ export default function ScheduleWorkbench() {
   const selectedSet = useMemo(() => new Set(selected), [selected]);
   const screeningByOrderId = useMemo(
     () => new Map((orderScreening.items || []).map(item => [item.order_id, item])),
+    [orderScreening.items],
+  );
+  const screeningCounts = useMemo(
+    () => screeningPoolCounts(orderScreening.items || []),
     [orderScreening.items],
   );
   const filteredOrders = useMemo(() => {
@@ -1560,9 +1565,10 @@ export default function ScheduleWorkbench() {
         </div>
         {orderScreening.summary && (
           <div className="workbench-select-actions">
-            <Badge tone="success">可排 {orderScreening.summary.ready_count}</Badge>
-            <Badge tone="warning">风险 {orderScreening.summary.risk_count}</Badge>
-            <Badge tone="danger">阻断 {orderScreening.summary.blocked_count}</Badge>
+            <Badge tone="success">{'\u53ef\u6392'} {screeningCounts.ready_count}</Badge>
+            <Badge tone="warning">{'\u98ce\u9669'} {screeningCounts.risk_count}</Badge>
+            <Badge tone="danger">{'\u963b\u65ad'} {screeningCounts.blocked_count}</Badge>
+            <Badge tone={screeningCounts.stale_count ? 'warning' : 'neutral'}>{'\u9700\u91cd\u7b5b'} {screeningCounts.stale_count}</Badge>
           </div>
         )}
         {orderScreening.error && <div className="config-status error">{orderScreening.error}</div>}

@@ -247,3 +247,18 @@ export function staleOrderIds(orders = [], screeningByOrderId = new Map()) {
     .filter(order => Boolean(screeningByOrderId.get(order.order_id)?.is_stale))
     .map(order => order.order_id);
 }
+
+export function screeningPoolCounts(items = []) {
+  return items.reduce((acc, item) => {
+    if (item?.screening_status === 'ready') acc.ready_count += 1;
+    if (item?.screening_status === 'risk') acc.risk_count += 1;
+    if (item?.screening_status === 'blocked') acc.blocked_count += 1;
+    if (item?.is_stale) acc.stale_count += 1;
+    return acc;
+  }, {
+    ready_count: 0,
+    risk_count: 0,
+    blocked_count: 0,
+    stale_count: 0,
+  });
+}

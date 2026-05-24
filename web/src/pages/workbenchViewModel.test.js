@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { matchesScreeningFilter, selectableOrderIds, staleOrderIds } from './workbenchViewModel.js';
+import { matchesScreeningFilter, screeningPoolCounts, selectableOrderIds, staleOrderIds } from './workbenchViewModel.js';
 
 test('selectableOrderIds excludes blocked screening orders', () => {
   const orders = [
@@ -51,4 +51,20 @@ test('staleOrderIds returns only stale visible orders', () => {
   ]);
 
   assert.deepEqual(staleOrderIds(orders, screeningByOrderId), ['ORD-STALE-A', 'ORD-STALE-B']);
+});
+
+test('screeningPoolCounts includes stale count without changing status counts', () => {
+  const items = [
+    { screening_status: 'ready', is_stale: false },
+    { screening_status: 'ready', is_stale: true },
+    { screening_status: 'risk', is_stale: false },
+    { screening_status: 'blocked', is_stale: true },
+  ];
+
+  assert.deepEqual(screeningPoolCounts(items), {
+    ready_count: 2,
+    risk_count: 1,
+    blocked_count: 1,
+    stale_count: 2,
+  });
 });
