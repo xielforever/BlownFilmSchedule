@@ -21,6 +21,12 @@ def _order(order_id, width=300, thickness=40):
     }
 
 
+def _order_due(order_id, day, month=5):
+    order = _order(order_id)
+    order["due_date"] = datetime(2026, month, day, tzinfo=timezone.utc)
+    return order
+
+
 def _machine():
     return {
         "machine_id": "LINE-01",
@@ -164,6 +170,31 @@ class TestPreplanOrderBuckets(unittest.TestCase):
         self.assertEqual([row["order_id"] for row in buckets["unplaced_schedulable_orders"]], ["ORD-DECIMAL"])
         self.assertEqual([row["order_id"] for row in buckets["schedulable_orders"]], ["ORD-DECIMAL"])
         self.assertEqual(buckets["schedulable_orders"][0]["eligible_machine_count"], 1)
+
+    def test_planning_policy_splits_must_schedule_candidate_and_deferred(self):
+        buckets = _build_preplan_order_buckets(
+            order_rows=[
+                _order_due("ORD-MUST", 25),
+                _order_due("ORD-CANDIDATE", 30),
+                _order_due("ORD-DEFERRED", 10, month=6),
+            ],
+            machines=[_machine()],
+            tasks=[],
+            diagnostics=[],
+            selected_order_ids=["ORD-MUST", "ORD-CANDIDATE", "ORD-DEFERRED"],
+            planning_bucket_policy={
+                "plan_start": datetime(2026, 5, 24, tzinfo=timezone.utc),
+                "must_schedule_horizon_days": 3,
+                "candidate_horizon_days": 14,
+            },
+        )
+
+        self.assertEqual([row["order_id"] for row in buckets["must_schedule_orders"]], ["ORD-MUST"])
+        self.assertEqual([row["order_id"] for row in buckets["candidate_orders"]], ["ORD-CANDIDATE"])
+        self.assertEqual([row["order_id"] for row in buckets["deferred_orders"]], ["ORD-CANDIDATE", "ORD-DEFERRED"])
+        self.assertEqual([row["order_id"] for row in buckets["unplaced_schedulable_orders"]], ["ORD-MUST"])
+        self.assertEqual(buckets["candidate_orders"][0]["planning_bucket"], "candidate")
+        self.assertEqual(buckets["deferred_orders"][0]["bucket"], "deferred")
 
 
 if __name__ == "__main__":

@@ -170,6 +170,8 @@ class ScheduleSettingsPayload(BaseModel):
     solver_random_seed: Optional[int] = None
     solver_num_workers: Optional[int] = None
     solver_log_search_progress: Optional[bool] = None
+    planning_must_schedule_horizon_days: Optional[int] = None
+    planning_candidate_horizon_days: Optional[int] = None
     change_reason: Optional[str] = None
 
 
@@ -198,6 +200,8 @@ POLICY_VALUE_KEYS = (
     "solver_random_seed",
     "solver_num_workers",
     "solver_log_search_progress",
+    "planning_must_schedule_horizon_days",
+    "planning_candidate_horizon_days",
 )
 
 
@@ -223,6 +227,8 @@ POLICY_DEFAULTS = {
     "solver_random_seed": 0,
     "solver_num_workers": 8,
     "solver_log_search_progress": False,
+    "planning_must_schedule_horizon_days": 3,
+    "planning_candidate_horizon_days": 14,
 }
 
 
@@ -306,6 +312,8 @@ def _ensure_planning_schema_locked(db):
             solver_random_seed                  INTEGER NOT NULL DEFAULT 0,
             solver_num_workers                  INTEGER NOT NULL DEFAULT 8,
             solver_log_search_progress          BOOLEAN NOT NULL DEFAULT FALSE,
+            planning_must_schedule_horizon_days INTEGER NOT NULL DEFAULT 3,
+            planning_candidate_horizon_days     INTEGER NOT NULL DEFAULT 14,
             policy_version                      INTEGER NOT NULL DEFAULT 1,
             updated_by                          VARCHAR(50),
             change_reason                       TEXT,
@@ -329,6 +337,8 @@ def _ensure_planning_schema_locked(db):
             ADD COLUMN IF NOT EXISTS solver_random_seed INTEGER NOT NULL DEFAULT 0,
             ADD COLUMN IF NOT EXISTS solver_num_workers INTEGER NOT NULL DEFAULT 8,
             ADD COLUMN IF NOT EXISTS solver_log_search_progress BOOLEAN NOT NULL DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS planning_must_schedule_horizon_days INTEGER NOT NULL DEFAULT 3,
+            ADD COLUMN IF NOT EXISTS planning_candidate_horizon_days INTEGER NOT NULL DEFAULT 14,
             ADD COLUMN IF NOT EXISTS policy_version INTEGER NOT NULL DEFAULT 1,
             ADD COLUMN IF NOT EXISTS updated_by VARCHAR(50),
             ADD COLUMN IF NOT EXISTS change_reason TEXT
@@ -460,6 +470,7 @@ def _get_schedule_settings(db):
             continuous_run_enforcement_mode, phase2_feasible_tardiness_tolerance_mins,
             solver_profile, solver_time_limit_seconds, solver_relative_gap_limit,
             solver_random_seed, solver_num_workers, solver_log_search_progress,
+            planning_must_schedule_horizon_days, planning_candidate_horizon_days,
             policy_version, updated_by,
             change_reason, updated_at
         FROM schedule_settings WHERE id=TRUE
@@ -494,6 +505,10 @@ def _policy_snapshot(settings: dict, enabled_rule_counts: dict | None = None) ->
             "num_workers": int(settings.get("solver_num_workers") or 8),
             "log_search_progress": bool(settings.get("solver_log_search_progress", False)),
         },
+        "planning_bucket": {
+            "must_schedule_horizon_days": int(settings.get("planning_must_schedule_horizon_days") or 3),
+            "candidate_horizon_days": int(settings.get("planning_candidate_horizon_days") or 14),
+        },
         "enabled_rule_counts": enabled_rule_counts or {},
         "runtime_rule_source": "db_only",
         "fallback_setup_used": False,
@@ -515,6 +530,8 @@ def _policy_snapshot_mismatch(saved: dict | None, current: dict | None) -> str |
         return "求解质量策略已变化，请重新预排后再发布。"
     if (saved.get("solver_profile") or {}) != (current.get("solver_profile") or {}):
         return "求解 profile 已变化，请重新预排后再发布。"
+    if (saved.get("planning_bucket") or {}) != (current.get("planning_bucket") or {}):
+        return "计划窗口策略已变化，请重新预排后再发布。"
     if (saved.get("enabled_rule_counts") or {}) != (current.get("enabled_rule_counts") or {}):
         return "启用规则数量已变化，请重新预排后再发布。"
     return None
@@ -843,6 +860,7 @@ def _preplan_order_base(order_id, order=None):
         "material_available_time": _iso(source.get("material_available_time")),
         "status": source.get("status"),
         "recipe_layers": source.get("recipe_layers"),
+        "planning_bucket": source.get("planning_bucket"),
     }
     if source.get("applied_override"):
         row["applied_override"] = source.get("applied_override")
@@ -889,6 +907,38 @@ def _preplan_order_bucket_row(order_id, order=None, task=None, diagnostic=None, 
     return row
 
 
+def _as_datetime(value):
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            normalized = value.replace("Z", "+00:00")
+            return datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+    return None
+
+
+def _planning_bucket(order, policy=None):
+    if not policy:
+        return "must_schedule"
+    due_date = _as_datetime((order or {}).get("due_date"))
+    plan_start = _as_datetime(policy.get("plan_start"))
+    if not due_date or not plan_start:
+        return "must_schedule"
+    if due_date.tzinfo is None and plan_start.tzinfo is not None:
+        due_date = due_date.replace(tzinfo=plan_start.tzinfo)
+    if plan_start.tzinfo is None and due_date.tzinfo is not None:
+        plan_start = plan_start.replace(tzinfo=due_date.tzinfo)
+    must_days = max(0, int(policy.get("must_schedule_horizon_days") or 0))
+    candidate_days = max(must_days, int(policy.get("candidate_horizon_days") or must_days))
+    if due_date <= plan_start + timedelta(days=must_days):
+        return "must_schedule"
+    if due_date <= plan_start + timedelta(days=candidate_days):
+        return "candidate"
+    return "deferred"
+
+
 def _build_preplan_order_buckets(
     order_rows,
     machines,
@@ -896,6 +946,7 @@ def _build_preplan_order_buckets(
     diagnostics,
     selected_order_ids,
     screening_items_by_order_id=None,
+    planning_bucket_policy=None,
 ):
     orders_by_id = {row["order_id"]: dict(row) for row in order_rows or []}
     screening_items_by_order_id = screening_items_by_order_id or {}
@@ -918,6 +969,9 @@ def _build_preplan_order_buckets(
     unplaced_schedulable_orders = []
     blocked_orders = []
     late_orders = []
+    must_schedule_orders = []
+    candidate_orders = []
+    deferred_orders = []
     candidate_machine_count = len(machines or [])
 
     for order_id in ordered_ids:
@@ -930,6 +984,8 @@ def _build_preplan_order_buckets(
         task = task_by_order.get(order_id)
         diagnostic = diagnostics_by_order.get(order_id)
         diagnostic_blocks = diagnostic and diagnostic.get("category") == "eligibility"
+        planning_bucket = "blocked" if diagnostic_blocks or order["eligible_machine_count"] == 0 else _planning_bucket(order, planning_bucket_policy)
+        order["planning_bucket"] = planning_bucket
 
         if diagnostic_blocks or order["eligible_machine_count"] == 0:
             bucket = "blocked"
@@ -940,18 +996,27 @@ def _build_preplan_order_buckets(
         elif task:
             bucket = "scheduled"
             reason = "已落位到预排程任务。"
+        elif planning_bucket in {"candidate", "deferred"}:
+            bucket = "deferred"
+            reason = "订单未进入当前计划窗口，按策略推迟到候选或后续周期。"
         else:
             bucket = "unplaced_schedulable"
             reason = "订单满足硬能力约束，但当前草案未生成落位任务。"
 
-        input_orders.append(_preplan_order_bucket_row(order_id, order, task, diagnostic, bucket, reason))
+        input_row = _preplan_order_bucket_row(order_id, order, task, diagnostic, bucket, reason)
+        input_orders.append(input_row)
 
         if bucket == "blocked":
-            blocked_orders.append(_preplan_order_bucket_row(order_id, order, task, diagnostic, bucket, reason))
+            blocked_orders.append(input_row)
             continue
 
         if order["eligible_machine_count"] > 0:
-            schedulable_orders.append(_preplan_order_bucket_row(order_id, order, task, diagnostic, bucket, reason))
+            schedulable_orders.append(input_row)
+
+        if planning_bucket == "must_schedule":
+            must_schedule_orders.append(input_row)
+        elif planning_bucket == "candidate":
+            candidate_orders.append(input_row)
 
         if task:
             scheduled_row = _preplan_order_bucket_row(order_id, order, task, diagnostic, "scheduled", "已落位到预排程任务。")
@@ -959,7 +1024,10 @@ def _build_preplan_order_buckets(
             if task.get("is_late") or _as_int(task.get("tardiness_mins")) > 0:
                 late_orders.append(_preplan_order_bucket_row(order_id, order, task, diagnostic, "late", "计划完工时间晚于订单交期。"))
         else:
-            unplaced_schedulable_orders.append(_preplan_order_bucket_row(order_id, order, task, diagnostic, bucket, reason))
+            if bucket == "deferred":
+                deferred_orders.append(input_row)
+            else:
+                unplaced_schedulable_orders.append(input_row)
 
     return {
         "input_orders": input_orders,
@@ -968,12 +1036,23 @@ def _build_preplan_order_buckets(
         "unplaced_schedulable_orders": unplaced_schedulable_orders,
         "blocked_orders": blocked_orders,
         "late_orders": late_orders,
+        "must_schedule_orders": must_schedule_orders,
+        "candidate_orders": candidate_orders,
+        "deferred_orders": deferred_orders,
     }
 
 
 def _load_preplan_order_context(cur, run, tasks, diagnostics):
     params = _normalize_json(run.get("solver_params"), {}) or {}
     selected_ids = params.get("selected_order_ids") or []
+    planning_snapshot = (params.get("policy_snapshot") or {}).get("planning_bucket") or {}
+    planning_bucket_policy = None
+    if planning_snapshot:
+        planning_bucket_policy = {
+            "plan_start": run.get("run_time"),
+            "must_schedule_horizon_days": planning_snapshot.get("must_schedule_horizon_days"),
+            "candidate_horizon_days": planning_snapshot.get("candidate_horizon_days"),
+        }
     screening_items_by_order_id = {
         item.get("order_id"): item
         for item in (params.get("preplan_screening") or {}).get("items", [])
@@ -1019,6 +1098,7 @@ def _load_preplan_order_context(cur, run, tasks, diagnostics):
         diagnostics,
         selected_ids,
         screening_items_by_order_id=screening_items_by_order_id,
+        planning_bucket_policy=planning_bucket_policy,
     )
 
 
@@ -3007,6 +3087,12 @@ def update_schedule_settings(
         elif key == "solver_log_search_progress":
             assignments.append(f"{key}=%s")
             params.append(bool(value))
+        elif key == "planning_must_schedule_horizon_days":
+            assignments.append(f"{key}=%s")
+            params.append(max(0, int(value)))
+        elif key == "planning_candidate_horizon_days":
+            assignments.append(f"{key}=%s")
+            params.append(max(0, int(value)))
         elif key == "continuous_run_enforcement_mode":
             mode = str(value or "publish_blocker")
             if mode not in {"hard", "publish_blocker", "experimental_disabled"}:

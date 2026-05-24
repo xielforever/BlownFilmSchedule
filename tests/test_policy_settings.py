@@ -28,6 +28,8 @@ class TestSchedulePolicySettings(unittest.TestCase):
             "solver_random_seed",
             "solver_num_workers",
             "solver_log_search_progress",
+            "planning_must_schedule_horizon_days",
+            "planning_candidate_horizon_days",
             "change_reason",
         ]:
             self.assertIn(key, fields)
@@ -102,6 +104,8 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "solver_random_seed": 11,
                 "solver_num_workers": 4,
                 "solver_log_search_progress": True,
+                "planning_must_schedule_horizon_days": 5,
+                "planning_candidate_horizon_days": 21,
             },
             {},
         )
@@ -112,6 +116,8 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(snapshot["solver_profile"]["profile"], "deep")
         self.assertEqual(snapshot["solver_profile"]["time_limit_seconds"], 180.0)
         self.assertEqual(snapshot["solver_profile"]["relative_gap_limit"], 0.01)
+        self.assertEqual(snapshot["planning_bucket"]["must_schedule_horizon_days"], 5)
+        self.assertEqual(snapshot["planning_bucket"]["candidate_horizon_days"], 21)
 
     def test_policy_snapshot_captures_version_settings_and_rule_counts(self):
         snapshot = schedule_router._policy_snapshot(

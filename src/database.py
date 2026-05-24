@@ -303,6 +303,8 @@ class DatabaseManager:
                     solver_random_seed                  INTEGER NOT NULL DEFAULT 0,
                     solver_num_workers                  INTEGER NOT NULL DEFAULT 8,
                     solver_log_search_progress          BOOLEAN NOT NULL DEFAULT FALSE,
+                    planning_must_schedule_horizon_days INTEGER NOT NULL DEFAULT 3,
+                    planning_candidate_horizon_days     INTEGER NOT NULL DEFAULT 14,
                     updated_at                          TIMESTAMPTZ DEFAULT NOW()
                 )
             """)
@@ -509,6 +511,8 @@ class DatabaseManager:
                 ADD COLUMN IF NOT EXISTS solver_random_seed INTEGER NOT NULL DEFAULT 0,
                 ADD COLUMN IF NOT EXISTS solver_num_workers INTEGER NOT NULL DEFAULT 8,
                 ADD COLUMN IF NOT EXISTS solver_log_search_progress BOOLEAN NOT NULL DEFAULT FALSE,
+                ADD COLUMN IF NOT EXISTS planning_must_schedule_horizon_days INTEGER NOT NULL DEFAULT 3,
+                ADD COLUMN IF NOT EXISTS planning_candidate_horizon_days INTEGER NOT NULL DEFAULT 14,
                 ADD COLUMN IF NOT EXISTS policy_version INTEGER NOT NULL DEFAULT 1,
                 ADD COLUMN IF NOT EXISTS updated_by VARCHAR(50),
                 ADD COLUMN IF NOT EXISTS change_reason TEXT
@@ -523,7 +527,8 @@ class DatabaseManager:
                     continuous_run_limit_mins, continuous_run_enforcement_mode,
                     phase2_feasible_tardiness_tolerance_mins,
                     solver_profile, solver_time_limit_seconds, solver_relative_gap_limit,
-                    solver_random_seed, solver_num_workers, solver_log_search_progress
+                    solver_random_seed, solver_num_workers, solver_log_search_progress,
+                    planning_must_schedule_horizon_days, planning_candidate_horizon_days
                 FROM schedule_settings
                 WHERE id=TRUE
             """)
@@ -546,6 +551,8 @@ class DatabaseManager:
             "solver_random_seed": 0,
             "solver_num_workers": 8,
             "solver_log_search_progress": False,
+            "planning_must_schedule_horizon_days": 3,
+            "planning_candidate_horizon_days": 14,
         }
         return {**defaults, **dict(row or {})}
 
