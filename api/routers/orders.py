@@ -1564,6 +1564,7 @@ def get_order_screening_overrides(
 def get_order_screening_actions(
     order_id: str,
     handling_status: Optional[str] = None,
+    assignee: Optional[str] = None,
     db=Depends(get_db),
     _=Depends(get_current_user),
 ):
@@ -1577,6 +1578,13 @@ def get_order_screening_actions(
             raise HTTPException(status_code=400, detail="Invalid screening action status.")
         where += " AND handling_status=%s"
         params.append(normalized_status)
+    if assignee:
+        normalized_assignee = assignee.strip().lower()
+        if normalized_assignee == "unassigned":
+            where += " AND assignee IS NULL"
+        else:
+            where += " AND LOWER(TRIM(assignee))=%s"
+            params.append(normalized_assignee)
     cur.execute("""
         SELECT id, order_id, screening_status, business_bucket, screening_code,
             action_type, handling_status, reason_text, assignee, actor, details,
