@@ -633,6 +633,35 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         self.assertEqual(result["item"]["screening_status"], "blocked")
         self.assertEqual(db.order_screening_cache["ORD-CACHE-REFRESH"]["screening_status"], "blocked")
 
+    def test_screening_endpoint_refreshes_cache_for_selected_orders(self):
+        db = _FakeDb()
+        db.products.add("Film-A")
+        db.production_orders["ORD-BULK-READY"] = {
+            "order_id": "ORD-BULK-READY",
+            "customer_id": "STANDARD",
+            "product_type": "Film-A",
+            "target_width": 520,
+            "target_thickness": 35,
+            "total_quantity_kg": 1200,
+            "cleanroom_req": "Class_10K",
+            "order_class": "NORMAL",
+            "corona_req": False,
+            "core_size_inch": 3,
+            "order_date": None,
+            "due_date": datetime(2026, 5, 28, 8, 30, tzinfo=timezone.utc),
+            "material_available_time": None,
+            "status": "PENDING",
+            "priority_override": None,
+            "created_at": datetime(2026, 5, 22, 8, 0, tzinfo=timezone.utc),
+            "updated_at": datetime(2026, 5, 22, 8, 0, tzinfo=timezone.utc),
+        }
+        payload = orders_router.OrderScreeningPayload(order_ids=["ORD-BULK-READY"], scope="selected")
+
+        result = orders_router.screen_orders_endpoint(payload, db=db)
+
+        self.assertEqual(result["items"][0]["screening_status"], "ready")
+        self.assertEqual(db.order_screening_cache["ORD-BULK-READY"]["screening_status"], "ready")
+
     def test_update_order_writes_diff_and_impacted_drafts(self):
         db = _FakeDb()
         db.products.add("Film-A")

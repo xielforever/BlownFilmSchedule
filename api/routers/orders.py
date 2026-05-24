@@ -854,6 +854,9 @@ def screen_orders_endpoint(
         order_ids=order_ids if effective_scope == "selected" else None,
         scope=effective_scope,
     )
+    _ensure_order_screening_schema(db)
+    _persist_order_screening_result(db.cursor(), result)
+    db.commit()
     return _filter_screening_result(result, payload.screening_status)
 
 
