@@ -106,6 +106,25 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertEqual(summary["cases"][0]["quality_thresholds"]["max_total_setup_time_mins"], 1000)
         self.assertIn("status", summary)
 
+    def test_benchmark_command_can_compare_multiple_profiles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "profiles.json")
+            exit_code = main([
+                "--order-counts", "3",
+                "--machine-count", "1",
+                "--profiles", "fast,standard",
+                "--output", path,
+                "--max-wall-time-seconds", "10",
+            ])
+            with open(path, encoding="utf-8") as f:
+                summary = json.load(f)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(summary["case_count"], 2)
+        self.assertEqual([case["profile"] for case in summary["cases"]], ["fast", "standard"])
+        self.assertEqual([case["order_count"] for case in summary["cases"]], [3, 3])
+        self.assertEqual([case["name"] for case in summary["cases"]], ["fast-3", "standard-3"])
+
 
 if __name__ == "__main__":
     unittest.main()

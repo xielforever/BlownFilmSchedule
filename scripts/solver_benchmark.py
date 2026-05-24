@@ -225,11 +225,22 @@ def _parse_order_counts(value: str) -> List[int]:
     return counts
 
 
+def _parse_profiles(value: str) -> List[str]:
+    profiles = [item.strip() for item in value.split(",") if item.strip()]
+    if not profiles:
+        raise argparse.ArgumentTypeError("at least one profile is required")
+    invalid = [profile for profile in profiles if profile not in {"fast", "standard", "deep"}]
+    if invalid:
+        raise argparse.ArgumentTypeError(f"invalid profiles: {', '.join(invalid)}")
+    return profiles
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run deterministic solver benchmark cases.")
     parser.add_argument("--order-counts", type=_parse_order_counts, default=[50, 100, 200])
     parser.add_argument("--machine-count", type=int, default=2)
     parser.add_argument("--profile", default="fast", choices=["fast", "standard", "deep"])
+    parser.add_argument("--profiles", type=_parse_profiles, default=None)
     parser.add_argument("--max-wall-time-seconds", type=float, default=120.0)
     parser.add_argument("--max-gap", type=float, default=None)
     parser.add_argument("--min-scheduled-ratio", type=float, default=0.0)
@@ -239,12 +250,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", default="benchmark-summary.json")
     args = parser.parse_args(argv)
 
+    profiles = args.profiles or [args.profile]
     cases = [
         BenchmarkCase(
-            name=f"{args.profile}-{count}",
+            name=f"{profile}-{count}",
             order_count=count,
             machine_count=max(1, args.machine_count),
-            profile=args.profile,
+            profile=profile,
             max_wall_time_seconds=args.max_wall_time_seconds,
             max_gap=args.max_gap,
             min_scheduled_ratio=max(0.0, float(args.min_scheduled_ratio)),
@@ -258,6 +270,7 @@ def main(argv: list[str] | None = None) -> int:
                 None if args.max_total_setup_time_mins is None else max(0, int(args.max_total_setup_time_mins))
             ),
         )
+        for profile in profiles
         for count in args.order_counts
     ]
     summary = run_benchmark_suite(cases)
