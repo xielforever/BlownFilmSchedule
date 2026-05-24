@@ -335,6 +335,74 @@ def run_benchmark_suite(cases: Iterable[BenchmarkCase]) -> dict:
     }
 
 
+def _fmt(value) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, float):
+        return f"{value:.3f}"
+    return str(value)
+
+
+def render_markdown_report(summary: dict) -> str:
+    lines = [
+        "# Solver Benchmark Report",
+        "",
+        f"- Status: {summary.get('status')}",
+        f"- Generated at: {summary.get('generated_at')}",
+        f"- Cases: {summary.get('case_count')} total, {summary.get('passed_count')} passed, {summary.get('failed_count')} failed",
+        "",
+        "## Cases",
+        "",
+        "| Case | Status | Passed | Scheduled | Deferred | Late | Weighted Tardiness | Setup Mins | Wall Time | Arc Count | Pruned Arcs |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for case in summary.get("cases", []):
+        model_size = case.get("model_size") or {}
+        lines.append(
+            "| {name} | {status} | {passed} | {scheduled} | {deferred} | {late} | {weighted} | {setup} | {wall} | {arcs} | {pruned} |".format(
+                name=case.get("name"),
+                status=case.get("solver_status"),
+                passed=case.get("passed"),
+                scheduled=case.get("scheduled_order_count"),
+                deferred=case.get("deferred_order_count"),
+                late=case.get("late_order_count"),
+                weighted=_fmt(case.get("weighted_tardiness")),
+                setup=_fmt(case.get("total_setup_time_mins")),
+                wall=_fmt(case.get("wall_time_seconds")),
+                arcs=_fmt(model_size.get("arc_count")),
+                pruned=_fmt(model_size.get("pruned_arc_count")),
+            )
+        )
+
+    comparisons = summary.get("arc_pruning_comparisons") or []
+    if comparisons:
+        lines.extend([
+            "",
+            "## Arc Pruning Comparisons",
+            "",
+            "| Group | Passed | Baseline | Pruned | wall_time_seconds_delta | late_order_count_delta | weighted_tardiness_delta | total_setup_time_mins_delta | arc_count_delta | pruned_arc_count_delta | Failed Checks |",
+            "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+        ])
+        for item in comparisons:
+            lines.append(
+                "| {group} | {passed} | {baseline} | {pruned} | {wall} | {late} | {weighted} | {setup} | {arcs} | {pruned_arcs} | {failed} |".format(
+                    group=item.get("comparison_group"),
+                    passed=item.get("passed"),
+                    baseline=item.get("baseline_case"),
+                    pruned=item.get("pruned_case"),
+                    wall=_fmt(item.get("wall_time_seconds_delta")),
+                    late=_fmt(item.get("late_order_count_delta")),
+                    weighted=_fmt(item.get("weighted_tardiness_delta")),
+                    setup=_fmt(item.get("total_setup_time_mins_delta")),
+                    arcs=_fmt(item.get("arc_count_delta")),
+                    pruned_arcs=_fmt(item.get("pruned_arc_count_delta")),
+                    failed=", ".join(item.get("failed_checks") or []) or "-",
+                )
+            )
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _parse_order_counts(value: str) -> List[int]:
     counts = [int(item.strip()) for item in value.split(",") if item.strip()]
     if not counts:
@@ -372,6 +440,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--arc-pruning-top-k-per-order", type=int, default=0)
     parser.add_argument("--compare-arc-pruning", action="store_true")
     parser.add_argument("--output", default="benchmark-summary.json")
+    parser.add_argument("--report-md", default=None)
     args = parser.parse_args(argv)
 
     profiles = args.profiles or [args.profile]
@@ -438,6 +507,10 @@ def main(argv: list[str] | None = None) -> int:
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    if args.report_md:
+        report_path = Path(args.report_md)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(render_markdown_report(summary), encoding="utf-8")
     return 0 if summary["status"] == "PASS" else 1
 
 

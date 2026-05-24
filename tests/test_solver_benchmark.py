@@ -217,6 +217,31 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertFalse(comparison["passed"])
         self.assertIn("total_setup_time_mins_delta", comparison["failed_checks"])
 
+    def test_benchmark_command_writes_markdown_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "summary.json")
+            report_path = os.path.join(tmp, "benchmark-report.md")
+            exit_code = main([
+                "--order-counts", "3",
+                "--machine-count", "1",
+                "--compare-arc-pruning",
+                "--arc-pruning-max-setup-mins", "999",
+                "--arc-pruning-top-k-per-order", "1",
+                "--output", path,
+                "--report-md", report_path,
+                "--max-wall-time-seconds", "10",
+            ])
+            with open(report_path, encoding="utf-8") as f:
+                report = f.read()
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("# Solver Benchmark Report", report)
+        self.assertIn("## Cases", report)
+        self.assertIn("fast-3-pruning-off", report)
+        self.assertIn("fast-3-pruning-on", report)
+        self.assertIn("## Arc Pruning Comparisons", report)
+        self.assertIn("arc_count_delta", report)
+
 
 if __name__ == "__main__":
     unittest.main()
