@@ -268,6 +268,51 @@ def _locked_task_protection_table(result: ScheduleResult) -> List[str]:
     return lines
 
 
+def _manual_adjustment_impact_table(result: ScheduleResult) -> List[str]:
+    metrics = getattr(result, "solver_metrics", {}) or {}
+    summary = metrics.get("adjustment_impact_summary") or metrics.get("manual_adjustment_impact_summary") or {}
+    if not summary:
+        return ["当前无人工调整影响记录。"]
+
+    lines = [
+        f"- 人工调整次数：{summary.get('adjustment_count', 0)}",
+        f"- 换机订单数：{summary.get('machine_change_count', 0)}",
+        f"- 时间变化订单数：{summary.get('time_changed_count', 0)}",
+        f"- 调整后锁定订单数：{summary.get('locked_after_adjustment_count', 0)}",
+        f"- 换产时间变化合计(min)：{summary.get('total_setup_time_delta_mins', 0)}",
+        f"- 逾期变化合计(min)：{summary.get('total_tardiness_delta_mins', 0)}",
+        f"- 最大完工延后(min)：{summary.get('max_delay_delta_mins', 0)}",
+    ]
+
+    negative_orders = summary.get("negative_impact_order_ids") or []
+    if negative_orders:
+        lines.append(f"- 负向影响订单：{', '.join(negative_orders)}")
+
+    review_orders = summary.get("review_required_order_ids") or []
+    if review_orders:
+        lines.append(f"- 需复核订单：{', '.join(review_orders)}")
+
+    review_reasons = summary.get("review_reason_summary") or {}
+    if review_reasons:
+        lines.extend([
+            "",
+            "| 复核原因 | 影响订单数 | 最大变化(min) | 阈值(min) |",
+            "| --- | ---: | ---: | ---: |",
+        ])
+        for code in sorted(review_reasons.keys()):
+            item = review_reasons[code] or {}
+            lines.append(
+                "| {label} | {count} | {actual} | {threshold} |".format(
+                    label=item.get("label") or code,
+                    count=item.get("affected_order_count", 0),
+                    actual=item.get("max_actual_delta_mins", 0),
+                    threshold=item.get("threshold_mins", 0),
+                )
+            )
+
+    return lines
+
+
 def export_schedule_report(result: ScheduleResult, path: str):
     """输出面向业务复盘的 Markdown 排程报告。"""
     ensure_output_dir()
@@ -314,6 +359,10 @@ def export_schedule_report(result: ScheduleResult, path: str):
         "## 锁定任务保护",
         "",
         *_locked_task_protection_table(result),
+        "",
+        "## 人工调整影响",
+        "",
+        *_manual_adjustment_impact_table(result),
         "",
         "## 后续指导方向",
         "",

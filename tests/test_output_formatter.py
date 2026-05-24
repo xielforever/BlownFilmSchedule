@@ -223,6 +223,52 @@ class TestOutputFormatter(unittest.TestCase):
         self.assertIn("ORD-EXTERNAL", text)
         self.assertIn("external_interval", text)
 
+    def test_schedule_report_contains_manual_adjustment_impact_summary(self):
+        result = ScheduleResult()
+        result.status = "FEASIBLE"
+        result.solver_metrics = {
+            "adjustment_impact_summary": {
+                "adjustment_count": 2,
+                "machine_change_count": 1,
+                "time_changed_count": 2,
+                "locked_after_adjustment_count": 1,
+                "total_setup_time_delta_mins": 30,
+                "total_tardiness_delta_mins": 45,
+                "max_delay_delta_mins": 120,
+                "has_negative_impact": True,
+                "negative_impact_order_ids": ["ORD-A"],
+                "review_required_count": 1,
+                "review_required_order_ids": ["ORD-A"],
+                "review_reason_summary": {
+                    "end_delayed": {
+                        "label": "完工延后",
+                        "affected_order_count": 1,
+                        "max_actual_delta_mins": 120,
+                        "threshold_mins": 30,
+                    },
+                    "tardiness_increased": {
+                        "label": "逾期增加",
+                        "affected_order_count": 1,
+                        "max_actual_delta_mins": 45,
+                        "threshold_mins": 15,
+                    },
+                },
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "schedule_report.md")
+            export_schedule_report(result, path)
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
+
+        self.assertIn("## 人工调整影响", text)
+        self.assertIn("ORD-A", text)
+        self.assertIn("完工延后", text)
+        self.assertIn("逾期增加", text)
+        self.assertIn("120", text)
+        self.assertIn("45", text)
+
 
 if __name__ == "__main__":
     unittest.main()
