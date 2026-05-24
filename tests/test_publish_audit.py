@@ -129,6 +129,22 @@ class TestPublishAuditPayload(unittest.TestCase):
         self.assertEqual(items[0]["code"], "maintenance.continuous_run_cleaning_required")
         self.assertIn("LINE-01", items[0]["message"])
 
+    def test_unplaced_solver_failed_orders_map_to_publish_blockers(self):
+        items = schedule_router._unplaced_solver_failed_validation_items([
+            {
+                "order_id": "ORD-MUST",
+                "reason": "required_order_unplaced",
+                "message": "Required order was not placed by the solver.",
+            }
+        ])
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["level"], "publish_blocker")
+        self.assertEqual(items[0]["severity"], "error")
+        self.assertEqual(items[0]["code"], "required_order_unplaced")
+        self.assertEqual(items[0]["order_id"], "ORD-MUST")
+        self.assertIn("Required order", items[0]["message"])
+
     def test_validation_summary_rejects_missing_invalid_or_mismatched_summary(self):
         validation = {
             "status": "PASSED",

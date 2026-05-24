@@ -1710,6 +1710,24 @@ def _diagnostic_validation_items(diagnostics: list[dict[str, Any]]) -> list[dict
     return items
 
 
+def _unplaced_solver_failed_validation_items(unplaced_orders: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items = []
+    for order in unplaced_orders or []:
+        order_id = order.get("order_id")
+        if not order_id:
+            continue
+        code = order.get("reason") or "required_order_unplaced"
+        message = order.get("message") or "Required order was not placed by the solver."
+        items.append(_validation_item(
+            "error",
+            code,
+            message,
+            order_id=order_id,
+            level="publish_blocker",
+        ))
+    return items
+
+
 def _publish_audit_payload(
     *,
     event_type: str,
@@ -2279,6 +2297,7 @@ def _load_preplan_validation(db, run_id: int):
 
     params = _normalize_json(run_row.get("solver_params") if run_row else None, {}) or {}
     items.extend(_diagnostic_validation_items(params.get("diagnostics") or []))
+    items.extend(_unplaced_solver_failed_validation_items(params.get("unplaced_solver_failed_orders") or []))
     summary = params.get("summary") or {}
     selected_ids = params.get("selected_order_ids") or []
     saved_snapshots = params.get("order_snapshots") or []
