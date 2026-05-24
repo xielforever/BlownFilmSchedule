@@ -182,7 +182,7 @@ def _item(
     best_duration_mins: Optional[int] = None,
     slack_mins: Optional[int] = None,
 ) -> dict:
-    return {
+    item = {
         "order_id": order.order_id,
         "screening_status": screening_status,
         "code": code,
@@ -203,6 +203,8 @@ def _item(
         "evidence": evidence or [],
         "recommendations": recommendations or _screening_recommendations(order.order_id, code, diagnostic_code),
     }
+    item["override_decision"] = override_decision_for_screening_item(item)
+    return item
 
 
 def _best_duration(order: ProductionOrderModel, machines: list[BlownFilmMachineModel]) -> Optional[int]:

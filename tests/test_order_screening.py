@@ -261,6 +261,24 @@ class TestOrderScreening(unittest.TestCase):
         self.assertTrue(decision["requires_reason"])
         self.assertIn("material", decision["reason_code"])
 
+    def test_screening_items_expose_override_decision(self):
+        screening = screen_orders(
+            [
+                _make_order("ORD-READY-DECISION"),
+                _make_order("ORD-RISK-DECISION", due_date_mins=150),
+                _make_order("ORD-BLOCKED-DECISION", target_width=9999),
+            ],
+            [_make_machine(hourly_output_kg=600)],
+        )
+        decisions = {
+            item["order_id"]: item["override_decision"]
+            for item in screening["items"]
+        }
+
+        self.assertEqual(decisions["ORD-READY-DECISION"]["policy"], "not_required")
+        self.assertTrue(decisions["ORD-RISK-DECISION"]["allowed"])
+        self.assertEqual(decisions["ORD-BLOCKED-DECISION"]["policy"], "prohibited")
+
 
 if __name__ == "__main__":
     unittest.main()
