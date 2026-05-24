@@ -1353,8 +1353,22 @@ def get_order_screening(
 
 @router.get("/screening-action-options")
 def get_order_screening_action_options(
+    db=Depends(get_db),
     _=Depends(get_current_user),
 ):
+    _ensure_order_screening_action_schema(db)
+    cur = db.cursor()
+    cur.execute("""
+        SELECT DISTINCT assignee
+        FROM order_screening_action_audit
+        WHERE assignee IS NOT NULL AND TRIM(assignee) <> ''
+        ORDER BY assignee
+    """)
+    assignee_filters = [{"value": "unassigned", "label": "未分配"}]
+    assignee_filters.extend(
+        {"value": row["assignee"], "label": row["assignee"]}
+        for row in cur.fetchall()
+    )
     return {
         "action_types": [
             {"value": value, "label": label}
@@ -1364,6 +1378,7 @@ def get_order_screening_action_options(
             {"value": value, "label": label}
             for value, label in SCREENING_ACTION_FILTER_STATUS_OPTIONS
         ],
+        "assignee_filters": assignee_filters,
     }
 
 
