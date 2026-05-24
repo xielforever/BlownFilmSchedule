@@ -214,3 +214,12 @@ export function derivePublishChecklist({
     { key: 'queue', label: '发布后队列', status: canConfirm || queueCount > 0 ? 'ready' : 'waiting', detail: queueCount > 0 ? `${queueCount} 项` : `${counts.scheduled} 单将进入队列` },
   ];
 }
+export function isSelectableScreeningStatus(screeningStatus) {
+  return screeningStatus !== 'blocked';
+}
+
+export function selectableOrderIds(orders = [], screeningByOrderId = new Map()) {
+  return orders
+    .filter(order => isSelectableScreeningStatus(screeningByOrderId.get(order.order_id)?.screening_status))
+    .map(order => order.order_id);
+}

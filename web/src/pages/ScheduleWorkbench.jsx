@@ -27,6 +27,8 @@ import {
   draftVersionLabels,
   draftVersionTones,
   isDraftStale,
+  isSelectableScreeningStatus,
+  selectableOrderIds,
   summarizeQueue,
   workbenchStageLabels,
   workbenchStages,
@@ -606,6 +608,16 @@ export default function ScheduleWorkbench() {
     () => filteredOrders.filter(order => selectedSet.has(order.order_id)).length,
     [filteredOrders, selectedSet],
   );
+  const selectableSelectedIds = useMemo(
+    () => selected.filter(orderId =>
+      isSelectableScreeningStatus(screeningByOrderId.get(orderId)?.screening_status),
+    ),
+    [screeningByOrderId, selected],
+  );
+  const selectableFilteredOrderIds = useMemo(
+    () => selectableOrderIds(filteredOrders, screeningByOrderId),
+    [filteredOrders, screeningByOrderId],
+  );
   const selectedPendingOrder = useMemo(
     () => {
       if (selectedContext?.type === 'pending_order') {
@@ -964,7 +976,7 @@ export default function ScheduleWorkbench() {
   const primaryAction = useMemo(
     () => derivePrimaryAction({
       activePlan,
-      selectedCount: selected.length,
+      selectedCount: selectableSelectedIds.length,
       canConfirm,
       canEditDraft,
       hasHardErrors,
@@ -972,19 +984,19 @@ export default function ScheduleWorkbench() {
       reviewValidationPending,
       draftVersionState,
     }),
-    [activePlan, canConfirm, canEditDraft, draftVersionState, hasHardErrors, publishBlockReason, reviewValidationPending, selected.length],
+    [activePlan, canConfirm, canEditDraft, draftVersionState, hasHardErrors, publishBlockReason, reviewValidationPending, selectableSelectedIds.length],
   );
   const publishChecklist = useMemo(
     () => derivePublishChecklist({
       activePlan,
-      counts: activePlan ? planOrderCounts : { input: selected.length, scheduled: 0, schedulable: 0, blocked: 0, late: 0 },
+      counts: activePlan ? planOrderCounts : { input: selectableSelectedIds.length, scheduled: 0, schedulable: 0, blocked: 0, late: 0 },
       validation,
       draftVersionLabel: draftVersionLabels[draftVersionState] || '尚无草案',
       publishBlockReason,
       canConfirm,
       queueCount: activeQueueSummary.total,
     }),
-    [activePlan, activeQueueSummary.total, canConfirm, draftVersionState, planOrderCounts, publishBlockReason, selected.length, validation],
+    [activePlan, activeQueueSummary.total, canConfirm, draftVersionState, planOrderCounts, publishBlockReason, selectableSelectedIds.length, validation],
   );
   useEffect(() => {
     if (!activePlan || selectedPlanOrderId || workspaceView !== 'orders') return;
@@ -1091,12 +1103,17 @@ export default function ScheduleWorkbench() {
   }, [loadAll]);
 
   const toggleOrder = (orderId) => {
+    const screening = screeningByOrderId.get(orderId);
+    if (!isSelectableScreeningStatus(screening?.screening_status)) {
+      setStatus({ tone: 'error', message: '\u963b\u65ad\u8ba2\u5355\u9700\u8981\u5148\u5904\u7406\u5f02\u5e38\uff0c\u4e0d\u80fd\u76f4\u63a5\u8fdb\u5165\u9884\u6392\u3002' });
+      return;
+    }
     setSelected(prev => prev.includes(orderId) ? prev.filter(id => id !== orderId) : [...prev, orderId]);
     setSelectedContext({ type: 'pending_order', id: orderId, sourceStage: 'order_pool' });
   };
 
   const selectFilteredOrders = () => {
-    const nextIds = filteredOrders.map(order => order.order_id);
+    const nextIds = selectableFilteredOrderIds;
     setSelected(prev => [...new Set([...prev, ...nextIds])]);
   };
 
@@ -1155,7 +1172,7 @@ export default function ScheduleWorkbench() {
     setBusy(true);
     setStatus({ tone: 'ok', message: '' });
     try {
-      const res = await createPreplan({ order_ids: selected, mode: 'AUTO' });
+      const res = await createPreplan({ order_ids: selectableSelectedIds, mode: 'AUTO' });
       setActivePlan(res.data);
       setSelected([]);
       setSelectedPlanOrderId('');
@@ -1498,7 +1515,7 @@ export default function ScheduleWorkbench() {
           </select>
         </div>
         <div className="workbench-select-actions">
-          <button className="btn btn-ghost btn-small" type="button" disabled={!filteredOrders.length} data-testid="workbench-select-filtered" onClick={selectFilteredOrders}>
+          <button className="btn btn-ghost btn-small" type="button" disabled={!selectableFilteredOrderIds.length} data-testid="workbench-select-filtered" onClick={selectFilteredOrders}>
             全选当前筛选
           </button>
           <button className="btn btn-ghost btn-small" type="button" disabled={!selected.length} data-testid="workbench-clear-selected" onClick={clearSelectedOrders}>
@@ -1518,12 +1535,13 @@ export default function ScheduleWorkbench() {
       <div className="workbench-order-list">
         {pagedFilteredOrders.map(order => {
           const screening = screeningByOrderId.get(order.order_id);
+          const selectable = isSelectableScreeningStatus(screening?.screening_status);
           return (
             <div
               key={order.order_id}
               role="button"
               tabIndex={0}
-              className={`workbench-order ${selectedSet.has(order.order_id) ? 'selected' : ''}`}
+              className={`workbench-order ${selectedSet.has(order.order_id) ? 'selected' : ''} ${selectable ? '' : 'disabled'}`}
               data-testid={`workbench-pending-order-${testIdPart(order.order_id)}`}
               onClick={() => toggleOrder(order.order_id)}
               onKeyDown={event => {
@@ -1625,7 +1643,7 @@ export default function ScheduleWorkbench() {
       <WorkflowStepper activeStage={activeStage} recommendedStage={recommendedStage} stageStates={stageStates} onStageChange={selectStage} />
       <ActiveDraftCommandBar
         activePlan={activePlan}
-        counts={activePlan ? planOrderCounts : { input: selected.length, scheduled: 0, schedulable: 0, blocked: 0, late: 0 }}
+        counts={activePlan ? planOrderCounts : { input: selectableSelectedIds.length, scheduled: 0, schedulable: 0, blocked: 0, late: 0 }}
         versionState={draftVersionState}
         publishBlockReason={publishBlockReason}
         primaryAction={primaryAction}
@@ -1745,11 +1763,11 @@ export default function ScheduleWorkbench() {
                   </div>
                   <button
                     className="btn btn-primary"
-                    disabled={workbenchBusy || selected.length === 0}
+                    disabled={workbenchBusy || selectableSelectedIds.length === 0}
                     data-testid="workbench-create-preplan"
                     onClick={handleCreatePreplan}
                   >
-                    {selected.length ? `创建预排程 (${selected.length})` : '先选择订单'}
+                    {selectableSelectedIds.length ? `创建预排程 (${selectableSelectedIds.length})` : '先选择订单'}
                   </button>
                 </div>
                 <div className="workbench-plan-summary">
@@ -1763,7 +1781,7 @@ export default function ScheduleWorkbench() {
                   </div>
                   <div className="workbench-summary-item">
                     <span>已选择</span>
-                    <strong>{selected.length}</strong>
+                    <strong>{selectableSelectedIds.length}</strong>
                   </div>
                   <div className="workbench-summary-item warning">
                     <span>初筛风险</span>
