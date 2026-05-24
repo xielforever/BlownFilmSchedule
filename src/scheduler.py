@@ -380,8 +380,14 @@ class AdvancedMedicalAPS:
     @staticmethod
     def _normalize_candidate_acceptance_policy(policy: Optional[Dict]) -> Dict:
         policy = policy or {}
+        max_deferred_count = policy.get("max_deferred_count")
         return {
             "reject_penalty": max(0, int(policy.get("reject_penalty") or 10_000_000)),
+            "max_deferred_count": (
+                None
+                if max_deferred_count is None
+                else max(0, int(max_deferred_count))
+            ),
         }
 
     @staticmethod
@@ -963,6 +969,9 @@ class AdvancedMedicalAPS:
                 rejected_candidates[idx] = rejected
             else:
                 model.add_exactly_one(presence[idx][m] for m in eligible[idx])
+        max_deferred_count = self.candidate_acceptance_policy.get("max_deferred_count")
+        if max_deferred_count is not None and rejected_candidates:
+            model.add(sum(rejected_candidates.values()) <= max_deferred_count)
 
         for idx, order in enumerate(orders):
             locked_task = locked_tasks_by_order_id.get(order.order_id)

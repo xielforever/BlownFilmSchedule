@@ -340,6 +340,31 @@ class TestSchedulerSequencing(unittest.TestCase):
         self.assertEqual(result.deferred_orders[0]["planning_bucket"], "candidate")
         self.assertIn("message", result.deferred_orders[0])
 
+    def test_candidate_acceptance_policy_limits_deferred_count(self):
+        must = _make_order("ORD-MUST-LIMIT")
+        candidate_a = _make_order("ORD-CANDIDATE-A", planningBucket="candidate")
+        candidate_b = _make_order("ORD-CANDIDATE-B", planningBucket="candidate")
+        machine = _make_machine()
+        aps = AdvancedMedicalAPS(
+            _make_setup_mgr(),
+            candidate_acceptance_policy={
+                "reject_penalty": 0,
+                "max_deferred_count": 1,
+            },
+        )
+
+        self.assertEqual(aps.candidate_acceptance_policy["max_deferred_count"], 1)
+        result = aps.run([must, candidate_a, candidate_b], [machine])
+
+        self.assertIn(result.status, {"OPTIMAL", "FEASIBLE", "PARTIAL"})
+        self.assertLessEqual(len(result.deferred_orders), 1)
+        scheduled_candidate_ids = {
+            task.order.order_id
+            for task in result.tasks
+            if task.order.planning_bucket == "candidate"
+        }
+        self.assertGreaterEqual(len(scheduled_candidate_ids), 1)
+
     def test_solver_profile_policy_sets_cp_sat_parameters(self):
         aps = AdvancedMedicalAPS(
             _make_setup_mgr(),
