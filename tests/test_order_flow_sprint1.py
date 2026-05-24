@@ -465,7 +465,7 @@ class _FakeCursor:
                     and (latest_action.get("assignee") or "").strip().lower() != screening_action_assignee_filter
                 ):
                     continue
-                if screening_action_unassigned_filter and latest_action.get("assignee"):
+                if screening_action_unassigned_filter and (latest_action.get("assignee") or "").strip():
                     continue
                 if (
                     screening_action_actor_filter
@@ -589,7 +589,7 @@ class _FakeCursor:
                     and (latest_action.get("assignee") or "").strip().lower() != screening_action_assignee_filter
                 ):
                     continue
-                if screening_action_unassigned_filter and latest_action.get("assignee"):
+                if screening_action_unassigned_filter and (latest_action.get("assignee") or "").strip():
                     continue
                 if (
                     screening_action_actor_filter
@@ -674,7 +674,7 @@ class _FakeCursor:
                     and (latest_action.get("assignee") or "").strip().lower() != screening_action_assignee_filter
                 ):
                     continue
-                if screening_action_unassigned_filter and latest_action.get("assignee"):
+                if screening_action_unassigned_filter and (latest_action.get("assignee") or "").strip():
                     continue
                 if (
                     screening_action_actor_filter
@@ -763,7 +763,7 @@ class _FakeCursor:
                     and (latest_action.get("assignee") or "").strip().lower() != screening_action_assignee_filter
                 ):
                     continue
-                if screening_action_unassigned_filter and latest_action.get("assignee"):
+                if screening_action_unassigned_filter and (latest_action.get("assignee") or "").strip():
                     continue
                 if (
                     screening_action_actor_filter
@@ -852,7 +852,7 @@ class _FakeCursor:
                     and (latest_action.get("assignee") or "").strip().lower() != screening_action_assignee_filter
                 ):
                     continue
-                if screening_action_unassigned_filter and latest_action.get("assignee"):
+                if screening_action_unassigned_filter and (latest_action.get("assignee") or "").strip():
                     continue
                 if (
                     screening_action_actor_filter
@@ -941,7 +941,7 @@ class _FakeCursor:
                     and (latest_action.get("assignee") or "").strip().lower() != screening_action_assignee_filter
                 ):
                     continue
-                if screening_action_unassigned_filter and latest_action.get("assignee"):
+                if screening_action_unassigned_filter and (latest_action.get("assignee") or "").strip():
                     continue
                 if (
                     screening_action_actor_filter
@@ -2615,7 +2615,7 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
     def test_list_orders_filters_unassigned_screening_action_assignee(self):
         db = _FakeDb()
         db.products.add("Film-A")
-        for order_id in ["ORD-UNASSIGNED", "ORD-ASSIGNED"]:
+        for order_id in ["ORD-UNASSIGNED", "ORD-BLANK-ASSIGNEE", "ORD-ASSIGNED"]:
             db.production_orders[order_id] = {
                 "order_id": order_id,
                 "customer_id": "STANDARD",
@@ -2644,6 +2644,20 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
                 "is_stale": False,
             }
         db.order_screening_action_audit.append({
+            "id": 50,
+            "order_id": "ORD-BLANK-ASSIGNEE",
+            "screening_status": "blocked",
+            "business_bucket": "blocked_machine_capability",
+            "screening_code": "no_eligible_machine",
+            "action_type": "request_data_fix",
+            "handling_status": "in_progress",
+            "reason_text": "璐熻矗浜轰粎鏈夌┖鐧?",
+            "assignee": "   ",
+            "actor": "planner",
+            "details": {},
+            "created_at": datetime(2026, 5, 24, 7, 30, tzinfo=timezone.utc),
+        })
+        db.order_screening_action_audit.append({
             "id": 51,
             "order_id": "ORD-ASSIGNED",
             "screening_status": "blocked",
@@ -2668,9 +2682,13 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
             db=db,
         )
 
-        self.assertEqual(result["total"], 1)
-        self.assertEqual([item["order_id"] for item in result["items"]], ["ORD-UNASSIGNED"])
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(
+            [item["order_id"] for item in result["items"]],
+            ["ORD-UNASSIGNED", "ORD-BLANK-ASSIGNEE"],
+        )
         self.assertIsNone(result["items"][0]["screening"]["latest_action"])
+        self.assertEqual(result["items"][1]["screening"]["latest_action"]["assignee"], "   ")
 
     def test_list_orders_filters_unhandled_screening_exceptions(self):
         db = _FakeDb()
@@ -2909,6 +2927,20 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
             }
         db.order_screening_action_audit.extend([
             {
+                "id": 40,
+                "order_id": "ORD-UNASSIGNED",
+                "screening_status": "blocked",
+                "business_bucket": "blocked_machine_capability",
+                "screening_code": "no_eligible_machine",
+                "action_type": "request_data_fix",
+                "handling_status": "open",
+                "reason_text": "璐熻矗浜轰粎鏈夌┖鐧?",
+                "assignee": "   ",
+                "actor": "planner",
+                "details": {},
+                "created_at": datetime(2026, 5, 24, 7, 30, tzinfo=timezone.utc),
+            },
+            {
                 "id": 41,
                 "order_id": "ORD-ORDER-ADMIN",
                 "screening_status": "blocked",
@@ -2985,6 +3017,20 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
                 "is_stale": False,
             }
         db.order_screening_action_audit.extend([
+            {
+                "id": 42,
+                "order_id": "ORD-NO-ACTOR",
+                "screening_status": "blocked",
+                "business_bucket": "blocked_machine_capability",
+                "screening_code": "no_eligible_machine",
+                "action_type": "request_data_fix",
+                "handling_status": "open",
+                "reason_text": "鎿嶄綔浜轰粎鏈夌┖鐧?",
+                "assignee": "order-admin",
+                "actor": "   ",
+                "details": {},
+                "created_at": datetime(2026, 5, 24, 7, 30, tzinfo=timezone.utc),
+            },
             {
                 "id": 43,
                 "order_id": "ORD-PLANNER-A",

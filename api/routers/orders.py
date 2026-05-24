@@ -1002,7 +1002,7 @@ def list_orders(
     if screening_action_assignee:
         normalized_action_assignee = screening_action_assignee.strip().lower()
         if normalized_action_assignee == "unassigned":
-            where_clauses.append("latest_action.assignee IS NULL")
+            where_clauses.append("(latest_action.assignee IS NULL OR TRIM(latest_action.assignee)='')")
         else:
             where_clauses.append("LOWER(TRIM(latest_action.assignee))=%s")
             params.append(normalized_action_assignee)
