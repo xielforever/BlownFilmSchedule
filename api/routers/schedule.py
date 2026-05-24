@@ -919,6 +919,29 @@ ADJUSTMENT_REVIEW_REASON_DETAILS = {
 }
 
 
+ADJUSTMENT_REVIEW_REASON_EVIDENCE = {
+    "end_delayed": ("end_delta_mins", "delay_threshold_mins"),
+    "setup_increased": ("setup_time_delta_mins", "setup_threshold_mins"),
+    "tardiness_increased": ("tardiness_delta_mins", "tardiness_threshold_mins"),
+}
+
+
+def _manual_adjustment_review_reason_details(
+    reasons: list[str],
+    impact: dict[str, Any],
+    review_policy: dict[str, int],
+) -> list[dict[str, Any]]:
+    details = []
+    for reason in reasons:
+        impact_key, threshold_key = ADJUSTMENT_REVIEW_REASON_EVIDENCE[reason]
+        details.append({
+            **ADJUSTMENT_REVIEW_REASON_DETAILS[reason],
+            "actual_delta_mins": int(impact.get(impact_key) or 0),
+            "threshold_mins": int(review_policy.get(threshold_key) or 0),
+        })
+    return details
+
+
 def _manual_adjustment_impact_summary(
     adjustments: list[dict[str, Any]],
     review_policy: dict[str, Any] | None = None,
@@ -958,7 +981,7 @@ def _manual_adjustment_impact_summary(
             review_reasons.append({
                 "order_id": order_id,
                 "reasons": reasons,
-                "reason_details": [ADJUSTMENT_REVIEW_REASON_DETAILS[reason] for reason in reasons],
+                "reason_details": _manual_adjustment_review_reason_details(reasons, impact, review_policy),
             })
         for key in ("start_delta_mins", "end_delta_mins"):
             value = impact.get(key)
