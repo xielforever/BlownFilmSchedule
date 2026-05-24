@@ -30,6 +30,9 @@ class TestSolverBenchmark(unittest.TestCase):
             "max_late_order_count": None,
             "max_weighted_tardiness": None,
             "max_total_setup_time_mins": None,
+            "max_pruning_late_order_delta": None,
+            "max_pruning_weighted_tardiness_delta": None,
+            "max_pruning_setup_time_delta_mins": None,
             "arc_pruning_enabled": False,
             "arc_pruning_max_setup_mins": 0,
             "arc_pruning_top_k_per_order": 0,
@@ -190,6 +193,29 @@ class TestSolverBenchmark(unittest.TestCase):
             "pruned_arc_count_delta",
         ]:
             self.assertIn(key, comparison)
+
+    def test_benchmark_command_fails_when_arc_pruning_degrades_quality_beyond_threshold(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "compare-pruning-threshold.json")
+            exit_code = main([
+                "--order-counts", "3",
+                "--machine-count", "1",
+                "--compare-arc-pruning",
+                "--arc-pruning-max-setup-mins", "999",
+                "--arc-pruning-top-k-per-order", "1",
+                "--max-pruning-setup-time-delta-mins", "-1",
+                "--output", path,
+                "--max-wall-time-seconds", "10",
+            ])
+            with open(path, encoding="utf-8") as f:
+                summary = json.load(f)
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(summary["status"], "FAIL")
+        self.assertEqual(summary["failed_count"], 1)
+        comparison = summary["arc_pruning_comparisons"][0]
+        self.assertFalse(comparison["passed"])
+        self.assertIn("total_setup_time_mins_delta", comparison["failed_checks"])
 
 
 if __name__ == "__main__":

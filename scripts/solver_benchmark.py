@@ -28,6 +28,9 @@ class BenchmarkCase:
     max_late_order_count: int | None = None
     max_weighted_tardiness: int | None = None
     max_total_setup_time_mins: int | None = None
+    max_pruning_late_order_delta: int | None = None
+    max_pruning_weighted_tardiness_delta: int | None = None
+    max_pruning_setup_time_delta_mins: int | None = None
     arc_pruning_enabled: bool = False
     arc_pruning_max_setup_mins: int = 0
     arc_pruning_top_k_per_order: int = 0
@@ -59,6 +62,9 @@ def _case_config(case: BenchmarkCase) -> dict:
         "max_late_order_count": case.max_late_order_count,
         "max_weighted_tardiness": case.max_weighted_tardiness,
         "max_total_setup_time_mins": case.max_total_setup_time_mins,
+        "max_pruning_late_order_delta": case.max_pruning_late_order_delta,
+        "max_pruning_weighted_tardiness_delta": case.max_pruning_weighted_tardiness_delta,
+        "max_pruning_setup_time_delta_mins": case.max_pruning_setup_time_delta_mins,
         "arc_pruning_enabled": case.arc_pruning_enabled,
         "arc_pruning_max_setup_mins": case.arc_pruning_max_setup_mins,
         "arc_pruning_top_k_per_order": case.arc_pruning_top_k_per_order,
@@ -210,6 +216,9 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
             "max_late_order_count": case.max_late_order_count,
             "max_weighted_tardiness": case.max_weighted_tardiness,
             "max_total_setup_time_mins": case.max_total_setup_time_mins,
+            "max_pruning_late_order_delta": case.max_pruning_late_order_delta,
+            "max_pruning_weighted_tardiness_delta": case.max_pruning_weighted_tardiness_delta,
+            "max_pruning_setup_time_delta_mins": case.max_pruning_setup_time_delta_mins,
         },
         "arc_pruning_policy": {
             "enabled": case.arc_pruning_enabled,
@@ -243,6 +252,35 @@ def _model_size_delta(pruned: dict, baseline: dict, key: str) -> int | None:
     return int(left) - int(right)
 
 
+def _comparison_thresholds(baseline: dict, pruned: dict) -> dict:
+    thresholds = {}
+    for key in [
+        "max_pruning_late_order_delta",
+        "max_pruning_weighted_tardiness_delta",
+        "max_pruning_setup_time_delta_mins",
+    ]:
+        value = pruned.get("quality_thresholds", {}).get(key)
+        if value is None:
+            value = baseline.get("quality_thresholds", {}).get(key)
+        thresholds[key] = value
+    return thresholds
+
+
+def _failed_comparison_checks(comparison: dict, thresholds: dict) -> list[str]:
+    checks = []
+    mapping = {
+        "late_order_count_delta": "max_pruning_late_order_delta",
+        "weighted_tardiness_delta": "max_pruning_weighted_tardiness_delta",
+        "total_setup_time_mins_delta": "max_pruning_setup_time_delta_mins",
+    }
+    for delta_key, threshold_key in mapping.items():
+        threshold = thresholds.get(threshold_key)
+        delta = comparison.get(delta_key)
+        if threshold is not None and delta is not None and delta > threshold:
+            checks.append(delta_key)
+    return checks
+
+
 def _arc_pruning_comparisons(case_results: list[dict]) -> list[dict]:
     grouped: dict[str, dict[str, dict]] = {}
     for case in case_results:
@@ -258,7 +296,8 @@ def _arc_pruning_comparisons(case_results: list[dict]) -> list[dict]:
         pruned = variants.get("pruning_on")
         if not baseline or not pruned:
             continue
-        comparisons.append({
+        thresholds = _comparison_thresholds(baseline, pruned)
+        comparison = {
             "comparison_group": group,
             "baseline_case": baseline["name"],
             "pruned_case": pruned["name"],
@@ -268,24 +307,31 @@ def _arc_pruning_comparisons(case_results: list[dict]) -> list[dict]:
             "total_setup_time_mins_delta": _numeric_delta(pruned, baseline, "total_setup_time_mins"),
             "arc_count_delta": _model_size_delta(pruned, baseline, "arc_count"),
             "pruned_arc_count_delta": _model_size_delta(pruned, baseline, "pruned_arc_count"),
-        })
+            "quality_thresholds": thresholds,
+        }
+        failed_checks = _failed_comparison_checks(comparison, thresholds)
+        comparison["failed_checks"] = failed_checks
+        comparison["passed"] = not failed_checks
+        comparisons.append(comparison)
     return comparisons
 
 
 def run_benchmark_suite(cases: Iterable[BenchmarkCase]) -> dict:
     case_list = list(cases)
     case_results = [run_benchmark_case(case) for case in case_list]
-    passed = all(item["passed"] for item in case_results)
+    arc_pruning_comparisons = _arc_pruning_comparisons(case_results)
+    failed_comparison_count = sum(1 for item in arc_pruning_comparisons if not item["passed"])
+    passed = all(item["passed"] for item in case_results) and failed_comparison_count == 0
     return {
         "schema_version": SUMMARY_SCHEMA_VERSION,
         "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "status": "PASS" if passed else "FAIL",
         "case_count": len(case_results),
         "passed_count": sum(1 for item in case_results if item["passed"]),
-        "failed_count": sum(1 for item in case_results if not item["passed"]),
+        "failed_count": sum(1 for item in case_results if not item["passed"]) + failed_comparison_count,
         "case_configs": [_case_config(case) for case in case_list],
         "cases": case_results,
-        "arc_pruning_comparisons": _arc_pruning_comparisons(case_results),
+        "arc_pruning_comparisons": arc_pruning_comparisons,
     }
 
 
@@ -318,6 +364,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-late-order-count", type=int, default=None)
     parser.add_argument("--max-weighted-tardiness", type=int, default=None)
     parser.add_argument("--max-total-setup-time-mins", type=int, default=None)
+    parser.add_argument("--max-pruning-late-order-delta", type=int, default=None)
+    parser.add_argument("--max-pruning-weighted-tardiness-delta", type=int, default=None)
+    parser.add_argument("--max-pruning-setup-time-delta-mins", type=int, default=None)
     parser.add_argument("--arc-pruning-enabled", action="store_true")
     parser.add_argument("--arc-pruning-max-setup-mins", type=int, default=0)
     parser.add_argument("--arc-pruning-top-k-per-order", type=int, default=0)
@@ -344,6 +393,19 @@ def main(argv: list[str] | None = None) -> int:
                 ),
                 "max_total_setup_time_mins": (
                     None if args.max_total_setup_time_mins is None else max(0, int(args.max_total_setup_time_mins))
+                ),
+                "max_pruning_late_order_delta": (
+                    None if args.max_pruning_late_order_delta is None else int(args.max_pruning_late_order_delta)
+                ),
+                "max_pruning_weighted_tardiness_delta": (
+                    None
+                    if args.max_pruning_weighted_tardiness_delta is None
+                    else int(args.max_pruning_weighted_tardiness_delta)
+                ),
+                "max_pruning_setup_time_delta_mins": (
+                    None
+                    if args.max_pruning_setup_time_delta_mins is None
+                    else int(args.max_pruning_setup_time_delta_mins)
                 ),
                 "arc_pruning_max_setup_mins": max(0, int(args.arc_pruning_max_setup_mins)),
                 "arc_pruning_top_k_per_order": max(0, int(args.arc_pruning_top_k_per_order)),
