@@ -954,6 +954,7 @@ def _manual_adjustment_review_reason_summary(review_reasons: list[dict[str, Any]
                 "count": 0,
                 "order_ids": [],
                 "max_actual_delta_mins": 0,
+                "max_excess_mins": 0,
                 "threshold_mins": detail["threshold_mins"],
             })
             entry["count"] += 1
@@ -962,6 +963,10 @@ def _manual_adjustment_review_reason_summary(review_reasons: list[dict[str, Any]
             entry["max_actual_delta_mins"] = max(
                 entry["max_actual_delta_mins"],
                 int(detail.get("actual_delta_mins") or 0),
+            )
+            entry["max_excess_mins"] = max(
+                entry["max_excess_mins"],
+                int(detail.get("actual_delta_mins") or 0) - int(detail.get("threshold_mins") or 0),
             )
     return summary
 

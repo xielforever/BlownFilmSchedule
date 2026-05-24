@@ -746,6 +746,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "count": 1,
                 "order_ids": ["ORD-REVIEW"],
                 "max_actual_delta_mins": 31,
+                "max_excess_mins": 1,
                 "threshold_mins": 30,
             },
             "setup_increased": {
@@ -754,6 +755,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "count": 1,
                 "order_ids": ["ORD-REVIEW"],
                 "max_actual_delta_mins": 21,
+                "max_excess_mins": 1,
                 "threshold_mins": 20,
             },
             "tardiness_increased": {
@@ -762,6 +764,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "count": 1,
                 "order_ids": ["ORD-REVIEW"],
                 "max_actual_delta_mins": 16,
+                "max_excess_mins": 1,
                 "threshold_mins": 15,
             },
         })
