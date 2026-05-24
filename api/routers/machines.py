@@ -212,6 +212,8 @@ def apply_schedule_end_state(
         )
     for row in state_rows:
         row["continuous_run_mins"] = continuous_by_machine.get(row["machine_id"], 0)
+    if state_rows:
+        _mark_order_screening_cache_stale(cur, reason="machine_state_changed")
     db.commit()
     return {
         "run_id": resolved_run_id,
