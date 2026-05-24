@@ -27,7 +27,7 @@ import {
   draftVersionLabels,
   draftVersionTones,
   isDraftStale,
-  isSelectableScreeningStatus,
+  isSelectableScreening,
   matchesScreeningFilter,
   selectableOrderIds,
   summarizeQueue,
@@ -611,7 +611,7 @@ export default function ScheduleWorkbench() {
   );
   const selectableSelectedIds = useMemo(
     () => selected.filter(orderId =>
-      isSelectableScreeningStatus(screeningByOrderId.get(orderId)?.screening_status),
+      isSelectableScreening(screeningByOrderId.get(orderId)),
     ),
     [screeningByOrderId, selected],
   );
@@ -1105,8 +1105,13 @@ export default function ScheduleWorkbench() {
 
   const toggleOrder = (orderId) => {
     const screening = screeningByOrderId.get(orderId);
-    if (!isSelectableScreeningStatus(screening?.screening_status)) {
-      setStatus({ tone: 'error', message: '\u963b\u65ad\u8ba2\u5355\u9700\u8981\u5148\u5904\u7406\u5f02\u5e38\uff0c\u4e0d\u80fd\u76f4\u63a5\u8fdb\u5165\u9884\u6392\u3002' });
+    if (!isSelectableScreening(screening)) {
+      setStatus({
+        tone: 'error',
+        message: screening?.is_stale
+          ? '\u8ba2\u5355\u7b5b\u9009\u7ed3\u679c\u5df2\u8fc7\u671f\uff0c\u8bf7\u5148\u91cd\u65b0\u7b5b\u9009\u540e\u518d\u8fdb\u5165\u9884\u6392\u3002'
+          : '\u963b\u65ad\u8ba2\u5355\u9700\u8981\u5148\u5904\u7406\u5f02\u5e38\uff0c\u4e0d\u80fd\u76f4\u63a5\u8fdb\u5165\u9884\u6392\u3002',
+      });
       return;
     }
     setSelected(prev => prev.includes(orderId) ? prev.filter(id => id !== orderId) : [...prev, orderId]);
@@ -1538,7 +1543,7 @@ export default function ScheduleWorkbench() {
       <div className="workbench-order-list">
         {pagedFilteredOrders.map(order => {
           const screening = screeningByOrderId.get(order.order_id);
-          const selectable = isSelectableScreeningStatus(screening?.screening_status);
+          const selectable = isSelectableScreening(screening);
           return (
             <div
               key={order.order_id}
