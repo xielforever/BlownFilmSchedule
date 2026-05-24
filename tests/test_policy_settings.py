@@ -568,6 +568,36 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(locked_tasks[1].order.product_type, "LOCKED_EXTERNAL")
         self.assertTrue(locked_tasks[1].manual_lock_time)
 
+    def test_manual_adjustment_impact_summarizes_move_cost(self):
+        impact = schedule_router._manual_adjustment_impact(
+            {
+                "machine_id": "LINE-A",
+                "start_time": "2026-05-17T08:00:00",
+                "end_time": "2026-05-17T10:00:00",
+                "tardiness_mins": 0,
+                "manual_lock_machine": False,
+                "manual_lock_time": False,
+            },
+            {
+                "machine_id": "LINE-B",
+                "start_time": "2026-05-17T09:30:00",
+                "end_time": "2026-05-17T12:15:00",
+                "tardiness_mins": 45,
+                "lock_machine": True,
+                "lock_time": True,
+            },
+        )
+
+        self.assertTrue(impact["machine_changed"])
+        self.assertEqual(impact["from_machine_id"], "LINE-A")
+        self.assertEqual(impact["to_machine_id"], "LINE-B")
+        self.assertEqual(impact["start_delta_mins"], 90)
+        self.assertEqual(impact["end_delta_mins"], 135)
+        self.assertEqual(impact["duration_delta_mins"], 45)
+        self.assertEqual(impact["tardiness_delta_mins"], 45)
+        self.assertTrue(impact["lock_machine"])
+        self.assertTrue(impact["lock_time"])
+
 
 if __name__ == "__main__":
     unittest.main()

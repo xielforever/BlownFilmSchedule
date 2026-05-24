@@ -797,6 +797,57 @@ def _task_row_to_dict(row):
     }
 
 
+def _adjustment_datetime(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return _as_naive(value)
+    try:
+        return _as_naive(datetime.fromisoformat(str(value)))
+    except ValueError:
+        return None
+
+
+def _minutes_between(before, after):
+    if before is None or after is None:
+        return None
+    return int((after - before).total_seconds() / 60)
+
+
+def _duration_between(start, end):
+    if start is None or end is None:
+        return None
+    return int((end - start).total_seconds() / 60)
+
+
+def _manual_adjustment_impact(before_state: dict[str, Any] | None, after_state: dict[str, Any] | None) -> dict[str, Any]:
+    before_state = before_state or {}
+    after_state = after_state or {}
+    before_start = _adjustment_datetime(before_state.get("start_time"))
+    before_end = _adjustment_datetime(before_state.get("end_time"))
+    after_start = _adjustment_datetime(after_state.get("start_time"))
+    after_end = _adjustment_datetime(after_state.get("end_time"))
+    before_tardiness = int(before_state.get("tardiness_mins") or 0)
+    after_tardiness = int(after_state.get("tardiness_mins") or before_tardiness)
+    from_machine = before_state.get("machine_id")
+    to_machine = after_state.get("machine_id")
+    return {
+        "from_machine_id": from_machine,
+        "to_machine_id": to_machine,
+        "machine_changed": bool(from_machine and to_machine and from_machine != to_machine),
+        "start_delta_mins": _minutes_between(before_start, after_start),
+        "end_delta_mins": _minutes_between(before_end, after_end),
+        "duration_delta_mins": (
+            None
+            if _duration_between(before_start, before_end) is None or _duration_between(after_start, after_end) is None
+            else _duration_between(after_start, after_end) - _duration_between(before_start, before_end)
+        ),
+        "tardiness_delta_mins": after_tardiness - before_tardiness,
+        "lock_machine": bool(after_state.get("lock_machine", after_state.get("manual_lock_machine", False))),
+        "lock_time": bool(after_state.get("lock_time", after_state.get("manual_lock_time", False))),
+    }
+
+
 def _locked_external_order_from_row(row: dict[str, Any]) -> ProductionOrderModel:
     return ProductionOrderModel(
         order_id=str(row.get("order_id")),
@@ -3397,12 +3448,15 @@ def get_preplan(run_id: int, db=Depends(get_db), _=Depends(get_current_user)):
     """, (run_id,))
     adjustments = []
     for row in cur.fetchall():
+        before_state = _normalize_json(row["before_state"], {})
+        after_state = _normalize_json(row["after_state"], {})
         adjustments.append({
             "id": row["id"],
             "order_id": row["order_id"],
             "action_type": row["action_type"],
-            "before_state": _normalize_json(row["before_state"], {}),
-            "after_state": _normalize_json(row["after_state"], {}),
+            "before_state": before_state,
+            "after_state": after_state,
+            "impact": _manual_adjustment_impact(before_state, after_state),
             "reason_code": row["reason_code"],
             "reason_text": row["reason_text"],
             "changed_by": row["changed_by"],
@@ -3577,6 +3631,7 @@ def apply_manual_adjustment(
         )
         sequence_index = cur.fetchone()["next_seq"]
     tardiness_mins = max(0, int((_as_naive(payload.end_time) - _as_naive(ctx["due_date"])).total_seconds() / 60))
+    after_state["tardiness_mins"] = tardiness_mins
     task_source = "ADJUSTED" if before else "MANUAL"
 
     if before:
