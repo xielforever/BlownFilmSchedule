@@ -104,6 +104,25 @@ class TestSchedulerSequencing(unittest.TestCase):
             self.assertIn(key, phase1)
         self.assertGreaterEqual(phase1["wall_time"], 0)
 
+    def test_solver_metrics_record_model_size(self):
+        orders = [
+            _make_order("ORD-MODEL-MUST"),
+            _make_order("ORD-MODEL-CANDIDATE", planningBucket="candidate"),
+        ]
+        machine = _make_machine()
+        aps = AdvancedMedicalAPS(_make_setup_mgr())
+
+        result = aps.run(orders, [machine])
+
+        model_size = result.solver_metrics["model_size"]
+        self.assertEqual(model_size["order_count"], 2)
+        self.assertEqual(model_size["machine_count"], 1)
+        self.assertEqual(model_size["assignment_count"], 2)
+        self.assertEqual(model_size["optional_candidate_count"], 1)
+        self.assertEqual(model_size["eligible_orders_per_machine"], {"LINE-T": 2})
+        self.assertGreaterEqual(model_size["arc_count"], 7)
+        self.assertEqual(model_size["setup_cache_size"], 4)
+
     def test_validation_catches_machine_overlap(self):
         order_a = _make_order("ORD-A")
         order_b = _make_order("ORD-B")

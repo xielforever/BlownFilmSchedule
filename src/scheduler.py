@@ -520,6 +520,12 @@ class AdvancedMedicalAPS:
                 duration_cache[(idx, m_idx)] = machines[m_idx].calculate_duration(orders[idx])
 
         H = self._estimate_horizon(n, M, eligible, setup_cache, duration_cache)
+        result.solver_metrics["model_size"] = self._model_size_metrics(
+            orders,
+            machines,
+            eligible,
+            setup_cache,
+        )
         logger.info("开始排程: %d 笔订单, %d 台机台, 计划域=%d min", n, M, H)
 
         # ═══════════════════════════════════════════════════
@@ -822,6 +828,31 @@ class AdvancedMedicalAPS:
         # still becomes infeasible when orders are restricted to a subset of lines.
         dynamic_horizon = min_total_duration + setup_buffer
         return max(MAX_HORIZON_MINUTES, dynamic_horizon)
+
+    def _model_size_metrics(
+        self,
+        orders: List[ProductionOrderModel],
+        machines: List[BlownFilmMachineModel],
+        eligible: Dict[int, List[int]],
+        setup_cache: Dict[Tuple[int, int, int], int],
+    ) -> Dict:
+        eligible_orders_per_machine: Dict[str, int] = {}
+        arc_count = 0
+        for m_idx, machine in enumerate(machines):
+            order_count = sum(1 for idx in range(len(orders)) if m_idx in eligible.get(idx, []))
+            eligible_orders_per_machine[machine.machine_id] = order_count
+            if order_count:
+                arc_count += 1 + (3 * order_count) + (order_count * (order_count - 1))
+
+        return {
+            "order_count": len(orders),
+            "machine_count": len(machines),
+            "assignment_count": sum(len(machine_indices) for machine_indices in eligible.values()),
+            "optional_candidate_count": sum(1 for order in orders if self._is_optional_candidate(order)),
+            "eligible_orders_per_machine": eligible_orders_per_machine,
+            "arc_count": arc_count,
+            "setup_cache_size": len(setup_cache),
+        }
 
     def _solve_phase(
         self,
