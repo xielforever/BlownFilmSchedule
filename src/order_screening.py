@@ -314,21 +314,22 @@ def _normalize_screening_policy(policy: Optional[dict] = None) -> dict:
     return {
         "due_risk_min_slack_mins": max(0, int(min_slack)),
         "due_risk_duration_multiplier": max(0.0, float(duration_multiplier)),
-        "allowed_order_statuses": {
-            str(status).strip().upper()
-            for status in allowed_statuses
-            if str(status).strip()
-        } or set(DEFAULT_SCREENING_POLICY["allowed_order_statuses"]),
-        "prohibited_override_codes": {
-            str(code).strip().lower()
-            for code in prohibited_override_codes
-            if str(code).strip()
-        },
-        "restricted_override_codes": {
-            str(code).strip().lower()
-            for code in restricted_override_codes
-            if str(code).strip()
-        },
+        "allowed_order_statuses": _normalize_policy_values(
+            allowed_statuses,
+            transform=str.upper,
+        ) or set(DEFAULT_SCREENING_POLICY["allowed_order_statuses"]),
+        "prohibited_override_codes": _normalize_policy_values(prohibited_override_codes),
+        "restricted_override_codes": _normalize_policy_values(restricted_override_codes),
+    }
+
+
+def _normalize_policy_values(values, *, transform=str.lower) -> set[str]:
+    if isinstance(values, str):
+        values = [values]
+    return {
+        transform(str(value).strip())
+        for value in values
+        if str(value).strip()
     }
 
 

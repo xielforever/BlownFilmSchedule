@@ -84,6 +84,19 @@ class TestOrderScreening(unittest.TestCase):
         self.assertEqual(item["screening_status"], "ready")
         self.assertEqual(item["code"], "ready")
 
+    def test_allowed_order_statuses_accept_single_string(self):
+        order = _make_order("ORD-RELEASED-STRING")
+        result = screen_orders(
+            [order],
+            [_make_machine()],
+            status_by_order_id={"ORD-RELEASED-STRING": "RELEASED"},
+            screening_policy={"allowed_order_statuses": "RELEASED"},
+        )
+
+        item = result["items"][0]
+        self.assertEqual(item["screening_status"], "ready")
+        self.assertEqual(item["code"], "ready")
+
     def test_missing_recipe_blocks_order(self):
         order = _make_order("ORD-NO-RECIPE", recipe_materials=[])
         result = screen_orders([order], [_make_machine()])
