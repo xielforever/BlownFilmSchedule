@@ -365,6 +365,32 @@ class TestSchedulerSequencing(unittest.TestCase):
         }
         self.assertGreaterEqual(len(scheduled_candidate_ids), 1)
 
+    def test_candidate_acceptance_policy_enforces_min_acceptance_ratio(self):
+        must = _make_order("ORD-MUST-RATIO")
+        candidates = [
+            _make_order(f"ORD-CANDIDATE-RATIO-{idx}", planningBucket="candidate")
+            for idx in range(4)
+        ]
+        machine = _make_machine()
+        aps = AdvancedMedicalAPS(
+            _make_setup_mgr(),
+            candidate_acceptance_policy={
+                "reject_penalty": 0,
+                "min_acceptance_ratio": 0.75,
+            },
+        )
+
+        self.assertEqual(aps.candidate_acceptance_policy["min_acceptance_ratio"], 0.75)
+        result = aps.run([must, *candidates], [machine])
+
+        self.assertIn(result.status, {"OPTIMAL", "FEASIBLE", "PARTIAL"})
+        scheduled_candidate_ids = {
+            task.order.order_id
+            for task in result.tasks
+            if task.order.planning_bucket == "candidate"
+        }
+        self.assertGreaterEqual(len(scheduled_candidate_ids), 3)
+
     def test_model_size_records_candidate_acceptance_policy(self):
         orders = [
             _make_order("ORD-METRIC-MUST"),
@@ -376,6 +402,7 @@ class TestSchedulerSequencing(unittest.TestCase):
             candidate_acceptance_policy={
                 "reject_penalty": 123,
                 "max_deferred_count": 1,
+                "min_acceptance_ratio": 0.5,
             },
         )
 
@@ -386,6 +413,7 @@ class TestSchedulerSequencing(unittest.TestCase):
             {
                 "reject_penalty": 123,
                 "max_deferred_count": 1,
+                "min_acceptance_ratio": 0.5,
             },
         )
 

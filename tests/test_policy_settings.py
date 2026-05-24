@@ -32,6 +32,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
             "planning_candidate_horizon_days",
             "candidate_reject_penalty",
             "candidate_max_deferred_count",
+            "candidate_min_acceptance_ratio",
             "arc_pruning_enabled",
             "arc_pruning_max_setup_mins",
             "screening_due_risk_min_slack_mins",
@@ -115,6 +116,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
                     "solver_log_search_progress": True,
                     "candidate_reject_penalty": 1234,
                     "candidate_max_deferred_count": 2,
+                    "candidate_min_acceptance_ratio": 0.5,
                     "arc_pruning_enabled": True,
                     "arc_pruning_max_setup_mins": 240,
                 },
@@ -141,6 +143,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
             candidate_acceptance_policy={
                 "reject_penalty": 1234,
                 "max_deferred_count": 2,
+                "min_acceptance_ratio": 0.5,
             },
             arc_pruning_policy={
                 "enabled": True,
@@ -166,6 +169,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "planning_candidate_horizon_days": 21,
                 "candidate_reject_penalty": 4321,
                 "candidate_max_deferred_count": 2,
+                "candidate_min_acceptance_ratio": 0.5,
                 "arc_pruning_enabled": True,
                 "arc_pruning_max_setup_mins": 180,
                 "screening_due_risk_min_slack_mins": 300,
@@ -190,6 +194,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(snapshot["planning_bucket"]["candidate_horizon_days"], 21)
         self.assertEqual(snapshot["candidate_acceptance"]["reject_penalty"], 4321)
         self.assertEqual(snapshot["candidate_acceptance"]["max_deferred_count"], 2)
+        self.assertEqual(snapshot["candidate_acceptance"]["min_acceptance_ratio"], 0.5)
         self.assertEqual(snapshot["arc_pruning"]["enabled"], True)
         self.assertEqual(snapshot["arc_pruning"]["max_setup_time_mins"], 180)
         self.assertEqual(snapshot["order_screening"]["due_risk_min_slack_mins"], 300)

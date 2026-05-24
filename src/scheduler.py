@@ -7,6 +7,7 @@ APS 排程系统核心算法引擎
 
 from __future__ import annotations
 import logging
+import math
 from typing import List, Dict, Optional, Tuple
 
 from ortools.sat.python import cp_model
@@ -381,6 +382,7 @@ class AdvancedMedicalAPS:
     def _normalize_candidate_acceptance_policy(policy: Optional[Dict]) -> Dict:
         policy = policy or {}
         max_deferred_count = policy.get("max_deferred_count")
+        min_acceptance_ratio = float(policy.get("min_acceptance_ratio") or 0.0)
         return {
             "reject_penalty": max(0, int(policy.get("reject_penalty") or 10_000_000)),
             "max_deferred_count": (
@@ -388,6 +390,7 @@ class AdvancedMedicalAPS:
                 if max_deferred_count is None
                 else max(0, int(max_deferred_count))
             ),
+            "min_acceptance_ratio": min(1.0, max(0.0, min_acceptance_ratio)),
         }
 
     @staticmethod
@@ -973,6 +976,10 @@ class AdvancedMedicalAPS:
         max_deferred_count = self.candidate_acceptance_policy.get("max_deferred_count")
         if max_deferred_count is not None and rejected_candidates:
             model.add(sum(rejected_candidates.values()) <= max_deferred_count)
+        min_acceptance_ratio = self.candidate_acceptance_policy.get("min_acceptance_ratio", 0.0)
+        if min_acceptance_ratio > 0 and rejected_candidates:
+            min_accepted = math.ceil(len(rejected_candidates) * min_acceptance_ratio)
+            model.add(len(rejected_candidates) - sum(rejected_candidates.values()) >= min_accepted)
 
         for idx, order in enumerate(orders):
             locked_task = locked_tasks_by_order_id.get(order.order_id)
