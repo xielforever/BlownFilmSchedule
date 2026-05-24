@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  validationDisplayMeta,
+  validationDisplayCounts,
   matchesScreeningFilter,
   screeningOverrideAction,
   screeningOverrideBadge,
@@ -11,6 +13,45 @@ import {
   selectableOrderIds,
   staleOrderIds,
 } from './workbenchViewModel.js';
+
+test('validationDisplayMeta maps publishable contract levels for UI display', () => {
+  assert.deepEqual(
+    validationDisplayMeta({ level: 'publish_blocker', severity: 'error' }),
+    { level: 'publish_blocker', label: '阻断', tone: 'danger', severityClass: 'error' },
+  );
+  assert.deepEqual(
+    validationDisplayMeta({ level: 'invalid', severity: 'error' }),
+    { level: 'invalid', label: '无效', tone: 'danger', severityClass: 'error' },
+  );
+  assert.deepEqual(
+    validationDisplayMeta({ level: 'warning', severity: 'warning' }),
+    { level: 'warning', label: '警告', tone: 'warning', severityClass: 'warning' },
+  );
+  assert.deepEqual(
+    validationDisplayMeta({ level: 'info', severity: 'info' }),
+    { level: 'info', label: '提示', tone: 'neutral', severityClass: 'info' },
+  );
+  assert.equal(validationDisplayMeta({ severity: 'error' }).level, 'publish_blocker');
+});
+
+test('validationDisplayCounts separates blockers warnings and info without double counting', () => {
+  assert.deepEqual(
+    validationDisplayCounts({
+      publish_blocker_count: 1,
+      warning_count: 2,
+      info_count: 3,
+      hard_error_count: 9,
+    }),
+    { blockers: 1, warnings: 2, info: 3 },
+  );
+  assert.deepEqual(
+    validationDisplayCounts({
+      hard_error_count: 1,
+      warning_count: 2,
+    }),
+    { blockers: 1, warnings: 2, info: 0 },
+  );
+});
 
 test('selectableOrderIds excludes blocked screening orders', () => {
   const orders = [

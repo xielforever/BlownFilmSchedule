@@ -36,6 +36,8 @@ import {
   screeningOverrideBadge,
   screeningOverrideDraftRisk,
   screeningPoolCounts,
+  validationDisplayCounts,
+  validationDisplayMeta,
   selectableOrderIds,
   staleOrderIds,
   summarizeQueue,
@@ -205,6 +207,14 @@ function formatError(err, fallback) {
 
 function validationCodeLabel(code) {
   return validationCodeLabels[code] || code || '校验项';
+}
+
+function validationItemClass(item) {
+  return `validation-item ${validationDisplayMeta(item).severityClass}`;
+}
+
+function validationItemTitle(item) {
+  return `${validationDisplayMeta(item).label} · ${validationCodeLabel(item.code)}`;
 }
 
 function asNumber(value, fallback = 0) {
@@ -649,16 +659,20 @@ export default function ScheduleWorkbench() {
   const selectedPendingScreening = selectedPendingOrder ? screeningByOrderId.get(selectedPendingOrder.order_id) : null;
   const planTasks = useMemo(() => activePlan?.tasks || [], [activePlan]);
   const validation = activePlan?.validation;
+  const validationCounts = useMemo(
+    () => validationDisplayCounts(validation),
+    [validation],
+  );
   const sortedValidationItems = useMemo(() => {
-    const severityRank = { error: 0, warning: 1 };
+    const severityRank = { error: 0, warning: 1, info: 2 };
     return [...(validation?.items || [])].sort((a, b) => {
-      const severityDelta = (severityRank[a.severity] ?? 9) - (severityRank[b.severity] ?? 9);
+      const severityDelta = (severityRank[validationDisplayMeta(a).severityClass] ?? 9) - (severityRank[validationDisplayMeta(b).severityClass] ?? 9);
       if (severityDelta) return severityDelta;
       return String(a.order_id || '').localeCompare(String(b.order_id || ''));
     });
   }, [validation]);
   const hardValidationItems = useMemo(
-    () => sortedValidationItems.filter(item => item.severity === 'error'),
+    () => sortedValidationItems.filter(item => validationDisplayMeta(item).severityClass === 'error'),
     [sortedValidationItems],
   );
   const activeCounts = useMemo(
@@ -744,8 +758,8 @@ export default function ScheduleWorkbench() {
   const canEditDraft = activePlan && ['DRAFT', 'VALIDATED'].includes(activePlan.run.lifecycle_status);
   const requiresReview = settings ? settings.review_required !== false : true;
   const reviewValidationPending = Boolean(activePlan) && requiresReview && activePlan.run.lifecycle_status !== 'VALIDATED';
-  const hasHardErrors = asNumber(validation?.hard_error_count) > 0;
-  const warningPublishBlocked = asNumber(validation?.warning_count) > 0 && settings && !settings.publish_with_warnings_allowed;
+  const hasHardErrors = validationCounts.blockers > 0;
+  const warningPublishBlocked = validationCounts.warnings > 0 && settings && !settings.publish_with_warnings_allowed;
   const draftVersionState = useMemo(
     () => deriveDraftVersionState(activePlan),
     [activePlan],
@@ -761,7 +775,7 @@ export default function ScheduleWorkbench() {
   const selectedOrder = selectedPlanOrderId ? (bucketRows.get(selectedPlanOrderId) || orderById.get(selectedPlanOrderId) || selectedTask) : null;
   const selectedDiagnostic = selectedPlanOrderId ? diagnosticsByOrderId.get(selectedPlanOrderId) : null;
   const selectedOrderValidation = selectedPlanOrderId ? (validationByOrderId.get(selectedPlanOrderId) || []) : [];
-  const selectedOrderHasError = selectedOrderValidation.some(item => item.severity === 'error');
+  const selectedOrderHasError = selectedOrderValidation.some(item => validationDisplayMeta(item).severityClass === 'error');
   const selectedOrderIsUnplaced = selectedOrder?.bucket === 'unplaced_schedulable';
   const selectedOrderStatusTone = selectedOrderHasError
     ? 'danger'
@@ -793,8 +807,8 @@ export default function ScheduleWorkbench() {
       const order = sourceRow || bucketRows.get(orderId) || orderById.get(orderId);
       const diagnostic = diagnosticsByOrderId.get(orderId);
       const relatedValidation = override.validationItem ? [override.validationItem] : (validationByOrderId.get(orderId) || []);
-      const errorItem = relatedValidation.find(item => item.severity === 'error');
-      const warningItem = relatedValidation.find(item => item.severity === 'warning');
+      const errorItem = relatedValidation.find(item => validationDisplayMeta(item).severityClass === 'error');
+      const warningItem = relatedValidation.find(item => validationDisplayMeta(item).severityClass === 'warning');
       const source = order || task || {};
       const rowBucket = override.bucket || source.bucket;
       const overrideRisk = screeningOverrideDraftRisk(source);
@@ -922,10 +936,10 @@ export default function ScheduleWorkbench() {
     if (!planTasks.length) return '草案没有已排任务，无法进入制造队列。';
     if (isDraftStale(draftVersionState)) return draftVersionLabels[draftVersionState] || '草案快照已过期，需要重新预排。';
     if (reviewValidationPending) return '当前草案需要先校验方案，完成校验后才能确认进入制造队列。';
-    if (hasHardErrors) return `存在 ${asNumber(validation?.hard_error_count, hardValidationItems.length)} 个草案阻断，需处理后发布。`;
-    if (warningPublishBlocked) return `存在 ${asNumber(validation?.warning_count)} 个警告，当前系统不允许带警告发布。`;
+    if (hasHardErrors) return `存在 ${validationCounts.blockers} 个草案阻断，需处理后发布。`;
+    if (warningPublishBlocked) return `存在 ${validationCounts.warnings} 个警告，当前系统不允许带警告发布。`;
     return '';
-  }, [activePlan, canConfirm, canEditDraft, draftVersionState, hardValidationItems.length, hasHardErrors, planTasks.length, reviewValidationPending, validation, warningPublishBlocked]);
+  }, [activePlan, canConfirm, canEditDraft, draftVersionState, hasHardErrors, planTasks.length, reviewValidationPending, validationCounts, warningPublishBlocked]);
   const activeQueueSummary = useMemo(
     () => summarizeQueue(queue, activePlan?.run?.run_id || null),
     [activePlan, queue],
@@ -1348,7 +1362,8 @@ export default function ScheduleWorkbench() {
       setWorkspaceView('orders');
       setStageOverride(null);
       setSelectedContext(null);
-      setStatus({ tone: res.data.hard_error_count ? 'error' : 'ok', message: res.data.hard_error_count ? '草案存在阻断错误。' : '草案校验完成。' });
+      const nextCounts = validationDisplayCounts(res.data);
+      setStatus({ tone: nextCounts.blockers ? 'error' : 'ok', message: nextCounts.blockers ? '草案存在发布阻断。' : '草案校验完成。' });
     } catch (err) {
       setStatus({ tone: 'error', message: formatError(err, '校验草案失败。') });
     } finally {
@@ -2102,7 +2117,7 @@ export default function ScheduleWorkbench() {
                         <button
                           key={`${item.code}-${item.order_id}-${index}`}
                           type="button"
-                          className={`validation-item ${item.severity}`}
+                          className={validationItemClass(item)}
                           data-testid={`workbench-validation-item-${index}`}
                           onClick={() => {
                             if (item.order_id) setSelectedPlanOrderId(item.order_id);
@@ -2114,7 +2129,7 @@ export default function ScheduleWorkbench() {
                             });
                           }}
                         >
-                          <strong>{item.severity === 'error' ? '阻断' : '警告'} · {validationCodeLabel(item.code)}</strong>
+                          <strong>{validationItemTitle(item)}</strong>
                           <span>{item.message}</span>
                         </button>
                       ))}
@@ -2317,7 +2332,7 @@ export default function ScheduleWorkbench() {
             <h3>{workbenchStageLabels[activeStage] || '草案校验与复核'}</h3>
             <div className="config-actions">
               {validation && (
-                <Badge tone={validation.hard_error_count ? 'danger' : validation.warning_count ? 'warning' : 'success'}>
+                <Badge tone={validationCounts.blockers ? 'danger' : validationCounts.warnings ? 'warning' : 'success'}>
                   {validationStatusLabels[validation.status] || validation.status}
                 </Badge>
               )}
@@ -2330,8 +2345,8 @@ export default function ScheduleWorkbench() {
           {selectedValidationItem && (
             <div className="selected-order-review" data-testid="workbench-validation-inspector">
               <h4>校验项证据</h4>
-              <div className={`validation-item ${selectedValidationItem.severity}`}>
-                <strong>{selectedValidationItem.severity === 'error' ? '阻断' : '警告'} · {validationCodeLabel(selectedValidationItem.code)}</strong>
+              <div className={validationItemClass(selectedValidationItem)}>
+                <strong>{validationItemTitle(selectedValidationItem)}</strong>
                 <span>{selectedValidationItem.message}</span>
                 {selectedValidationItem.order_id && <small>关联订单：{selectedValidationItem.order_id}</small>}
               </div>
@@ -2387,7 +2402,7 @@ export default function ScheduleWorkbench() {
                     <Badge tone={canConfirm ? 'success' : 'warning'}>{validation ? validationStatusLabels[validation.status] || validation.status : '待校验'}</Badge>
                   </div>
                   <span>{publishBlockReason || '校验通过后可确认进入制造队列。'}</span>
-                  <small>阻断 {validation?.hard_error_count || 0} · 警告 {validation?.warning_count || 0} · 队列 {activeQueueSummary.total}</small>
+                  <small>阻断 {validationCounts.blockers} · 警告 {validationCounts.warnings} · 提示 {validationCounts.info} · 队列 {activeQueueSummary.total}</small>
                 </div>
               ) : (
                 <div className="config-empty">创建草案后显示发布判断。</div>
@@ -2499,8 +2514,8 @@ export default function ScheduleWorkbench() {
                   </div>
                 )}
                 {selectedOrderValidation.map((item, index) => (
-                  <div key={`${item.code}-${index}`} className={`validation-item ${item.severity}`}>
-                    <strong>{item.severity === 'error' ? '阻断' : '警告'} · {validationCodeLabel(item.code)}</strong>
+                  <div key={`${item.code}-${index}`} className={validationItemClass(item)}>
+                    <strong>{validationItemTitle(item)}</strong>
                     <span>{item.message}</span>
                   </div>
                 ))}
@@ -2556,13 +2571,14 @@ export default function ScheduleWorkbench() {
             <h4>草案校验</h4>
             {validation && (
               <div className="workbench-validation-summary">
-                <span>阻断 {validation.hard_error_count || 0}</span>
-                <span>警告 {validation.warning_count || 0}</span>
+                <span>阻断 {validationCounts.blockers}</span>
+                <span>警告 {validationCounts.warnings}</span>
+                <span>提示 {validationCounts.info}</span>
               </div>
             )}
             {sortedValidationItems.slice(0, 12).map((item, index) => (
-              <div key={`${item.code}-${item.order_id}-${index}`} className={`validation-item ${item.severity}`}>
-                <strong>{item.severity === 'error' ? '阻断' : '警告'} · {validationCodeLabel(item.code)}</strong>
+              <div key={`${item.code}-${item.order_id}-${index}`} className={validationItemClass(item)}>
+                <strong>{validationItemTitle(item)}</strong>
                 <span>{item.message}</span>
               </div>
             ))}

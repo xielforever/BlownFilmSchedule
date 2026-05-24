@@ -27,6 +27,27 @@ export const workbenchStageLabels = Object.fromEntries(
   workbenchStages.map(stage => [stage.key, stage.label]),
 );
 
+export function validationDisplayMeta(item) {
+  const rawLevel = item?.level || (item?.severity === 'error' ? 'publish_blocker' : item?.severity);
+  const level = ['invalid', 'publish_blocker', 'warning', 'info'].includes(rawLevel)
+    ? rawLevel
+    : 'warning';
+  const meta = {
+    invalid: { label: '无效', tone: 'danger', severityClass: 'error' },
+    publish_blocker: { label: '阻断', tone: 'danger', severityClass: 'error' },
+    warning: { label: '警告', tone: 'warning', severityClass: 'warning' },
+    info: { label: '提示', tone: 'neutral', severityClass: 'info' },
+  }[level];
+  return { level, ...meta };
+}
+
+export function validationDisplayCounts(validation) {
+  const blockers = Number(validation?.publish_blocker_count ?? validation?.hard_error_count ?? 0);
+  const warnings = Number(validation?.warning_count || 0);
+  const info = Number(validation?.info_count || 0);
+  return { blockers, warnings, info };
+}
+
 export function deriveDraftVersionState(activePlan) {
   const lifecycle = activePlan?.run?.lifecycle_status;
   if (!activePlan) return 'none';
