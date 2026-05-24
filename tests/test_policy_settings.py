@@ -598,6 +598,42 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertTrue(impact["lock_machine"])
         self.assertTrue(impact["lock_time"])
 
+    def test_manual_adjustment_impact_summary_totals_adjustment_cost(self):
+        summary = schedule_router._manual_adjustment_impact_summary([
+            {
+                "order_id": "ORD-A",
+                "impact": {
+                    "machine_changed": True,
+                    "start_delta_mins": 90,
+                    "end_delta_mins": 120,
+                    "duration_delta_mins": 30,
+                    "tardiness_delta_mins": 45,
+                    "lock_machine": True,
+                    "lock_time": False,
+                },
+            },
+            {
+                "order_id": "ORD-B",
+                "impact": {
+                    "machine_changed": False,
+                    "start_delta_mins": -30,
+                    "end_delta_mins": -15,
+                    "duration_delta_mins": 15,
+                    "tardiness_delta_mins": -20,
+                    "lock_machine": False,
+                    "lock_time": True,
+                },
+            },
+        ])
+
+        self.assertEqual(summary["adjustment_count"], 2)
+        self.assertEqual(summary["machine_change_count"], 1)
+        self.assertEqual(summary["time_changed_count"], 2)
+        self.assertEqual(summary["locked_after_adjustment_count"], 2)
+        self.assertEqual(summary["total_tardiness_delta_mins"], 25)
+        self.assertEqual(summary["max_delay_delta_mins"], 120)
+        self.assertEqual(summary["affected_order_ids"], ["ORD-A", "ORD-B"])
+
 
 if __name__ == "__main__":
     unittest.main()

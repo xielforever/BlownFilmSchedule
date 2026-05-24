@@ -848,6 +848,40 @@ def _manual_adjustment_impact(before_state: dict[str, Any] | None, after_state: 
     }
 
 
+def _manual_adjustment_impact_summary(adjustments: list[dict[str, Any]]) -> dict[str, Any]:
+    affected_order_ids = []
+    machine_change_count = 0
+    time_changed_count = 0
+    locked_after_adjustment_count = 0
+    total_tardiness_delta_mins = 0
+    delay_deltas = []
+    for item in adjustments or []:
+        impact = item.get("impact") or {}
+        order_id = item.get("order_id")
+        if order_id:
+            affected_order_ids.append(order_id)
+        if impact.get("machine_changed"):
+            machine_change_count += 1
+        if (impact.get("start_delta_mins") or 0) != 0 or (impact.get("end_delta_mins") or 0) != 0:
+            time_changed_count += 1
+        if impact.get("lock_machine") or impact.get("lock_time"):
+            locked_after_adjustment_count += 1
+        total_tardiness_delta_mins += int(impact.get("tardiness_delta_mins") or 0)
+        for key in ("start_delta_mins", "end_delta_mins"):
+            value = impact.get(key)
+            if value is not None and int(value) > 0:
+                delay_deltas.append(int(value))
+    return {
+        "adjustment_count": len(adjustments or []),
+        "machine_change_count": machine_change_count,
+        "time_changed_count": time_changed_count,
+        "locked_after_adjustment_count": locked_after_adjustment_count,
+        "total_tardiness_delta_mins": total_tardiness_delta_mins,
+        "max_delay_delta_mins": max(delay_deltas) if delay_deltas else 0,
+        "affected_order_ids": affected_order_ids,
+    }
+
+
 def _locked_external_order_from_row(row: dict[str, Any]) -> ProductionOrderModel:
     return ProductionOrderModel(
         order_id=str(row.get("order_id")),
@@ -3494,6 +3528,7 @@ def get_preplan(run_id: int, db=Depends(get_db), _=Depends(get_current_user)):
         "tasks": tasks,
         "validation": validation,
         "adjustments": adjustments,
+        "adjustment_impact_summary": _manual_adjustment_impact_summary(adjustments),
         "latest_publish_audit": latest_publish_audit,
         "diagnostics": diagnostics,
         **order_buckets,
