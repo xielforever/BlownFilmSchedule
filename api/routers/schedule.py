@@ -30,7 +30,7 @@ from src.diagnostics import (
     DiagnosticRecommendation,
     parse_infeasible_log_diagnostics,
 )
-from src.order_screening import build_screening_snapshot, screen_orders
+from src.order_screening import DEFAULT_SCREENING_POLICY, build_screening_snapshot, screen_orders
 from src.models import ProductionOrderModel
 from src.scheduler import AdvancedMedicalAPS, ScheduledTask, SetupCalculator
 from src.snapshotting import (
@@ -178,6 +178,9 @@ class ScheduleSettingsPayload(BaseModel):
     arc_pruning_max_setup_mins: Optional[int] = None
     screening_due_risk_min_slack_mins: Optional[int] = None
     screening_due_risk_duration_multiplier: Optional[float] = None
+    screening_allowed_order_statuses: Optional[list[str]] = None
+    screening_prohibited_override_codes: Optional[list[str]] = None
+    screening_restricted_override_codes: Optional[list[str]] = None
     manual_adjust_review_delay_threshold_mins: Optional[int] = None
     manual_adjust_review_setup_threshold_mins: Optional[int] = None
     manual_adjust_review_tardiness_threshold_mins: Optional[int] = None
@@ -216,6 +219,9 @@ POLICY_VALUE_KEYS = (
     "arc_pruning_max_setup_mins",
     "screening_due_risk_min_slack_mins",
     "screening_due_risk_duration_multiplier",
+    "screening_allowed_order_statuses",
+    "screening_prohibited_override_codes",
+    "screening_restricted_override_codes",
     "manual_adjust_review_delay_threshold_mins",
     "manual_adjust_review_setup_threshold_mins",
     "manual_adjust_review_tardiness_threshold_mins",
@@ -251,6 +257,9 @@ POLICY_DEFAULTS = {
     "arc_pruning_max_setup_mins": 0,
     "screening_due_risk_min_slack_mins": 240,
     "screening_due_risk_duration_multiplier": 1.5,
+    "screening_allowed_order_statuses": DEFAULT_SCREENING_POLICY["allowed_order_statuses"],
+    "screening_prohibited_override_codes": DEFAULT_SCREENING_POLICY["prohibited_override_codes"],
+    "screening_restricted_override_codes": DEFAULT_SCREENING_POLICY["restricted_override_codes"],
     "manual_adjust_review_delay_threshold_mins": 0,
     "manual_adjust_review_setup_threshold_mins": 0,
     "manual_adjust_review_tardiness_threshold_mins": 0,
@@ -344,6 +353,9 @@ def _ensure_planning_schema_locked(db):
             arc_pruning_max_setup_mins          INTEGER NOT NULL DEFAULT 0,
             screening_due_risk_min_slack_mins   INTEGER NOT NULL DEFAULT 240,
             screening_due_risk_duration_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.5,
+            screening_allowed_order_statuses    TEXT[] NOT NULL DEFAULT ARRAY['PENDING']::TEXT[],
+            screening_prohibited_override_codes TEXT[] NOT NULL DEFAULT ARRAY['missing_product','missing_recipe','no_eligible_machine','status_not_pending']::TEXT[],
+            screening_restricted_override_codes TEXT[] NOT NULL DEFAULT ARRAY['material_not_ready','due_risk']::TEXT[],
             manual_adjust_review_delay_threshold_mins INTEGER NOT NULL DEFAULT 0,
             manual_adjust_review_setup_threshold_mins INTEGER NOT NULL DEFAULT 0,
             manual_adjust_review_tardiness_threshold_mins INTEGER NOT NULL DEFAULT 0,
@@ -377,6 +389,9 @@ def _ensure_planning_schema_locked(db):
             ADD COLUMN IF NOT EXISTS arc_pruning_max_setup_mins INTEGER NOT NULL DEFAULT 0,
             ADD COLUMN IF NOT EXISTS screening_due_risk_min_slack_mins INTEGER NOT NULL DEFAULT 240,
             ADD COLUMN IF NOT EXISTS screening_due_risk_duration_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.5,
+            ADD COLUMN IF NOT EXISTS screening_allowed_order_statuses TEXT[] NOT NULL DEFAULT ARRAY['PENDING']::TEXT[],
+            ADD COLUMN IF NOT EXISTS screening_prohibited_override_codes TEXT[] NOT NULL DEFAULT ARRAY['missing_product','missing_recipe','no_eligible_machine','status_not_pending']::TEXT[],
+            ADD COLUMN IF NOT EXISTS screening_restricted_override_codes TEXT[] NOT NULL DEFAULT ARRAY['material_not_ready','due_risk']::TEXT[],
             ADD COLUMN IF NOT EXISTS manual_adjust_review_delay_threshold_mins INTEGER NOT NULL DEFAULT 0,
             ADD COLUMN IF NOT EXISTS manual_adjust_review_setup_threshold_mins INTEGER NOT NULL DEFAULT 0,
             ADD COLUMN IF NOT EXISTS manual_adjust_review_tardiness_threshold_mins INTEGER NOT NULL DEFAULT 0,
@@ -515,6 +530,9 @@ def _get_schedule_settings(db):
             candidate_reject_penalty,
             arc_pruning_enabled, arc_pruning_max_setup_mins,
             screening_due_risk_min_slack_mins, screening_due_risk_duration_multiplier,
+            screening_allowed_order_statuses,
+            screening_prohibited_override_codes,
+            screening_restricted_override_codes,
             manual_adjust_review_delay_threshold_mins,
             manual_adjust_review_setup_threshold_mins,
             manual_adjust_review_tardiness_threshold_mins,
@@ -528,6 +546,25 @@ def _get_schedule_settings(db):
     settings = {**POLICY_DEFAULTS, **dict(row)}
     settings["policy_version"] = int(settings.get("policy_version") or 1)
     return settings
+
+
+def _policy_list(settings: dict, key: str, *, transform=None) -> list[str]:
+    values = settings.get(key, POLICY_DEFAULTS.get(key, []))
+    values = _normalize_json(values, values)
+    if isinstance(values, str):
+        values = [values]
+    transform = transform or (lambda item: item)
+    normalized = []
+    seen = set()
+    for value in values or []:
+        item = transform(str(value).strip())
+        if not item or item in seen:
+            continue
+        normalized.append(item)
+        seen.add(item)
+    if normalized:
+        return normalized
+    return list(POLICY_DEFAULTS.get(key, []))
 
 
 def _policy_snapshot(settings: dict, enabled_rule_counts: dict | None = None) -> dict:
@@ -568,6 +605,13 @@ def _policy_snapshot(settings: dict, enabled_rule_counts: dict | None = None) ->
             "due_risk_duration_multiplier": float(
                 settings.get("screening_due_risk_duration_multiplier") or 1.5
             ),
+            "allowed_order_statuses": _policy_list(
+                settings,
+                "screening_allowed_order_statuses",
+                transform=str.upper,
+            ),
+            "prohibited_override_codes": _policy_list(settings, "screening_prohibited_override_codes"),
+            "restricted_override_codes": _policy_list(settings, "screening_restricted_override_codes"),
         },
         "manual_adjustment_review": {
             "delay_threshold_mins": int(settings.get("manual_adjust_review_delay_threshold_mins") or 0),
@@ -629,6 +673,13 @@ def _order_screening_policy(settings: dict) -> dict[str, Any]:
     return {
         "due_risk_min_slack_mins": int(settings.get("screening_due_risk_min_slack_mins") or 240),
         "due_risk_duration_multiplier": float(settings.get("screening_due_risk_duration_multiplier") or 1.5),
+        "allowed_order_statuses": _policy_list(
+            settings,
+            "screening_allowed_order_statuses",
+            transform=str.upper,
+        ),
+        "prohibited_override_codes": _policy_list(settings, "screening_prohibited_override_codes"),
+        "restricted_override_codes": _policy_list(settings, "screening_restricted_override_codes"),
     }
 
 
@@ -3534,6 +3585,14 @@ def update_schedule_settings(
         elif key == "screening_due_risk_duration_multiplier":
             assignments.append(f"{key}=%s")
             params.append(max(0.0, float(value)))
+        elif key == "screening_allowed_order_statuses":
+            statuses = _policy_list({key: value}, key, transform=str.upper)
+            assignments.append(f"{key}=%s")
+            params.append(statuses)
+        elif key in {"screening_prohibited_override_codes", "screening_restricted_override_codes"}:
+            codes = _policy_list({key: value}, key)
+            assignments.append(f"{key}=%s")
+            params.append(codes)
         elif key in {
             "manual_adjust_review_delay_threshold_mins",
             "manual_adjust_review_setup_threshold_mins",

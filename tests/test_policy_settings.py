@@ -35,6 +35,9 @@ class TestSchedulePolicySettings(unittest.TestCase):
             "arc_pruning_max_setup_mins",
             "screening_due_risk_min_slack_mins",
             "screening_due_risk_duration_multiplier",
+            "screening_allowed_order_statuses",
+            "screening_prohibited_override_codes",
+            "screening_restricted_override_codes",
             "manual_adjust_review_delay_threshold_mins",
             "manual_adjust_review_setup_threshold_mins",
             "manual_adjust_review_tardiness_threshold_mins",
@@ -63,10 +66,16 @@ class TestSchedulePolicySettings(unittest.TestCase):
             **schedule_router.POLICY_DEFAULTS,
             "screening_due_risk_min_slack_mins": 360,
             "screening_due_risk_duration_multiplier": 2.5,
+            "screening_allowed_order_statuses": ["PENDING", "RELEASED"],
+            "screening_prohibited_override_codes": ["no_eligible_machine"],
+            "screening_restricted_override_codes": ["material_not_ready", "due_risk"],
         })
 
         self.assertEqual(policy["due_risk_min_slack_mins"], 360)
         self.assertEqual(policy["due_risk_duration_multiplier"], 2.5)
+        self.assertEqual(policy["allowed_order_statuses"], ["PENDING", "RELEASED"])
+        self.assertEqual(policy["prohibited_override_codes"], ["no_eligible_machine"])
+        self.assertEqual(policy["restricted_override_codes"], ["material_not_ready", "due_risk"])
 
     def test_build_scheduler_passes_continuous_run_policy_to_solver(self):
         setup_mgr = SimpleNamespace(continuous_run_cleaning_time=55)
@@ -139,6 +148,9 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "arc_pruning_max_setup_mins": 180,
                 "screening_due_risk_min_slack_mins": 300,
                 "screening_due_risk_duration_multiplier": 2.0,
+                "screening_allowed_order_statuses": ["PENDING", "RELEASED"],
+                "screening_prohibited_override_codes": ["no_eligible_machine"],
+                "screening_restricted_override_codes": ["material_not_ready"],
                 "manual_adjust_review_delay_threshold_mins": 30,
                 "manual_adjust_review_setup_threshold_mins": 20,
                 "manual_adjust_review_tardiness_threshold_mins": 15,
@@ -159,6 +171,9 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(snapshot["arc_pruning"]["max_setup_time_mins"], 180)
         self.assertEqual(snapshot["order_screening"]["due_risk_min_slack_mins"], 300)
         self.assertEqual(snapshot["order_screening"]["due_risk_duration_multiplier"], 2.0)
+        self.assertEqual(snapshot["order_screening"]["allowed_order_statuses"], ["PENDING", "RELEASED"])
+        self.assertEqual(snapshot["order_screening"]["prohibited_override_codes"], ["no_eligible_machine"])
+        self.assertEqual(snapshot["order_screening"]["restricted_override_codes"], ["material_not_ready"])
         self.assertEqual(snapshot["manual_adjustment_review"]["delay_threshold_mins"], 30)
         self.assertEqual(snapshot["manual_adjustment_review"]["setup_threshold_mins"], 20)
         self.assertEqual(snapshot["manual_adjustment_review"]["tardiness_threshold_mins"], 15)
