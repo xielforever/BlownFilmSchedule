@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from api.routers import orders as orders_router
 from api.routers import schedule as schedule_router
 from src.models import BlownFilmMachineModel, ProductionOrderModel
-from src.order_screening import build_screening_snapshot, screen_orders
+from src.order_screening import build_screening_snapshot, override_decision_for_screening_item, screen_orders
 
 
 def _make_order(order_id: str, **overrides) -> ProductionOrderModel:
@@ -228,6 +228,38 @@ class TestOrderScreening(unittest.TestCase):
         self.assertEqual(filtered["summary"]["ready_count"], 0)
         self.assertEqual(filtered["summary"]["blocked_count"], 1)
         self.assertEqual([item["order_id"] for item in filtered["items"]], ["ORD-BLOCKED"])
+
+    def test_override_decision_allows_risk_but_blocks_hard_capability_errors(self):
+        risk_item = screen_orders(
+            [_make_order("ORD-RISK", due_date_mins=150)],
+            [_make_machine(hourly_output_kg=600)],
+        )["items"][0]
+        blocked_item = screen_orders(
+            [_make_order("ORD-WIDE-OVERRIDE", target_width=9999)],
+            [_make_machine()],
+        )["items"][0]
+
+        risk_decision = override_decision_for_screening_item(risk_item)
+        blocked_decision = override_decision_for_screening_item(blocked_item)
+
+        self.assertTrue(risk_decision["allowed"])
+        self.assertEqual(risk_decision["policy"], "restricted")
+        self.assertTrue(risk_decision["requires_reason"])
+        self.assertFalse(blocked_decision["allowed"])
+        self.assertEqual(blocked_decision["policy"], "prohibited")
+
+    def test_override_decision_treats_material_blockers_as_restricted(self):
+        material_item = screen_orders(
+            [_make_order("ORD-MATERIAL-OVERRIDE", material_available_mins=6000, due_date_mins=5000)],
+            [_make_machine()],
+        )["items"][0]
+
+        decision = override_decision_for_screening_item(material_item)
+
+        self.assertTrue(decision["allowed"])
+        self.assertEqual(decision["policy"], "restricted")
+        self.assertTrue(decision["requires_reason"])
+        self.assertIn("material", decision["reason_code"])
 
 
 if __name__ == "__main__":

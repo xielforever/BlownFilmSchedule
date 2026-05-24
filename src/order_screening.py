@@ -384,6 +384,58 @@ def _summary(items: list[dict]) -> dict:
     }
 
 
+PROHIBITED_OVERRIDE_CODES = {
+    "missing_product",
+    "missing_recipe",
+    "no_eligible_machine",
+    "status_not_pending",
+}
+
+RESTRICTED_OVERRIDE_CODES = {
+    "material_not_ready",
+    "due_risk",
+}
+
+
+def override_decision_for_screening_item(item: dict) -> dict:
+    status = item.get("screening_status")
+    code = item.get("code")
+    if status == "risk":
+        return {
+            "allowed": True,
+            "policy": "restricted",
+            "requires_reason": True,
+            "reason_code": f"risk_{code or 'screening'}",
+        }
+    if code in RESTRICTED_OVERRIDE_CODES:
+        return {
+            "allowed": True,
+            "policy": "restricted",
+            "requires_reason": True,
+            "reason_code": f"restricted_{code}",
+        }
+    if status == "ready":
+        return {
+            "allowed": False,
+            "policy": "not_required",
+            "requires_reason": False,
+            "reason_code": "already_schedulable",
+        }
+    if code in PROHIBITED_OVERRIDE_CODES or status == "blocked":
+        return {
+            "allowed": False,
+            "policy": "prohibited",
+            "requires_reason": False,
+            "reason_code": f"prohibited_{code or 'blocked'}",
+        }
+    return {
+        "allowed": False,
+        "policy": "unknown",
+        "requires_reason": False,
+        "reason_code": f"unknown_{code or status or 'screening'}",
+    }
+
+
 def build_screening_snapshot(screening: dict) -> dict:
     items = [
         {
