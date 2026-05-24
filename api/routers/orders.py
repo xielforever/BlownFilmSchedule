@@ -954,6 +954,7 @@ def list_orders(
     screening_action_status: Optional[str] = None,
     screening_action_type: Optional[str] = None,
     screening_action_assignee: Optional[str] = None,
+    screening_action_actor: Optional[str] = None,
     q: Optional[str] = Query(default=None, min_length=1),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=50, ge=1, le=500),
@@ -1005,6 +1006,9 @@ def list_orders(
         else:
             where_clauses.append("LOWER(TRIM(latest_action.assignee))=%s")
             params.append(normalized_action_assignee)
+    if screening_action_actor:
+        where_clauses.append("LOWER(TRIM(latest_action.actor))=%s")
+        params.append(screening_action_actor.strip().lower())
     if q:
         like = f"%{q.strip()}%"
         where_clauses.append(
@@ -1126,7 +1130,7 @@ def list_orders(
             AND t.run_id = (SELECT run_id FROM schedule_runs WHERE is_active=TRUE ORDER BY run_id DESC LIMIT 1)
         LEFT JOIN order_screening_cache osc ON osc.order_id = o.order_id
         LEFT JOIN LATERAL (
-            SELECT action_type, handling_status, assignee
+            SELECT action_type, handling_status, assignee, actor
             FROM order_screening_action_audit saa
             WHERE saa.order_id = o.order_id
             ORDER BY created_at DESC, id DESC
@@ -1146,7 +1150,7 @@ def list_orders(
             AND t.run_id = (SELECT run_id FROM schedule_runs WHERE is_active=TRUE ORDER BY run_id DESC LIMIT 1)
         LEFT JOIN order_screening_cache osc ON osc.order_id = o.order_id
         LEFT JOIN LATERAL (
-            SELECT action_type, handling_status, assignee
+            SELECT action_type, handling_status, assignee, actor
             FROM order_screening_action_audit saa
             WHERE saa.order_id = o.order_id
             ORDER BY created_at DESC, id DESC
@@ -1169,7 +1173,7 @@ def list_orders(
             AND t.run_id = (SELECT run_id FROM schedule_runs WHERE is_active=TRUE ORDER BY run_id DESC LIMIT 1)
         LEFT JOIN order_screening_cache osc ON osc.order_id = o.order_id
         LEFT JOIN LATERAL (
-            SELECT action_type, handling_status, assignee
+            SELECT action_type, handling_status, assignee, actor
             FROM order_screening_action_audit saa
             WHERE saa.order_id = o.order_id
             ORDER BY created_at DESC, id DESC
@@ -1191,7 +1195,7 @@ def list_orders(
             AND t.run_id = (SELECT run_id FROM schedule_runs WHERE is_active=TRUE ORDER BY run_id DESC LIMIT 1)
         LEFT JOIN order_screening_cache osc ON osc.order_id = o.order_id
         LEFT JOIN LATERAL (
-            SELECT action_type, handling_status, assignee
+            SELECT action_type, handling_status, assignee, actor
             FROM order_screening_action_audit saa
             WHERE saa.order_id = o.order_id
             ORDER BY created_at DESC, id DESC
