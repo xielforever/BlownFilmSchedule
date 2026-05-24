@@ -4,7 +4,7 @@ from fastapi import HTTPException
 
 from api.routers import schedule as schedule_router
 from src.models import BlownFilmMachineModel, ProductionOrderModel
-from src.order_screening import screen_orders
+from src.order_screening import build_screening_snapshot, screen_orders
 
 
 def _make_order(order_id: str, **overrides) -> ProductionOrderModel:
@@ -189,6 +189,27 @@ class TestOrderScreening(unittest.TestCase):
         self.assertEqual(detail["blocked_orders"][0]["order_id"], "ORD-WIDE-PREPLAN")
         self.assertEqual(detail["blocked_orders"][0]["code"], "no_eligible_machine")
         self.assertIn("不能进入预排", detail["message"])
+
+    def test_screening_snapshot_hash_ignores_generated_at(self):
+        first = screen_orders(
+            [_make_order("ORD-SNAPSHOT")],
+            [_make_machine()],
+            generated_at="2026-05-24T08:00:00Z",
+            scope="preplan",
+        )
+        second = screen_orders(
+            [_make_order("ORD-SNAPSHOT")],
+            [_make_machine()],
+            generated_at="2026-05-24T09:00:00Z",
+            scope="preplan",
+        )
+
+        first_snapshot = build_screening_snapshot(first)
+        second_snapshot = build_screening_snapshot(second)
+
+        self.assertEqual(first_snapshot["hash"], second_snapshot["hash"])
+        self.assertEqual(first_snapshot["summary"], first["summary"])
+        self.assertNotIn("generated_at", first_snapshot)
 
 
 if __name__ == "__main__":

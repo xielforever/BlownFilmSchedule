@@ -25,7 +25,7 @@ from src.diagnostics import (
     DiagnosticRecommendation,
     parse_infeasible_log_diagnostics,
 )
-from src.order_screening import screen_orders
+from src.order_screening import build_screening_snapshot, screen_orders
 from src.scheduler import AdvancedMedicalAPS, SetupCalculator
 from src.snapshotting import (
     build_input_snapshot,
@@ -2827,6 +2827,7 @@ def create_preplan(
             selected_order_ids=order_ids,
             policy_snapshot=policy_snapshot,
             screening_snapshot=screening,
+            input_screening_snapshot=build_screening_snapshot(screening),
         )
 
     if settings["auto_release_enabled"] and not settings["review_required"]:

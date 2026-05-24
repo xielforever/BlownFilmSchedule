@@ -12,6 +12,7 @@ from src.diagnostics import (
     evaluate_machine_fit,
 )
 from src.models import BlownFilmMachineModel, ProductionOrderModel
+from src.snapshotting import stable_hash
 
 
 def _utc_now_iso() -> str:
@@ -380,6 +381,31 @@ def _summary(items: list[dict]) -> dict:
         "ready_count": sum(1 for item in items if item["screening_status"] == "ready"),
         "risk_count": sum(1 for item in items if item["screening_status"] == "risk"),
         "blocked_count": sum(1 for item in items if item["screening_status"] == "blocked"),
+    }
+
+
+def build_screening_snapshot(screening: dict) -> dict:
+    items = [
+        {
+            "order_id": item.get("order_id"),
+            "screening_status": item.get("screening_status"),
+            "code": item.get("code"),
+            "diagnostic_code": item.get("diagnostic_code"),
+            "eligible_machine_count": item.get("eligible_machine_count"),
+        }
+        for item in screening.get("items", [])
+    ]
+    items = sorted(items, key=lambda item: item.get("order_id") or "")
+    summary = screening.get("summary") or _summary(items)
+    payload = {
+        "mode": screening.get("mode"),
+        "scope": screening.get("scope"),
+        "summary": summary,
+        "items": items,
+    }
+    return {
+        **payload,
+        "hash": stable_hash(payload),
     }
 
 

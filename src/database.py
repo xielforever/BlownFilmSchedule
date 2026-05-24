@@ -918,6 +918,7 @@ class DatabaseManager:
         selected_order_ids: Optional[List[str]] = None,
         policy_snapshot: Optional[dict] = None,
         screening_snapshot: Optional[dict] = None,
+        input_screening_snapshot: Optional[dict] = None,
     ):
         """保存排程结果到数据库"""
         self.ensure_planning_schema()
@@ -982,7 +983,7 @@ class DatabaseManager:
                 input_snapshot = _fetch_input_snapshot(
                     snapshot_cur,
                     order_snapshots,
-                    screening_snapshot=screening_snapshot,
+                    screening_snapshot=input_screening_snapshot,
                 )
 
             diagnostics_payload = diagnostics_to_dicts(
