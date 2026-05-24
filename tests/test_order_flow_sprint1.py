@@ -369,11 +369,11 @@ class _FakeCursor:
         if normalized.startswith("select machine_id, name, cleanroom_level") and "from machines" in normalized:
             self._rows = [dict(row) for row in self.db.machines]
             return
-        if normalized.startswith("select distinct assignee"):
+        if normalized.startswith("select distinct trim(assignee) as assignee"):
             assignees = sorted({
-                item.get("assignee")
+                item.get("assignee").strip()
                 for item in self.db.order_screening_action_audit
-                if item.get("assignee")
+                if item.get("assignee") and item.get("assignee").strip()
             })
             self._rows = [{"assignee": assignee} for assignee in assignees]
             return
@@ -1782,6 +1782,20 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
                 "actor": "planner",
                 "details": {},
                 "created_at": datetime(2026, 5, 24, 9, 0, tzinfo=timezone.utc),
+            },
+            {
+                "id": 63,
+                "order_id": "ORD-C",
+                "screening_status": "blocked",
+                "business_bucket": "blocked_machine_capability",
+                "screening_code": "no_eligible_machine",
+                "action_type": "request_data_fix",
+                "handling_status": "open",
+                "reason_text": "重复负责人带空白",
+                "assignee": " order-admin ",
+                "actor": "planner",
+                "details": {},
+                "created_at": datetime(2026, 5, 24, 10, 0, tzinfo=timezone.utc),
             },
         ])
 

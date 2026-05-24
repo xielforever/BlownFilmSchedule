@@ -1359,7 +1359,7 @@ def get_order_screening_action_options(
     _ensure_order_screening_action_schema(db)
     cur = db.cursor()
     cur.execute("""
-        SELECT DISTINCT assignee
+        SELECT DISTINCT TRIM(assignee) AS assignee
         FROM order_screening_action_audit
         WHERE assignee IS NOT NULL AND TRIM(assignee) <> ''
         ORDER BY assignee
