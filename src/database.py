@@ -306,6 +306,12 @@ class DatabaseManager:
                     manual_adjust_reason_required       BOOLEAN NOT NULL DEFAULT TRUE,
                     publish_with_warnings_allowed       BOOLEAN NOT NULL DEFAULT TRUE,
                     auto_release_enabled                BOOLEAN NOT NULL DEFAULT FALSE,
+                    material_constraint_enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+                    maintenance_constraint_enabled      BOOLEAN NOT NULL DEFAULT TRUE,
+                    setup_rules_enabled                 BOOLEAN NOT NULL DEFAULT TRUE,
+                    cleanroom_constraint_enabled        BOOLEAN NOT NULL DEFAULT TRUE,
+                    machine_capability_constraint_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    due_date_optimization_enabled       BOOLEAN NOT NULL DEFAULT TRUE,
                     continuous_run_limit_mins           INTEGER NOT NULL DEFAULT 4320,
                     continuous_run_enforcement_mode     VARCHAR(30) NOT NULL DEFAULT 'publish_blocker',
                     phase2_feasible_tardiness_tolerance_mins INTEGER NOT NULL DEFAULT 0,
@@ -340,6 +346,12 @@ class DatabaseManager:
             """)
             cur.execute("""
                 ALTER TABLE schedule_settings
+                    ADD COLUMN IF NOT EXISTS material_constraint_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    ADD COLUMN IF NOT EXISTS maintenance_constraint_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    ADD COLUMN IF NOT EXISTS setup_rules_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    ADD COLUMN IF NOT EXISTS cleanroom_constraint_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    ADD COLUMN IF NOT EXISTS machine_capability_constraint_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    ADD COLUMN IF NOT EXISTS due_date_optimization_enabled BOOLEAN NOT NULL DEFAULT TRUE,
                     ADD COLUMN IF NOT EXISTS policy_version INTEGER NOT NULL DEFAULT 1,
                     ADD COLUMN IF NOT EXISTS updated_by VARCHAR(50),
                     ADD COLUMN IF NOT EXISTS change_reason TEXT

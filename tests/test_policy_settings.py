@@ -50,6 +50,46 @@ class TestSchedulePolicySettings(unittest.TestCase):
             self.assertIn(key, ddl)
         self.assertEqual(manager.conn.commits, 1)
 
+    def test_database_manager_planning_schema_declares_global_constraint_switches(self):
+        class Cursor:
+            def __init__(self):
+                self.sql = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def execute(self, sql):
+                self.sql.append(sql)
+
+        class Conn:
+            def __init__(self):
+                self.cursor_obj = Cursor()
+
+            def cursor(self):
+                return self.cursor_obj
+
+            def commit(self):
+                pass
+
+        manager = object.__new__(database.DatabaseManager)
+        manager.conn = Conn()
+
+        manager.ensure_planning_schema()
+
+        ddl = "\n".join(manager.conn.cursor_obj.sql)
+        for key in [
+            "material_constraint_enabled",
+            "maintenance_constraint_enabled",
+            "setup_rules_enabled",
+            "cleanroom_constraint_enabled",
+            "machine_capability_constraint_enabled",
+            "due_date_optimization_enabled",
+        ]:
+            self.assertIn(key, ddl)
+
     def test_database_policy_loader_exposes_candidate_acceptance_limits(self):
         class Cursor:
             def __init__(self):
