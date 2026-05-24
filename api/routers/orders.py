@@ -1007,8 +1007,12 @@ def list_orders(
             where_clauses.append("LOWER(TRIM(latest_action.assignee))=%s")
             params.append(normalized_action_assignee)
     if screening_action_actor:
-        where_clauses.append("LOWER(TRIM(latest_action.actor))=%s")
-        params.append(screening_action_actor.strip().lower())
+        normalized_action_actor = screening_action_actor.strip().lower()
+        if normalized_action_actor == "unassigned":
+            where_clauses.append("(latest_action.actor IS NULL OR TRIM(latest_action.actor)='')")
+        else:
+            where_clauses.append("LOWER(TRIM(latest_action.actor))=%s")
+            params.append(normalized_action_actor)
     if q:
         like = f"%{q.strip()}%"
         where_clauses.append(

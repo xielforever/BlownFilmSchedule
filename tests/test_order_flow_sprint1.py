@@ -421,6 +421,7 @@ class _FakeCursor:
                 param_index += 1
             screening_action_unhandled_filter = "latest_action.handling_status is null" in normalized
             screening_action_unassigned_filter = "latest_action.assignee is null" in normalized
+            screening_action_actor_unassigned_filter = "latest_action.actor is null" in normalized
             rows = []
             for row in self.db.production_orders.values():
                 cache = self.db.order_screening_cache.get(row["order_id"], {})
@@ -470,6 +471,8 @@ class _FakeCursor:
                     screening_action_actor_filter
                     and (latest_action.get("actor") or "").strip().lower() != screening_action_actor_filter
                 ):
+                    continue
+                if screening_action_actor_unassigned_filter and (latest_action.get("actor") or "").strip():
                     continue
                 rows.append({
                     **row,
@@ -549,6 +552,7 @@ class _FakeCursor:
                 param_index += 1
             screening_action_unhandled_filter = "latest_action.handling_status is null" in normalized
             screening_action_unassigned_filter = "latest_action.assignee is null" in normalized
+            screening_action_actor_unassigned_filter = "latest_action.actor is null" in normalized
             count = 0
             for row in self.db.production_orders.values():
                 cache = self.db.order_screening_cache.get(row["order_id"], {})
@@ -592,6 +596,8 @@ class _FakeCursor:
                     and (latest_action.get("actor") or "").strip().lower() != screening_action_actor_filter
                 ):
                     continue
+                if screening_action_actor_unassigned_filter and (latest_action.get("actor") or "").strip():
+                    continue
                 count += 1
             self._rows = [{"cnt": count}]
             return
@@ -631,6 +637,7 @@ class _FakeCursor:
                 param_index += 1
             screening_action_unhandled_filter = "latest_action.handling_status is null" in normalized
             screening_action_unassigned_filter = "latest_action.assignee is null" in normalized
+            screening_action_actor_unassigned_filter = "latest_action.actor is null" in normalized
             counts = {}
             for row in self.db.production_orders.values():
                 cache = self.db.order_screening_cache.get(row["order_id"], {})
@@ -673,6 +680,8 @@ class _FakeCursor:
                     screening_action_actor_filter
                     and (latest_action.get("actor") or "").strip().lower() != screening_action_actor_filter
                 ):
+                    continue
+                if screening_action_actor_unassigned_filter and (latest_action.get("actor") or "").strip():
                     continue
                 key = latest_action.get("handling_status") or "unhandled"
                 counts[key] = counts.get(key, 0) + 1
@@ -717,6 +726,7 @@ class _FakeCursor:
                 param_index += 1
             screening_action_unhandled_filter = "latest_action.handling_status is null" in normalized
             screening_action_unassigned_filter = "latest_action.assignee is null" in normalized
+            screening_action_actor_unassigned_filter = "latest_action.actor is null" in normalized
             counts = {}
             for row in self.db.production_orders.values():
                 cache = self.db.order_screening_cache.get(row["order_id"], {})
@@ -759,6 +769,8 @@ class _FakeCursor:
                     screening_action_actor_filter
                     and (latest_action.get("actor") or "").strip().lower() != screening_action_actor_filter
                 ):
+                    continue
+                if screening_action_actor_unassigned_filter and (latest_action.get("actor") or "").strip():
                     continue
                 key = latest_action.get("action_type") or "unhandled"
                 counts[key] = counts.get(key, 0) + 1
@@ -803,6 +815,7 @@ class _FakeCursor:
                 param_index += 1
             screening_action_unhandled_filter = "latest_action.handling_status is null" in normalized
             screening_action_unassigned_filter = "latest_action.assignee is null" in normalized
+            screening_action_actor_unassigned_filter = "latest_action.actor is null" in normalized
             counts = {}
             for row in self.db.production_orders.values():
                 cache = self.db.order_screening_cache.get(row["order_id"], {})
@@ -845,6 +858,8 @@ class _FakeCursor:
                     screening_action_actor_filter
                     and (latest_action.get("actor") or "").strip().lower() != screening_action_actor_filter
                 ):
+                    continue
+                if screening_action_actor_unassigned_filter and (latest_action.get("actor") or "").strip():
                     continue
                 key = (latest_action.get("assignee") or "").strip() or "unassigned"
                 counts[key] = counts.get(key, 0) + 1
@@ -889,6 +904,7 @@ class _FakeCursor:
                 param_index += 1
             screening_action_unhandled_filter = "latest_action.handling_status is null" in normalized
             screening_action_unassigned_filter = "latest_action.assignee is null" in normalized
+            screening_action_actor_unassigned_filter = "latest_action.actor is null" in normalized
             counts = {}
             for row in self.db.production_orders.values():
                 cache = self.db.order_screening_cache.get(row["order_id"], {})
@@ -931,6 +947,8 @@ class _FakeCursor:
                     screening_action_actor_filter
                     and (latest_action.get("actor") or "").strip().lower() != screening_action_actor_filter
                 ):
+                    continue
+                if screening_action_actor_unassigned_filter and (latest_action.get("actor") or "").strip():
                     continue
                 key = (latest_action.get("actor") or "").strip() or "unassigned"
                 counts[key] = counts.get(key, 0) + 1
@@ -2488,6 +2506,66 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         self.assertEqual(result["total"], 1)
         self.assertEqual([item["order_id"] for item in result["items"]], ["ORD-ACTOR-A"])
         self.assertEqual(result["items"][0]["screening"]["latest_action"]["actor"], " planner-a ")
+
+    def test_list_orders_filters_unassigned_screening_action_actor(self):
+        db = _FakeDb()
+        db.products.add("Film-A")
+        for order_id in ["ORD-NO-ACTOR", "ORD-ACTOR"]:
+            db.production_orders[order_id] = {
+                "order_id": order_id,
+                "customer_id": "STANDARD",
+                "product_type": "Film-A",
+                "target_width": 9999,
+                "target_thickness": 35,
+                "total_quantity_kg": 1200,
+                "cleanroom_req": "Class_10K",
+                "order_class": "NORMAL",
+                "corona_req": False,
+                "core_size_inch": 3,
+                "order_date": None,
+                "due_date": datetime(2026, 5, 28, 8, 30, tzinfo=timezone.utc),
+                "material_available_time": None,
+                "status": "PENDING",
+                "priority_override": None,
+                "created_at": datetime(2026, 5, 22, 8, 0, tzinfo=timezone.utc),
+                "updated_at": datetime(2026, 5, 22, 8, 0, tzinfo=timezone.utc),
+            }
+            db.order_screening_cache[order_id] = {
+                "screening_status": "blocked",
+                "code": "no_eligible_machine",
+                "root_cause": "骞呭瓒呭嚭鏈哄彴鑳藉姏",
+                "business_bucket": "blocked_machine_capability",
+                "result": {"business_bucket": "blocked_machine_capability"},
+                "is_stale": False,
+            }
+        db.order_screening_action_audit.append({
+            "id": 52,
+            "order_id": "ORD-ACTOR",
+            "screening_status": "blocked",
+            "business_bucket": "blocked_machine_capability",
+            "screening_code": "no_eligible_machine",
+            "action_type": "request_data_fix",
+            "handling_status": "in_progress",
+            "reason_text": "鎺掔▼鍛樺凡澶勭悊",
+            "assignee": "order-admin",
+            "actor": "planner",
+            "details": {},
+            "created_at": datetime(2026, 5, 24, 8, 0, tzinfo=timezone.utc),
+        })
+
+        result = orders_router.list_orders(
+            status="PENDING",
+            screening_status="blocked",
+            screening_action_actor="unassigned",
+            q=None,
+            page=1,
+            size=50,
+            db=db,
+        )
+
+        self.assertEqual(result["total"], 1)
+        self.assertEqual([item["order_id"] for item in result["items"]], ["ORD-NO-ACTOR"])
+        self.assertIsNone(result["items"][0]["screening"]["latest_action"])
 
     def test_list_orders_filters_unassigned_screening_action_assignee(self):
         db = _FakeDb()
