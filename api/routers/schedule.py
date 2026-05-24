@@ -567,8 +567,16 @@ def _policy_list(settings: dict, key: str, *, transform=None) -> list[str]:
     return list(POLICY_DEFAULTS.get(key, []))
 
 
+def _screening_override_code_lists(settings: dict) -> tuple[list[str], list[str]]:
+    prohibited = _policy_list(settings, "screening_prohibited_override_codes", transform=str.lower)
+    restricted = _policy_list(settings, "screening_restricted_override_codes", transform=str.lower)
+    prohibited_set = set(prohibited)
+    return prohibited, [code for code in restricted if code not in prohibited_set]
+
+
 def _policy_snapshot(settings: dict, enabled_rule_counts: dict | None = None) -> dict:
     normalized = {key: bool(settings.get(key, POLICY_DEFAULTS[key])) for key in POLICY_SETTING_KEYS}
+    prohibited_override_codes, restricted_override_codes = _screening_override_code_lists(settings)
     return {
         "policy_version": int(settings.get("policy_version") or 1),
         "settings": normalized,
@@ -610,8 +618,8 @@ def _policy_snapshot(settings: dict, enabled_rule_counts: dict | None = None) ->
                 "screening_allowed_order_statuses",
                 transform=str.upper,
             ),
-            "prohibited_override_codes": _policy_list(settings, "screening_prohibited_override_codes"),
-            "restricted_override_codes": _policy_list(settings, "screening_restricted_override_codes"),
+            "prohibited_override_codes": prohibited_override_codes,
+            "restricted_override_codes": restricted_override_codes,
         },
         "manual_adjustment_review": {
             "delay_threshold_mins": int(settings.get("manual_adjust_review_delay_threshold_mins") or 0),
@@ -670,6 +678,7 @@ def _continuous_run_policy(settings: dict, setup_mgr) -> dict[str, Any]:
 
 
 def _order_screening_policy(settings: dict) -> dict[str, Any]:
+    prohibited_override_codes, restricted_override_codes = _screening_override_code_lists(settings)
     return {
         "due_risk_min_slack_mins": int(settings.get("screening_due_risk_min_slack_mins") or 240),
         "due_risk_duration_multiplier": float(settings.get("screening_due_risk_duration_multiplier") or 1.5),
@@ -678,8 +687,8 @@ def _order_screening_policy(settings: dict) -> dict[str, Any]:
             "screening_allowed_order_statuses",
             transform=str.upper,
         ),
-        "prohibited_override_codes": _policy_list(settings, "screening_prohibited_override_codes"),
-        "restricted_override_codes": _policy_list(settings, "screening_restricted_override_codes"),
+        "prohibited_override_codes": prohibited_override_codes,
+        "restricted_override_codes": restricted_override_codes,
     }
 
 

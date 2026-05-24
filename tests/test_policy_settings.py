@@ -77,6 +77,24 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(policy["prohibited_override_codes"], ["no_eligible_machine"])
         self.assertEqual(policy["restricted_override_codes"], ["material_not_ready", "due_risk"])
 
+    def test_order_screening_policy_normalizes_override_codes_for_audit_snapshot(self):
+        settings = {
+            **schedule_router.POLICY_DEFAULTS,
+            "screening_allowed_order_statuses": [" pending ", "released", "PENDING"],
+            "screening_prohibited_override_codes": [" NO_ELIGIBLE_MACHINE ", "due_risk"],
+            "screening_restricted_override_codes": ["due_risk", " MATERIAL_NOT_READY "],
+        }
+
+        policy = schedule_router._order_screening_policy(settings)
+        snapshot = schedule_router._policy_snapshot(settings, {})
+
+        self.assertEqual(policy["allowed_order_statuses"], ["PENDING", "RELEASED"])
+        self.assertEqual(policy["prohibited_override_codes"], ["no_eligible_machine", "due_risk"])
+        self.assertEqual(policy["restricted_override_codes"], ["material_not_ready"])
+        self.assertEqual(snapshot["order_screening"]["allowed_order_statuses"], ["PENDING", "RELEASED"])
+        self.assertEqual(snapshot["order_screening"]["prohibited_override_codes"], ["no_eligible_machine", "due_risk"])
+        self.assertEqual(snapshot["order_screening"]["restricted_override_codes"], ["material_not_ready"])
+
     def test_build_scheduler_passes_continuous_run_policy_to_solver(self):
         setup_mgr = SimpleNamespace(continuous_run_cleaning_time=55)
 
