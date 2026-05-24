@@ -377,6 +377,14 @@ class _FakeCursor:
             })
             self._rows = [{"assignee": assignee} for assignee in assignees]
             return
+        if normalized.startswith("select distinct trim(actor) as actor"):
+            actors = sorted({
+                item.get("actor").strip()
+                for item in self.db.order_screening_action_audit
+                if item.get("actor") and item.get("actor").strip()
+            })
+            self._rows = [{"actor": actor} for actor in actors]
+            return
         if "from production_orders o" in normalized and "limit %s offset %s" in normalized:
             param_index = 0
             status_filter = None
@@ -1983,7 +1991,7 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
                 "handling_status": "waiting_external",
                 "reason_text": "确认替代物料",
                 "assignee": "material-admin",
-                "actor": "planner",
+                "actor": "planner-b",
                 "details": {},
                 "created_at": datetime(2026, 5, 24, 9, 0, tzinfo=timezone.utc),
             },
@@ -1997,9 +2005,23 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
                 "handling_status": "open",
                 "reason_text": "重复负责人带空白",
                 "assignee": " order-admin ",
-                "actor": "planner",
+                "actor": " planner-b ",
                 "details": {},
                 "created_at": datetime(2026, 5, 24, 10, 0, tzinfo=timezone.utc),
+            },
+            {
+                "id": 64,
+                "order_id": "ORD-D",
+                "screening_status": "blocked",
+                "business_bucket": "blocked_machine_capability",
+                "screening_code": "no_eligible_machine",
+                "action_type": "mark_reviewed",
+                "handling_status": "open",
+                "reason_text": "排程员甲复核",
+                "assignee": "order-admin",
+                "actor": "planner-a",
+                "details": {},
+                "created_at": datetime(2026, 5, 24, 11, 0, tzinfo=timezone.utc),
             },
         ])
 
@@ -2011,12 +2033,14 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         action_values = [item["value"] for item in result["action_types"]]
         status_values = [item["value"] for item in result["handling_statuses"]]
         assignee_values = [item["value"] for item in result["assignee_filters"]]
+        actor_values = [item["value"] for item in result["actor_filters"]]
         self.assertIn("request_data_fix", action_values)
         self.assertIn("mark_resolved", action_values)
         self.assertIn("unhandled", status_values)
         self.assertIn("in_progress", status_values)
         self.assertIn("resolved", status_values)
         self.assertEqual(assignee_values, ["unassigned", "material-admin", "order-admin"])
+        self.assertEqual(actor_values, ["planner", "planner-a", "planner-b"])
         self.assertEqual(
             next(item for item in result["handling_statuses"] if item["value"] == "unhandled")["label"],
             "未处理",

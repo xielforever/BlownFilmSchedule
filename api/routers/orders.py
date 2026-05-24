@@ -1369,6 +1369,16 @@ def get_order_screening_action_options(
         {"value": row["assignee"], "label": row["assignee"]}
         for row in cur.fetchall()
     )
+    cur.execute("""
+        SELECT DISTINCT TRIM(actor) AS actor
+        FROM order_screening_action_audit
+        WHERE actor IS NOT NULL AND TRIM(actor) <> ''
+        ORDER BY actor
+    """)
+    actor_filters = [
+        {"value": row["actor"], "label": row["actor"]}
+        for row in cur.fetchall()
+    ]
     return {
         "action_types": [
             {"value": value, "label": label}
@@ -1379,6 +1389,7 @@ def get_order_screening_action_options(
             for value, label in SCREENING_ACTION_FILTER_STATUS_OPTIONS
         ],
         "assignee_filters": assignee_filters,
+        "actor_filters": actor_filters,
     }
 
 
