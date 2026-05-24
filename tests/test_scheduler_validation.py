@@ -88,6 +88,21 @@ class TestSchedulerSequencing(unittest.TestCase):
                 f"{prev.order.order_id}->{curr.order.order_id} lacks setup gap",
             )
 
+    def test_solver_metrics_record_phase_quality(self):
+        orders = [_make_order(f"ORD-METRIC-{i}") for i in range(2)]
+        machine = _make_machine()
+        aps = AdvancedMedicalAPS(_make_setup_mgr())
+
+        result = aps.run(orders, [machine])
+
+        self.assertIn("phase_1", result.solver_metrics)
+        self.assertIn("phase_2", result.solver_metrics)
+        phase1 = result.solver_metrics["phase_1"]
+        self.assertIn(phase1["status"], {"OPTIMAL", "FEASIBLE"})
+        for key in ["objective", "best_bound", "gap", "branches", "conflicts", "wall_time"]:
+            self.assertIn(key, phase1)
+        self.assertGreaterEqual(phase1["wall_time"], 0)
+
     def test_validation_catches_machine_overlap(self):
         order_a = _make_order("ORD-A")
         order_b = _make_order("ORD-B")

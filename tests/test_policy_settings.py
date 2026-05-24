@@ -340,6 +340,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
             "input_order_count": 2,
             "schedulable_order_count": 1,
             "blocked_order_count": 1,
+            "solver_metrics": {"phase_1": {"status": "OPTIMAL", "gap": 0.0}},
         })()
         snapshot = {"policy_version": 5, "settings": {"review_required": True}}
         input_snapshot = {"hash": "input-v1", "orders": {"count": 2}}
@@ -362,6 +363,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(params["policy_snapshot"], snapshot)
         self.assertEqual(params["input_snapshot"], input_snapshot)
         self.assertEqual(params["preplan_screening"], screening_snapshot)
+        self.assertEqual(params["solver_metrics"], result.solver_metrics)
         self.assertEqual(params["summary"]["input_order_count"], 2)
 
     def test_run_row_to_dict_exposes_preplan_screening_snapshot(self):

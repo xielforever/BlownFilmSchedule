@@ -1,4 +1,5 @@
 import os
+import json
 import sys
 import tempfile
 import unittest
@@ -7,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.diagnostics import Diagnostic, DiagnosticEvidence, DiagnosticRecommendation
 from src.models import BlownFilmMachineModel, ProductionOrderModel
-from src.output_formatter import export_schedule_report
+from src.output_formatter import export_schedule_json, export_schedule_report
 from src.scheduler import ScheduleResult, ScheduledTask
 
 
@@ -51,6 +52,29 @@ def make_machine():
 
 
 class TestOutputFormatter(unittest.TestCase):
+    def test_schedule_json_exports_solver_metrics(self):
+        result = ScheduleResult()
+        result.status = "FEASIBLE"
+        result.solver_metrics = {
+            "phase_1": {
+                "status": "OPTIMAL",
+                "objective": 0,
+                "best_bound": 0.0,
+                "gap": 0.0,
+                "branches": 10,
+                "conflicts": 0,
+                "wall_time": 0.01,
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "schedule.json")
+            export_schedule_json(result, path)
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+
+        self.assertEqual(data["solver_metrics"], result.solver_metrics)
+
     def test_schedule_report_contains_order_and_global_root_causes(self):
         result = ScheduleResult()
         result.status = "FEASIBLE"

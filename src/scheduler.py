@@ -66,6 +66,7 @@ class ScheduleResult:
         self.input_order_count: int = 0
         self.schedulable_order_count: int = 0
         self.blocked_order_count: int = 0
+        self.solver_metrics: Dict[str, Dict] = {}
 
     def add_task(self, task: ScheduledTask):
         self.tasks.append(task)
@@ -466,6 +467,7 @@ class AdvancedMedicalAPS:
             orders, machines, eligible, setup_cache, duration_cache,
             H, phase=1, tardiness_bound=None,
         )
+        result.solver_metrics["phase_1"] = getattr(self, "_last_phase_metrics", {})
 
         if phase1_result is None:
             result.status = getattr(self, "_last_solver_status", "INFEASIBLE")
@@ -503,6 +505,7 @@ class AdvancedMedicalAPS:
             orders, machines, eligible, setup_cache, duration_cache,
             H, phase=2, tardiness_bound=best_tardiness,
         )
+        result.solver_metrics["phase_2"] = getattr(self, "_last_phase_metrics", {})
 
         if phase2_result is None:
             # 回退使用第一阶段结果
@@ -961,17 +964,45 @@ class AdvancedMedicalAPS:
         status_str = status_map.get(status, "UNKNOWN")
         self._last_solver_status = status_str
 
+        objective_for_metrics = None
         if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             if phase == 1:
                 obj_val = int(solver.value(total_tardiness))
             else:
                 obj_val = int(solver.value(total_setup))
+            objective_for_metrics = obj_val
+        self._last_phase_metrics = self._solver_phase_metrics(
+            phase=phase,
+            solver=solver,
+            status=status_str,
+            objective_value=objective_for_metrics,
+        )
+
+        if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             vars_dict = {
                 'presence': presence, 'starts': starts, 'ends': ends,
             }
             return (status_str, solver, vars_dict, obj_val)
         logger.warning("第 %d 阶段求解未获得可行解: status=%s", phase, status_str)
         return None
+
+    def _solver_phase_metrics(self, phase: int, solver, status: str, objective_value: Optional[int]) -> Dict:
+        bound = float(solver.BestObjectiveBound())
+        objective = float(objective_value) if objective_value is not None else None
+        gap = None
+        if objective is not None:
+            denominator = max(abs(objective), 1.0)
+            gap = max(0.0, abs(objective - bound) / denominator)
+        return {
+            "phase": phase,
+            "status": status,
+            "objective": objective_value,
+            "best_bound": bound,
+            "gap": gap,
+            "branches": int(solver.NumBranches()),
+            "conflicts": int(solver.NumConflicts()),
+            "wall_time": float(solver.WallTime()),
+        }
 
     def _extract_solution(
         self, solver, vars_dict, orders, machines, eligible, setup_cache, result

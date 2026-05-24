@@ -213,6 +213,7 @@ def _build_schedule_run_solver_params(
         "selected_order_ids": normalized_order_ids,
         "order_snapshots": order_snapshots,
         "mode": mode,
+        "solver_metrics": getattr(result, "solver_metrics", {}),
     }
     if policy_snapshot is not None:
         payload["policy_snapshot"] = policy_snapshot
