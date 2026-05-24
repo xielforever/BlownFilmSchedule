@@ -174,6 +174,7 @@ class ScheduleSettingsPayload(BaseModel):
     planning_must_schedule_horizon_days: Optional[int] = None
     planning_candidate_horizon_days: Optional[int] = None
     candidate_reject_penalty: Optional[int] = None
+    candidate_max_deferred_count: Optional[int] = None
     arc_pruning_enabled: Optional[bool] = None
     arc_pruning_max_setup_mins: Optional[int] = None
     screening_due_risk_min_slack_mins: Optional[int] = None
@@ -215,6 +216,7 @@ POLICY_VALUE_KEYS = (
     "planning_must_schedule_horizon_days",
     "planning_candidate_horizon_days",
     "candidate_reject_penalty",
+    "candidate_max_deferred_count",
     "arc_pruning_enabled",
     "arc_pruning_max_setup_mins",
     "screening_due_risk_min_slack_mins",
@@ -253,6 +255,7 @@ POLICY_DEFAULTS = {
     "planning_must_schedule_horizon_days": 3,
     "planning_candidate_horizon_days": 14,
     "candidate_reject_penalty": 10_000_000,
+    "candidate_max_deferred_count": None,
     "arc_pruning_enabled": False,
     "arc_pruning_max_setup_mins": 0,
     "screening_due_risk_min_slack_mins": 240,
@@ -349,6 +352,7 @@ def _ensure_planning_schema_locked(db):
             planning_must_schedule_horizon_days INTEGER NOT NULL DEFAULT 3,
             planning_candidate_horizon_days     INTEGER NOT NULL DEFAULT 14,
             candidate_reject_penalty            INTEGER NOT NULL DEFAULT 10000000,
+            candidate_max_deferred_count        INTEGER,
             arc_pruning_enabled                 BOOLEAN NOT NULL DEFAULT FALSE,
             arc_pruning_max_setup_mins          INTEGER NOT NULL DEFAULT 0,
             screening_due_risk_min_slack_mins   INTEGER NOT NULL DEFAULT 240,
@@ -385,6 +389,7 @@ def _ensure_planning_schema_locked(db):
             ADD COLUMN IF NOT EXISTS planning_must_schedule_horizon_days INTEGER NOT NULL DEFAULT 3,
             ADD COLUMN IF NOT EXISTS planning_candidate_horizon_days INTEGER NOT NULL DEFAULT 14,
             ADD COLUMN IF NOT EXISTS candidate_reject_penalty INTEGER NOT NULL DEFAULT 10000000,
+            ADD COLUMN IF NOT EXISTS candidate_max_deferred_count INTEGER,
             ADD COLUMN IF NOT EXISTS arc_pruning_enabled BOOLEAN NOT NULL DEFAULT FALSE,
             ADD COLUMN IF NOT EXISTS arc_pruning_max_setup_mins INTEGER NOT NULL DEFAULT 0,
             ADD COLUMN IF NOT EXISTS screening_due_risk_min_slack_mins INTEGER NOT NULL DEFAULT 240,
@@ -527,7 +532,7 @@ def _get_schedule_settings(db):
             solver_profile, solver_time_limit_seconds, solver_relative_gap_limit,
             solver_random_seed, solver_num_workers, solver_log_search_progress,
             planning_must_schedule_horizon_days, planning_candidate_horizon_days,
-            candidate_reject_penalty,
+            candidate_reject_penalty, candidate_max_deferred_count,
             arc_pruning_enabled, arc_pruning_max_setup_mins,
             screening_due_risk_min_slack_mins, screening_due_risk_duration_multiplier,
             screening_allowed_order_statuses,
@@ -574,6 +579,13 @@ def _screening_override_code_lists(settings: dict) -> tuple[list[str], list[str]
     return prohibited, [code for code in restricted if code not in prohibited_set]
 
 
+def _candidate_max_deferred_count(settings: dict) -> int | None:
+    value = settings.get("candidate_max_deferred_count")
+    if value is None:
+        return None
+    return max(0, int(value))
+
+
 def _policy_snapshot(settings: dict, enabled_rule_counts: dict | None = None) -> dict:
     normalized = {key: bool(settings.get(key, POLICY_DEFAULTS[key])) for key in POLICY_SETTING_KEYS}
     prohibited_override_codes, restricted_override_codes = _screening_override_code_lists(settings)
@@ -603,6 +615,7 @@ def _policy_snapshot(settings: dict, enabled_rule_counts: dict | None = None) ->
         },
         "candidate_acceptance": {
             "reject_penalty": int(settings.get("candidate_reject_penalty") or 10_000_000),
+            "max_deferred_count": _candidate_max_deferred_count(settings),
         },
         "arc_pruning": {
             "enabled": bool(settings.get("arc_pruning_enabled", False)),
@@ -711,6 +724,7 @@ def _build_scheduler(setup_mgr, settings: dict) -> AdvancedMedicalAPS:
         },
         candidate_acceptance_policy={
             "reject_penalty": int(settings.get("candidate_reject_penalty") or 10_000_000),
+            "max_deferred_count": _candidate_max_deferred_count(settings),
         },
         arc_pruning_policy={
             "enabled": bool(settings.get("arc_pruning_enabled", False)),
@@ -3582,6 +3596,9 @@ def update_schedule_settings(
         elif key == "candidate_reject_penalty":
             assignments.append(f"{key}=%s")
             params.append(max(0, int(value)))
+        elif key == "candidate_max_deferred_count":
+            assignments.append(f"{key}=%s")
+            params.append(None if value is None else max(0, int(value)))
         elif key == "arc_pruning_enabled":
             assignments.append(f"{key}=%s")
             params.append(bool(value))
