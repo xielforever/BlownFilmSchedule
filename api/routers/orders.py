@@ -901,6 +901,7 @@ def import_orders_commit(
         raise HTTPException(status_code=400, detail="请提供至少一行订单数据。")
     _ensure_order_revision_schema(db)
     _ensure_order_import_schema(db)
+    _ensure_order_screening_schema(db)
     cur = db.cursor()
     try:
         existing_order_ids, product_types = _load_import_reference_sets(cur, payload.rows)
@@ -949,6 +950,7 @@ def import_orders_commit(
             ))
 
         screening_result = _run_order_screening(db, order_ids=created_order_ids, scope="selected")
+        _persist_order_screening_result(cur, screening_result)
         db.commit()
         return {
             "batch_id": batch_id,

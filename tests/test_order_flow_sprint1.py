@@ -602,6 +602,7 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         self.assertEqual(result["screening"]["summary"]["ready_count"], 1)
         self.assertEqual(result["screening"]["items"][0]["order_id"], "ORD-IMP-READY")
         self.assertEqual(result["screening"]["items"][0]["screening_status"], "ready")
+        self.assertEqual(db.order_screening_cache["ORD-IMP-READY"]["screening_status"], "ready")
         self.assertEqual(db.commit_count, 1)
 
     def test_update_order_writes_diff_and_impacted_drafts(self):
