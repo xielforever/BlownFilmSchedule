@@ -1566,6 +1566,7 @@ def get_order_screening_actions(
     handling_status: Optional[str] = None,
     action_type: Optional[str] = None,
     assignee: Optional[str] = None,
+    actor: Optional[str] = None,
     db=Depends(get_db),
     _=Depends(get_current_user),
 ):
@@ -1592,6 +1593,9 @@ def get_order_screening_actions(
         else:
             where += " AND LOWER(TRIM(assignee))=%s"
             params.append(normalized_assignee)
+    if actor:
+        where += " AND LOWER(TRIM(actor))=%s"
+        params.append(actor.strip().lower())
     cur.execute("""
         SELECT id, order_id, screening_status, business_bucket, screening_code,
             action_type, handling_status, reason_text, assignee, actor, details,

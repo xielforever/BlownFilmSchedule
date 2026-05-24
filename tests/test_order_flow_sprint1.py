@@ -1037,7 +1037,11 @@ class _FakeCursor:
             assignee_filter = None
             if "lower(trim(assignee))=%s" in normalized:
                 assignee_filter = params[param_index]
+                param_index += 1
             unassigned_filter = "assignee is null" in normalized
+            actor_filter = None
+            if "lower(trim(actor))=%s" in normalized:
+                actor_filter = params[param_index]
             rows = [
                 dict(row)
                 for row in self.db.order_screening_action_audit
@@ -1046,6 +1050,7 @@ class _FakeCursor:
                 and (not action_type_filter or row.get("action_type") == action_type_filter)
                 and (not assignee_filter or (row.get("assignee") or "").strip().lower() == assignee_filter)
                 and (not unassigned_filter or not row.get("assignee"))
+                and (not actor_filter or (row.get("actor") or "").strip().lower() == actor_filter)
             ]
             rows.sort(key=lambda item: (item.get("created_at"), item["id"]), reverse=True)
             self._rows = rows[:50]
@@ -1821,6 +1826,49 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
 
         self.assertEqual(ctx.exception.status_code, 400)
         self.assertEqual(ctx.exception.detail, "Invalid screening action type.")
+
+    def test_screening_exception_actions_can_be_filtered_by_actor(self):
+        db = _FakeDb()
+        db.order_screening_action_audit.extend([
+            {
+                "id": 47,
+                "order_id": "ORD-ACTION-ACTOR-FILTER",
+                "screening_status": "blocked",
+                "business_bucket": "blocked_machine_capability",
+                "screening_code": "no_eligible_machine",
+                "action_type": "request_data_fix",
+                "handling_status": "in_progress",
+                "reason_text": "排程员甲退回维护",
+                "assignee": "order-admin",
+                "actor": " planner-a ",
+                "details": {},
+                "created_at": datetime(2026, 5, 24, 8, 0, tzinfo=timezone.utc),
+            },
+            {
+                "id": 48,
+                "order_id": "ORD-ACTION-ACTOR-FILTER",
+                "screening_status": "blocked",
+                "business_bucket": "blocked_machine_capability",
+                "screening_code": "no_eligible_machine",
+                "action_type": "mark_resolved",
+                "handling_status": "resolved",
+                "reason_text": "排程员乙确认完成",
+                "assignee": "order-admin",
+                "actor": "planner-b",
+                "details": {},
+                "created_at": datetime(2026, 5, 24, 9, 0, tzinfo=timezone.utc),
+            },
+        ])
+
+        result = orders_router.get_order_screening_actions(
+            "ORD-ACTION-ACTOR-FILTER",
+            actor="planner-a",
+            db=db,
+            _=SimpleNamespace(username="planner"),
+        )
+
+        self.assertEqual([item["id"] for item in result["items"]], [47])
+        self.assertEqual(result["items"][0]["actor"], " planner-a ")
 
     def test_screening_exception_actions_can_be_filtered_by_assignee(self):
         db = _FakeDb()
