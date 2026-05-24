@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterable, List
 
@@ -12,6 +13,7 @@ from src.setup_matrices import SetupMatricesManager
 
 
 PASS_STATUSES = {"OPTIMAL", "FEASIBLE", "PARTIAL", "UNPUBLISHABLE"}
+SUMMARY_SCHEMA_VERSION = "solver-benchmark-v1"
 
 
 @dataclass(frozen=True)
@@ -38,6 +40,21 @@ def _make_setup_mgr() -> SetupMatricesManager:
     mgr.corona_switch_time = 0
     mgr.core_size_switch_time = 0
     return mgr
+
+
+def _case_config(case: BenchmarkCase) -> dict:
+    return {
+        "name": case.name,
+        "order_count": case.order_count,
+        "machine_count": case.machine_count,
+        "profile": case.profile,
+        "max_wall_time_seconds": case.max_wall_time_seconds,
+        "max_gap": case.max_gap,
+        "min_scheduled_ratio": case.min_scheduled_ratio,
+        "max_late_order_count": case.max_late_order_count,
+        "max_weighted_tardiness": case.max_weighted_tardiness,
+        "max_total_setup_time_mins": case.max_total_setup_time_mins,
+    }
 
 
 def _make_machine(index: int) -> BlownFilmMachineModel:
@@ -186,13 +203,17 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
 
 
 def run_benchmark_suite(cases: Iterable[BenchmarkCase]) -> dict:
-    case_results = [run_benchmark_case(case) for case in cases]
+    case_list = list(cases)
+    case_results = [run_benchmark_case(case) for case in case_list]
     passed = all(item["passed"] for item in case_results)
     return {
+        "schema_version": SUMMARY_SCHEMA_VERSION,
+        "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "status": "PASS" if passed else "FAIL",
         "case_count": len(case_results),
         "passed_count": sum(1 for item in case_results if item["passed"]),
         "failed_count": sum(1 for item in case_results if not item["passed"]),
+        "case_configs": [_case_config(case) for case in case_list],
         "cases": case_results,
     }
 

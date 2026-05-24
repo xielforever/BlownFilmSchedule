@@ -17,6 +17,20 @@ class TestSolverBenchmark(unittest.TestCase):
 
         self.assertEqual(summary["case_count"], 1)
         self.assertEqual(summary["status"], "PASS")
+        self.assertEqual(summary["schema_version"], "solver-benchmark-v1")
+        self.assertIn("generated_at", summary)
+        self.assertEqual(summary["case_configs"], [{
+            "name": "tiny",
+            "order_count": 3,
+            "machine_count": 1,
+            "profile": "fast",
+            "max_wall_time_seconds": 10.0,
+            "max_gap": None,
+            "min_scheduled_ratio": 0.0,
+            "max_late_order_count": None,
+            "max_weighted_tardiness": None,
+            "max_total_setup_time_mins": None,
+        }])
         case = summary["cases"][0]
         self.assertEqual(case["name"], "tiny")
         self.assertEqual(case["order_count"], 3)
