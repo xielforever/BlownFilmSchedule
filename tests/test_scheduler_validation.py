@@ -123,6 +123,28 @@ class TestSchedulerSequencing(unittest.TestCase):
         self.assertGreaterEqual(model_size["arc_count"], 7)
         self.assertEqual(model_size["setup_cache_size"], 4)
 
+    def test_arc_pruning_policy_reduces_order_to_order_arcs(self):
+        orders = [
+            _make_order("ORD-PRUNE-MUST"),
+            _make_order("ORD-PRUNE-CANDIDATE", planningBucket="candidate"),
+        ]
+        machine = _make_machine()
+        aps = AdvancedMedicalAPS(
+            _make_setup_mgr(),
+            candidate_acceptance_policy={"reject_penalty": 1},
+            arc_pruning_policy={
+                "enabled": True,
+                "max_setup_time_mins": 0,
+            },
+        )
+
+        result = aps.run(orders, [machine])
+
+        model_size = result.solver_metrics["model_size"]
+        self.assertEqual(model_size["pruned_arc_count"], 2)
+        self.assertEqual(model_size["arc_count"], 7)
+        self.assertEqual([task.order.order_id for task in result.tasks], ["ORD-PRUNE-MUST"])
+
     def test_validation_catches_machine_overlap(self):
         order_a = _make_order("ORD-A")
         order_b = _make_order("ORD-B")

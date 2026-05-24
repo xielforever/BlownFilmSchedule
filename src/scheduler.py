@@ -324,6 +324,7 @@ class AdvancedMedicalAPS:
         solver_quality_policy: Optional[Dict] = None,
         solver_profile_policy: Optional[Dict] = None,
         candidate_acceptance_policy: Optional[Dict] = None,
+        arc_pruning_policy: Optional[Dict] = None,
     ):
         self.setup_calc = SetupCalculator(setup_mgr)
         self.setup_mgr = setup_mgr
@@ -331,6 +332,7 @@ class AdvancedMedicalAPS:
         self.solver_quality_policy = self._normalize_solver_quality_policy(solver_quality_policy)
         self.solver_profile_policy = self._normalize_solver_profile_policy(solver_profile_policy)
         self.candidate_acceptance_policy = self._normalize_candidate_acceptance_policy(candidate_acceptance_policy)
+        self.arc_pruning_policy = self._normalize_arc_pruning_policy(arc_pruning_policy)
 
     @staticmethod
     def _normalize_continuous_run_policy(policy: Optional[Dict]) -> Dict:
@@ -382,6 +384,18 @@ class AdvancedMedicalAPS:
     @staticmethod
     def _is_optional_candidate(order: ProductionOrderModel) -> bool:
         return str(getattr(order, "planning_bucket", "") or "").lower() == "candidate"
+
+    @staticmethod
+    def _normalize_arc_pruning_policy(policy: Optional[Dict]) -> Dict:
+        policy = policy or {}
+        return {
+            "enabled": bool(policy.get("enabled", False)),
+            "max_setup_time_mins": max(0, int(policy.get("max_setup_time_mins") or 0)),
+        }
+
+    def _should_prune_order_arc(self, setup_time_mins: int) -> bool:
+        policy = self.arc_pruning_policy
+        return policy["enabled"] and setup_time_mins > policy["max_setup_time_mins"]
 
     def _apply_solver_profile(self, solver) -> None:
         policy = self.solver_profile_policy
@@ -838,11 +852,23 @@ class AdvancedMedicalAPS:
     ) -> Dict:
         eligible_orders_per_machine: Dict[str, int] = {}
         arc_count = 0
+        pruned_arc_count = 0
         for m_idx, machine in enumerate(machines):
             order_count = sum(1 for idx in range(len(orders)) if m_idx in eligible.get(idx, []))
             eligible_orders_per_machine[machine.machine_id] = order_count
             if order_count:
-                arc_count += 1 + (3 * order_count) + (order_count * (order_count - 1))
+                arc_count += 1 + (3 * order_count)
+                for i in range(len(orders)):
+                    if m_idx not in eligible.get(i, []):
+                        continue
+                    for j in range(len(orders)):
+                        if i == j or m_idx not in eligible.get(j, []):
+                            continue
+                        setup_time = setup_cache[(i, j, m_idx)]
+                        if self._should_prune_order_arc(setup_time):
+                            pruned_arc_count += 1
+                        else:
+                            arc_count += 1
 
         return {
             "order_count": len(orders),
@@ -851,6 +877,7 @@ class AdvancedMedicalAPS:
             "optional_candidate_count": sum(1 for order in orders if self._is_optional_candidate(order)),
             "eligible_orders_per_machine": eligible_orders_per_machine,
             "arc_count": arc_count,
+            "pruned_arc_count": pruned_arc_count,
             "setup_cache_size": len(setup_cache),
         }
 
@@ -959,13 +986,15 @@ class AdvancedMedicalAPS:
                 for j in m_orders:
                     if i == j:
                         continue
+                    setup_t = setup_cache[(i, j, m_idx)]
+                    if self._should_prune_order_arc(setup_t):
+                        continue
                     i_node = node_of[i]
                     j_node = node_of[j]
                     arc_var = model.new_bool_var(f'arc_{m_idx}_{i}_{j}')
                     arcs.append((i_node, j_node, arc_var))
                     model.add(arc_var <= presence[i][m_idx])
                     model.add(arc_var <= presence[j][m_idx])
-                    setup_t = setup_cache[(i, j, m_idx)]
                     model.add(
                         starts[j][m_idx] >= ends[i][m_idx] + setup_t
                     ).only_enforce_if(arc_var)

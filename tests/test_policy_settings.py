@@ -31,6 +31,8 @@ class TestSchedulePolicySettings(unittest.TestCase):
             "planning_must_schedule_horizon_days",
             "planning_candidate_horizon_days",
             "candidate_reject_penalty",
+            "arc_pruning_enabled",
+            "arc_pruning_max_setup_mins",
             "change_reason",
         ]:
             self.assertIn(key, fields)
@@ -69,6 +71,8 @@ class TestSchedulePolicySettings(unittest.TestCase):
                     "solver_num_workers": 2,
                     "solver_log_search_progress": True,
                     "candidate_reject_penalty": 1234,
+                    "arc_pruning_enabled": True,
+                    "arc_pruning_max_setup_mins": 240,
                 },
             )
 
@@ -93,6 +97,10 @@ class TestSchedulePolicySettings(unittest.TestCase):
             candidate_acceptance_policy={
                 "reject_penalty": 1234,
             },
+            arc_pruning_policy={
+                "enabled": True,
+                "max_setup_time_mins": 240,
+            },
         )
 
     def test_policy_snapshot_captures_continuous_run_strategy(self):
@@ -112,6 +120,8 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "planning_must_schedule_horizon_days": 5,
                 "planning_candidate_horizon_days": 21,
                 "candidate_reject_penalty": 4321,
+                "arc_pruning_enabled": True,
+                "arc_pruning_max_setup_mins": 180,
             },
             {},
         )
@@ -125,6 +135,8 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(snapshot["planning_bucket"]["must_schedule_horizon_days"], 5)
         self.assertEqual(snapshot["planning_bucket"]["candidate_horizon_days"], 21)
         self.assertEqual(snapshot["candidate_acceptance"]["reject_penalty"], 4321)
+        self.assertEqual(snapshot["arc_pruning"]["enabled"], True)
+        self.assertEqual(snapshot["arc_pruning"]["max_setup_time_mins"], 180)
 
     def test_policy_snapshot_captures_version_settings_and_rule_counts(self):
         snapshot = schedule_router._policy_snapshot(

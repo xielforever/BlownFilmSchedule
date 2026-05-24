@@ -173,6 +173,8 @@ class ScheduleSettingsPayload(BaseModel):
     planning_must_schedule_horizon_days: Optional[int] = None
     planning_candidate_horizon_days: Optional[int] = None
     candidate_reject_penalty: Optional[int] = None
+    arc_pruning_enabled: Optional[bool] = None
+    arc_pruning_max_setup_mins: Optional[int] = None
     change_reason: Optional[str] = None
 
 
@@ -204,6 +206,8 @@ POLICY_VALUE_KEYS = (
     "planning_must_schedule_horizon_days",
     "planning_candidate_horizon_days",
     "candidate_reject_penalty",
+    "arc_pruning_enabled",
+    "arc_pruning_max_setup_mins",
 )
 
 
@@ -232,6 +236,8 @@ POLICY_DEFAULTS = {
     "planning_must_schedule_horizon_days": 3,
     "planning_candidate_horizon_days": 14,
     "candidate_reject_penalty": 10_000_000,
+    "arc_pruning_enabled": False,
+    "arc_pruning_max_setup_mins": 0,
 }
 
 
@@ -318,6 +324,8 @@ def _ensure_planning_schema_locked(db):
             planning_must_schedule_horizon_days INTEGER NOT NULL DEFAULT 3,
             planning_candidate_horizon_days     INTEGER NOT NULL DEFAULT 14,
             candidate_reject_penalty            INTEGER NOT NULL DEFAULT 10000000,
+            arc_pruning_enabled                 BOOLEAN NOT NULL DEFAULT FALSE,
+            arc_pruning_max_setup_mins          INTEGER NOT NULL DEFAULT 0,
             policy_version                      INTEGER NOT NULL DEFAULT 1,
             updated_by                          VARCHAR(50),
             change_reason                       TEXT,
@@ -344,6 +352,8 @@ def _ensure_planning_schema_locked(db):
             ADD COLUMN IF NOT EXISTS planning_must_schedule_horizon_days INTEGER NOT NULL DEFAULT 3,
             ADD COLUMN IF NOT EXISTS planning_candidate_horizon_days INTEGER NOT NULL DEFAULT 14,
             ADD COLUMN IF NOT EXISTS candidate_reject_penalty INTEGER NOT NULL DEFAULT 10000000,
+            ADD COLUMN IF NOT EXISTS arc_pruning_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS arc_pruning_max_setup_mins INTEGER NOT NULL DEFAULT 0,
             ADD COLUMN IF NOT EXISTS policy_version INTEGER NOT NULL DEFAULT 1,
             ADD COLUMN IF NOT EXISTS updated_by VARCHAR(50),
             ADD COLUMN IF NOT EXISTS change_reason TEXT
@@ -477,6 +487,7 @@ def _get_schedule_settings(db):
             solver_random_seed, solver_num_workers, solver_log_search_progress,
             planning_must_schedule_horizon_days, planning_candidate_horizon_days,
             candidate_reject_penalty,
+            arc_pruning_enabled, arc_pruning_max_setup_mins,
             policy_version, updated_by,
             change_reason, updated_at
         FROM schedule_settings WHERE id=TRUE
@@ -518,6 +529,10 @@ def _policy_snapshot(settings: dict, enabled_rule_counts: dict | None = None) ->
         "candidate_acceptance": {
             "reject_penalty": int(settings.get("candidate_reject_penalty") or 10_000_000),
         },
+        "arc_pruning": {
+            "enabled": bool(settings.get("arc_pruning_enabled", False)),
+            "max_setup_time_mins": int(settings.get("arc_pruning_max_setup_mins") or 0),
+        },
         "enabled_rule_counts": enabled_rule_counts or {},
         "runtime_rule_source": "db_only",
         "fallback_setup_used": False,
@@ -543,6 +558,8 @@ def _policy_snapshot_mismatch(saved: dict | None, current: dict | None) -> str |
         return "计划窗口策略已变化，请重新预排后再发布。"
     if (saved.get("candidate_acceptance") or {}) != (current.get("candidate_acceptance") or {}):
         return "candidate acceptance policy changed; rerun pre-schedule before publishing."
+    if (saved.get("arc_pruning") or {}) != (current.get("arc_pruning") or {}):
+        return "arc pruning policy changed; rerun pre-schedule before publishing."
     if (saved.get("enabled_rule_counts") or {}) != (current.get("enabled_rule_counts") or {}):
         return "启用规则数量已变化，请重新预排后再发布。"
     return None
@@ -582,6 +599,10 @@ def _build_scheduler(setup_mgr, settings: dict) -> AdvancedMedicalAPS:
         },
         candidate_acceptance_policy={
             "reject_penalty": int(settings.get("candidate_reject_penalty") or 10_000_000),
+        },
+        arc_pruning_policy={
+            "enabled": bool(settings.get("arc_pruning_enabled", False)),
+            "max_setup_time_mins": int(settings.get("arc_pruning_max_setup_mins") or 0),
         },
     )
 
@@ -3122,6 +3143,12 @@ def update_schedule_settings(
             assignments.append(f"{key}=%s")
             params.append(max(0, int(value)))
         elif key == "candidate_reject_penalty":
+            assignments.append(f"{key}=%s")
+            params.append(max(0, int(value)))
+        elif key == "arc_pruning_enabled":
+            assignments.append(f"{key}=%s")
+            params.append(bool(value))
+        elif key == "arc_pruning_max_setup_mins":
             assignments.append(f"{key}=%s")
             params.append(max(0, int(value)))
         elif key == "continuous_run_enforcement_mode":
