@@ -35,6 +35,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
             "candidate_min_acceptance_ratio",
             "arc_pruning_enabled",
             "arc_pruning_max_setup_mins",
+            "arc_pruning_top_k_per_order",
             "screening_due_risk_min_slack_mins",
             "screening_due_risk_duration_multiplier",
             "screening_allowed_order_statuses",
@@ -127,6 +128,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
                     "candidate_min_acceptance_ratio": 0.5,
                     "arc_pruning_enabled": True,
                     "arc_pruning_max_setup_mins": 240,
+                    "arc_pruning_top_k_per_order": 3,
                 },
             )
 
@@ -156,6 +158,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
             arc_pruning_policy={
                 "enabled": True,
                 "max_setup_time_mins": 240,
+                "top_k_per_order": 3,
             },
         )
 
@@ -180,6 +183,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "candidate_min_acceptance_ratio": 0.5,
                 "arc_pruning_enabled": True,
                 "arc_pruning_max_setup_mins": 180,
+                "arc_pruning_top_k_per_order": 2,
                 "screening_due_risk_min_slack_mins": 300,
                 "screening_due_risk_duration_multiplier": 2.0,
                 "screening_allowed_order_statuses": ["PENDING", "RELEASED"],
@@ -206,6 +210,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(snapshot["candidate_acceptance"]["min_acceptance_ratio"], 0.5)
         self.assertEqual(snapshot["arc_pruning"]["enabled"], True)
         self.assertEqual(snapshot["arc_pruning"]["max_setup_time_mins"], 180)
+        self.assertEqual(snapshot["arc_pruning"]["top_k_per_order"], 2)
         self.assertEqual(snapshot["order_screening"]["due_risk_min_slack_mins"], 300)
         self.assertEqual(snapshot["order_screening"]["due_risk_duration_multiplier"], 2.0)
         self.assertEqual(snapshot["order_screening"]["allowed_order_statuses"], ["PENDING", "RELEASED"])

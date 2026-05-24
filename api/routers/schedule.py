@@ -178,6 +178,7 @@ class ScheduleSettingsPayload(BaseModel):
     candidate_min_acceptance_ratio: Optional[float] = None
     arc_pruning_enabled: Optional[bool] = None
     arc_pruning_max_setup_mins: Optional[int] = None
+    arc_pruning_top_k_per_order: Optional[int] = None
     screening_due_risk_min_slack_mins: Optional[int] = None
     screening_due_risk_duration_multiplier: Optional[float] = None
     screening_allowed_order_statuses: Optional[list[str]] = None
@@ -222,6 +223,7 @@ POLICY_VALUE_KEYS = (
     "candidate_min_acceptance_ratio",
     "arc_pruning_enabled",
     "arc_pruning_max_setup_mins",
+    "arc_pruning_top_k_per_order",
     "screening_due_risk_min_slack_mins",
     "screening_due_risk_duration_multiplier",
     "screening_allowed_order_statuses",
@@ -263,6 +265,7 @@ POLICY_DEFAULTS = {
     "candidate_min_acceptance_ratio": 0.0,
     "arc_pruning_enabled": False,
     "arc_pruning_max_setup_mins": 0,
+    "arc_pruning_top_k_per_order": 0,
     "screening_due_risk_min_slack_mins": 240,
     "screening_due_risk_duration_multiplier": 1.5,
     "screening_allowed_order_statuses": DEFAULT_SCREENING_POLICY["allowed_order_statuses"],
@@ -362,6 +365,7 @@ def _ensure_planning_schema_locked(db):
             candidate_min_acceptance_ratio      DOUBLE PRECISION NOT NULL DEFAULT 0,
             arc_pruning_enabled                 BOOLEAN NOT NULL DEFAULT FALSE,
             arc_pruning_max_setup_mins          INTEGER NOT NULL DEFAULT 0,
+            arc_pruning_top_k_per_order         INTEGER NOT NULL DEFAULT 0,
             screening_due_risk_min_slack_mins   INTEGER NOT NULL DEFAULT 240,
             screening_due_risk_duration_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.5,
             screening_allowed_order_statuses    TEXT[] NOT NULL DEFAULT ARRAY['PENDING']::TEXT[],
@@ -401,6 +405,7 @@ def _ensure_planning_schema_locked(db):
             ADD COLUMN IF NOT EXISTS candidate_min_acceptance_ratio DOUBLE PRECISION NOT NULL DEFAULT 0,
             ADD COLUMN IF NOT EXISTS arc_pruning_enabled BOOLEAN NOT NULL DEFAULT FALSE,
             ADD COLUMN IF NOT EXISTS arc_pruning_max_setup_mins INTEGER NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS arc_pruning_top_k_per_order INTEGER NOT NULL DEFAULT 0,
             ADD COLUMN IF NOT EXISTS screening_due_risk_min_slack_mins INTEGER NOT NULL DEFAULT 240,
             ADD COLUMN IF NOT EXISTS screening_due_risk_duration_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.5,
             ADD COLUMN IF NOT EXISTS screening_allowed_order_statuses TEXT[] NOT NULL DEFAULT ARRAY['PENDING']::TEXT[],
@@ -545,6 +550,7 @@ def _get_schedule_settings(db):
             candidate_reject_penalty, candidate_max_deferred_count,
             candidate_min_acceptance_ratio,
             arc_pruning_enabled, arc_pruning_max_setup_mins,
+            arc_pruning_top_k_per_order,
             screening_due_risk_min_slack_mins, screening_due_risk_duration_multiplier,
             screening_allowed_order_statuses,
             screening_prohibited_override_codes,
@@ -640,6 +646,7 @@ def _policy_snapshot(settings: dict, enabled_rule_counts: dict | None = None) ->
         "arc_pruning": {
             "enabled": bool(settings.get("arc_pruning_enabled", False)),
             "max_setup_time_mins": int(settings.get("arc_pruning_max_setup_mins") or 0),
+            "top_k_per_order": int(settings.get("arc_pruning_top_k_per_order") or 0),
         },
         "order_screening": {
             "due_risk_min_slack_mins": int(settings.get("screening_due_risk_min_slack_mins") or 240),
@@ -758,6 +765,7 @@ def _build_scheduler(setup_mgr, settings: dict) -> AdvancedMedicalAPS:
         arc_pruning_policy={
             "enabled": bool(settings.get("arc_pruning_enabled", False)),
             "max_setup_time_mins": int(settings.get("arc_pruning_max_setup_mins") or 0),
+            "top_k_per_order": int(settings.get("arc_pruning_top_k_per_order") or 0),
         },
     )
 
@@ -3678,6 +3686,9 @@ def update_schedule_settings(
             assignments.append(f"{key}=%s")
             params.append(bool(value))
         elif key == "arc_pruning_max_setup_mins":
+            assignments.append(f"{key}=%s")
+            params.append(max(0, int(value)))
+        elif key == "arc_pruning_top_k_per_order":
             assignments.append(f"{key}=%s")
             params.append(max(0, int(value)))
         elif key == "screening_due_risk_min_slack_mins":

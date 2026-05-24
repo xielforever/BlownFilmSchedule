@@ -320,6 +320,7 @@ class DatabaseManager:
                     candidate_reject_penalty            INTEGER NOT NULL DEFAULT 10000000,
                     arc_pruning_enabled                 BOOLEAN NOT NULL DEFAULT FALSE,
                     arc_pruning_max_setup_mins          INTEGER NOT NULL DEFAULT 0,
+                    arc_pruning_top_k_per_order         INTEGER NOT NULL DEFAULT 0,
                     screening_due_risk_min_slack_mins   INTEGER NOT NULL DEFAULT 240,
                     screening_due_risk_duration_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.5,
                     screening_required_positive_order_fields TEXT[] NOT NULL DEFAULT ARRAY['due_date_mins','target_thickness','target_width','total_quantity_kg']::TEXT[],
@@ -534,6 +535,7 @@ class DatabaseManager:
                 ADD COLUMN IF NOT EXISTS candidate_reject_penalty INTEGER NOT NULL DEFAULT 10000000,
                 ADD COLUMN IF NOT EXISTS arc_pruning_enabled BOOLEAN NOT NULL DEFAULT FALSE,
                 ADD COLUMN IF NOT EXISTS arc_pruning_max_setup_mins INTEGER NOT NULL DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS arc_pruning_top_k_per_order INTEGER NOT NULL DEFAULT 0,
                 ADD COLUMN IF NOT EXISTS screening_due_risk_min_slack_mins INTEGER NOT NULL DEFAULT 240,
                 ADD COLUMN IF NOT EXISTS screening_due_risk_duration_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.5,
                 ADD COLUMN IF NOT EXISTS policy_version INTEGER NOT NULL DEFAULT 1,
@@ -553,6 +555,7 @@ class DatabaseManager:
                     solver_random_seed, solver_num_workers, solver_log_search_progress,
                     planning_must_schedule_horizon_days, planning_candidate_horizon_days,
                     candidate_reject_penalty, arc_pruning_enabled, arc_pruning_max_setup_mins,
+                    arc_pruning_top_k_per_order,
                     screening_due_risk_min_slack_mins, screening_due_risk_duration_multiplier
                 FROM schedule_settings
                 WHERE id=TRUE
@@ -581,6 +584,7 @@ class DatabaseManager:
             "candidate_reject_penalty": 10_000_000,
             "arc_pruning_enabled": False,
             "arc_pruning_max_setup_mins": 0,
+            "arc_pruning_top_k_per_order": 0,
             "screening_due_risk_min_slack_mins": 240,
             "screening_due_risk_duration_multiplier": 1.5,
         }
