@@ -345,3 +345,25 @@ export function screeningPoolCounts(items = []) {
     stale_count: 0,
   });
 }
+
+const deferredReasonLabels = {
+  planning_window_deferred: '计划窗口延后',
+  candidate_optional_rejected: '候选策略延后',
+};
+
+export function deferredReasonFilterOptions(reasonCounts = {}) {
+  const entries = Object.entries(reasonCounts || {})
+    .map(([key, count]) => ({ key, count: Number(count || 0) }))
+    .filter(item => item.key && item.count > 0)
+    .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+  const total = entries.reduce((sum, item) => sum + item.count, 0);
+  if (!total) return [];
+  return [
+    { key: 'all', label: '全部延后', count: total },
+    ...entries.map(item => ({
+      key: item.key,
+      label: deferredReasonLabels[item.key] || item.key,
+      count: item.count,
+    })),
+  ];
+}

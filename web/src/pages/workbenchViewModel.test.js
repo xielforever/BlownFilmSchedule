@@ -9,6 +9,7 @@ import {
   screeningOverrideBadge,
   screeningOverrideDraftRisk,
   canCreateScreeningOverride,
+  deferredReasonFilterOptions,
   screeningPoolCounts,
   selectableOrderIds,
   staleOrderIds,
@@ -117,6 +118,23 @@ test('screeningPoolCounts includes stale count without changing status counts', 
     blocked_count: 1,
     stale_count: 2,
   });
+});
+
+test('deferredReasonFilterOptions exposes backend reason counts for filtering', () => {
+  assert.deepEqual(
+    deferredReasonFilterOptions({
+      candidate_optional_rejected: 2,
+      planning_window_deferred: 3,
+      unknown_reason: 1,
+    }),
+    [
+      { key: 'all', label: '全部延后', count: 6 },
+      { key: 'planning_window_deferred', label: '计划窗口延后', count: 3 },
+      { key: 'candidate_optional_rejected', label: '候选策略延后', count: 2 },
+      { key: 'unknown_reason', label: 'unknown_reason', count: 1 },
+    ],
+  );
+  assert.deepEqual(deferredReasonFilterOptions({}), []);
 });
 
 test('screeningOverrideBadge explains override boundaries and applied overrides', () => {
