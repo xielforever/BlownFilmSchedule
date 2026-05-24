@@ -320,12 +320,12 @@ def _normalize_screening_policy(policy: Optional[dict] = None) -> dict:
             if str(status).strip()
         } or set(DEFAULT_SCREENING_POLICY["allowed_order_statuses"]),
         "prohibited_override_codes": {
-            str(code).strip()
+            str(code).strip().lower()
             for code in prohibited_override_codes
             if str(code).strip()
         },
         "restricted_override_codes": {
-            str(code).strip()
+            str(code).strip().lower()
             for code in restricted_override_codes
             if str(code).strip()
         },

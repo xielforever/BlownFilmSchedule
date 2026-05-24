@@ -433,6 +433,26 @@ class TestOrderScreening(unittest.TestCase):
         self.assertFalse(decision["allowed"])
         self.assertEqual(decision["policy"], "prohibited")
 
+    def test_override_policy_codes_are_case_insensitive(self):
+        material_item = screen_orders(
+            [_make_order("ORD-MATERIAL-UPPER", material_available_mins=6000, due_date_mins=5000)],
+            [_make_machine()],
+            screening_policy={
+                "prohibited_override_codes": [
+                    "missing_product",
+                    "missing_recipe",
+                    "no_eligible_machine",
+                    "status_not_pending",
+                ],
+                "restricted_override_codes": [" MATERIAL_NOT_READY "],
+            },
+        )["items"][0]
+
+        decision = material_item["override_decision"]
+
+        self.assertTrue(decision["allowed"])
+        self.assertEqual(decision["policy"], "restricted")
+
     def test_screening_items_expose_override_decision(self):
         screening = screen_orders(
             [
