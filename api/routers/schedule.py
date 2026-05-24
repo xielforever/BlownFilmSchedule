@@ -853,6 +853,7 @@ def _manual_adjustment_impact(before_state: dict[str, Any] | None, after_state: 
 
 def _manual_adjustment_impact_summary(adjustments: list[dict[str, Any]]) -> dict[str, Any]:
     affected_order_ids = []
+    negative_impact_order_ids = []
     machine_change_count = 0
     time_changed_count = 0
     locked_after_adjustment_count = 0
@@ -872,6 +873,12 @@ def _manual_adjustment_impact_summary(adjustments: list[dict[str, Any]]) -> dict
             locked_after_adjustment_count += 1
         total_setup_time_delta_mins += int(impact.get("setup_time_delta_mins") or 0)
         total_tardiness_delta_mins += int(impact.get("tardiness_delta_mins") or 0)
+        if order_id and (
+            int(impact.get("tardiness_delta_mins") or 0) > 0
+            or int(impact.get("setup_time_delta_mins") or 0) > 0
+            or int(impact.get("end_delta_mins") or 0) > 0
+        ):
+            negative_impact_order_ids.append(order_id)
         for key in ("start_delta_mins", "end_delta_mins"):
             value = impact.get(key)
             if value is not None and int(value) > 0:
@@ -884,6 +891,8 @@ def _manual_adjustment_impact_summary(adjustments: list[dict[str, Any]]) -> dict
         "total_setup_time_delta_mins": total_setup_time_delta_mins,
         "total_tardiness_delta_mins": total_tardiness_delta_mins,
         "max_delay_delta_mins": max(delay_deltas) if delay_deltas else 0,
+        "has_negative_impact": bool(negative_impact_order_ids),
+        "negative_impact_order_ids": negative_impact_order_ids,
         "affected_order_ids": affected_order_ids,
     }
 
