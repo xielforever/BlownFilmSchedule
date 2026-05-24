@@ -462,6 +462,7 @@ class DatabaseManager:
                     config_scope    VARCHAR(40)  NOT NULL,
                     config_key      TEXT,
                     entity_id       VARCHAR(80),
+                    policy_version  INTEGER,
                     before_state    JSONB,
                     after_state     JSONB,
                     changed_by      VARCHAR(50),
@@ -471,7 +472,8 @@ class DatabaseManager:
             """)
             cur.execute("""
                 ALTER TABLE config_change_audit
-                    ALTER COLUMN config_key TYPE TEXT
+                    ALTER COLUMN config_key TYPE TEXT,
+                    ADD COLUMN IF NOT EXISTS policy_version INTEGER
             """)
             cur.execute("""
                 CREATE INDEX IF NOT EXISTS idx_schedule_publish_audit_run

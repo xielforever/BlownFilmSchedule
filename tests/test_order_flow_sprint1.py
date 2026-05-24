@@ -1060,19 +1060,33 @@ class _FakeCursor:
             self.rowcount = 1
             return
         if normalized.startswith("insert into config_change_audit"):
-            (
-                config_scope,
-                config_key,
-                entity_id,
-                before_state,
-                after_state,
-                changed_by,
-                reason_text,
-            ) = params
+            if len(params) == 8:
+                (
+                    config_scope,
+                    config_key,
+                    entity_id,
+                    policy_version,
+                    before_state,
+                    after_state,
+                    changed_by,
+                    reason_text,
+                ) = params
+            else:
+                (
+                    config_scope,
+                    config_key,
+                    entity_id,
+                    before_state,
+                    after_state,
+                    changed_by,
+                    reason_text,
+                ) = params
+                policy_version = None
             self.db.config_change_audit.append({
                 "config_scope": config_scope,
                 "config_key": config_key,
                 "entity_id": entity_id,
+                "policy_version": policy_version,
                 "before_state": self._unwrap(before_state),
                 "after_state": self._unwrap(after_state),
                 "changed_by": changed_by,
@@ -3377,6 +3391,22 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
             db.config_change_audit[0]["config_key"],
             "screening_required_positive_order_fields",
         )
+
+    def test_policy_update_audit_records_new_policy_version(self):
+        db = _FakeDb()
+        payload = schedule_router.ScheduleSettingsPayload(
+            solver_time_limit_seconds=90,
+            change_reason="standard profile tuning",
+        )
+
+        result = schedule_router.update_schedule_settings(
+            payload,
+            db=db,
+            _=SimpleNamespace(username="planner"),
+        )
+
+        self.assertEqual(result["policy_version"], 2)
+        self.assertEqual(db.config_change_audit[0]["policy_version"], 2)
 
     def test_update_order_writes_diff_and_impacted_drafts(self):
         db = _FakeDb()

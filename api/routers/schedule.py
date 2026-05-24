@@ -491,6 +491,7 @@ def _ensure_planning_schema_locked(db):
             config_scope    VARCHAR(40)  NOT NULL,
             config_key      TEXT,
             entity_id       VARCHAR(80),
+            policy_version  INTEGER,
             before_state    JSONB,
             after_state     JSONB,
             changed_by      VARCHAR(50),
@@ -500,7 +501,8 @@ def _ensure_planning_schema_locked(db):
     """)
     cur.execute("""
         ALTER TABLE config_change_audit
-            ALTER COLUMN config_key TYPE TEXT
+            ALTER COLUMN config_key TYPE TEXT,
+            ADD COLUMN IF NOT EXISTS policy_version INTEGER
     """)
     cur.execute("""
         CREATE INDEX IF NOT EXISTS idx_schedule_publish_audit_run
@@ -3755,12 +3757,13 @@ def update_schedule_settings(
     after = _get_schedule_settings(db)
     cur.execute("""
         INSERT INTO config_change_audit
-            (config_scope, config_key, entity_id, before_state, after_state, changed_by, reason_text)
-        VALUES (%s,%s,%s,%s,%s,%s,%s)
+            (config_scope, config_key, entity_id, policy_version, before_state, after_state, changed_by, reason_text)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
     """, (
         "schedule_policy",
         ",".join(sorted(updated_fields)),
         "global",
+        after.get("policy_version"),
         Json(_json_safe(before)),
         Json(_json_safe(after)),
         _.username,
@@ -3778,7 +3781,7 @@ def get_config_audit(limit: int = 50, db=Depends(get_db), _=Depends(get_current_
     safe_limit = max(1, min(int(limit or 50), 200))
     cur = db.cursor()
     cur.execute("""
-        SELECT id, config_scope, config_key, entity_id, before_state,
+        SELECT id, config_scope, config_key, entity_id, policy_version, before_state,
             after_state, changed_by, reason_text, created_at
         FROM config_change_audit
         ORDER BY created_at DESC, id DESC

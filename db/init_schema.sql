@@ -349,6 +349,7 @@ CREATE TABLE IF NOT EXISTS config_change_audit (
     config_scope    VARCHAR(40)  NOT NULL,
     config_key      TEXT,
     entity_id       VARCHAR(80),
+    policy_version  INTEGER,
     before_state    JSONB,
     after_state     JSONB,
     changed_by      VARCHAR(50),
