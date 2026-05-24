@@ -348,12 +348,16 @@ class _FakeCursor:
             param_index = 0
             status_filter = None
             screening_status_filter = None
+            screening_bucket_filter = None
             screening_stale_filter = None
             if "o.status=%s" in normalized:
                 status_filter = params[param_index]
                 param_index += 1
             if "lower(osc.screening_status)=%s" in normalized:
                 screening_status_filter = params[param_index]
+                param_index += 1
+            if "lower(osc.result->>'business_bucket')=%s" in normalized:
+                screening_bucket_filter = params[param_index]
                 param_index += 1
             if "coalesce(osc.is_stale, false)=%s" in normalized:
                 screening_stale_filter = params[param_index]
@@ -364,6 +368,9 @@ class _FakeCursor:
                 if status_filter and row["status"] != status_filter:
                     continue
                 if screening_status_filter and (cache.get("screening_status") or "").lower() != screening_status_filter:
+                    continue
+                business_bucket = (cache.get("result") or {}).get("business_bucket")
+                if screening_bucket_filter and (business_bucket or "").lower() != screening_bucket_filter:
                     continue
                 if screening_stale_filter is not None and bool(cache.get("is_stale")) is not bool(screening_stale_filter):
                     continue
@@ -390,12 +397,16 @@ class _FakeCursor:
             param_index = 0
             status_filter = None
             screening_status_filter = None
+            screening_bucket_filter = None
             screening_stale_filter = None
             if "o.status=%s" in normalized:
                 status_filter = params[param_index]
                 param_index += 1
             if "lower(osc.screening_status)=%s" in normalized:
                 screening_status_filter = params[param_index]
+                param_index += 1
+            if "lower(osc.result->>'business_bucket')=%s" in normalized:
+                screening_bucket_filter = params[param_index]
                 param_index += 1
             if "coalesce(osc.is_stale, false)=%s" in normalized:
                 screening_stale_filter = params[param_index]
@@ -406,6 +417,9 @@ class _FakeCursor:
                 if status_filter and row["status"] != status_filter:
                     continue
                 if screening_status_filter and (cache.get("screening_status") or "").lower() != screening_status_filter:
+                    continue
+                business_bucket = (cache.get("result") or {}).get("business_bucket")
+                if screening_bucket_filter and (business_bucket or "").lower() != screening_bucket_filter:
                     continue
                 if screening_stale_filter is not None and bool(cache.get("is_stale")) is not bool(screening_stale_filter):
                     continue
@@ -1046,6 +1060,7 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
             "code": "no_eligible_machine",
             "root_cause": "幅宽超出机台能力",
             "result": {
+                "business_bucket": "blocked_machine_capability",
                 "recommendations": [
                     {
                         "action": "expand_machine_capability",
@@ -1065,6 +1080,7 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
 
         self.assertEqual(result["items"][0]["screening"]["screening_status"], "blocked")
         self.assertEqual(result["items"][0]["screening"]["code"], "no_eligible_machine")
+        self.assertEqual(result["items"][0]["screening"]["business_bucket"], "blocked_machine_capability")
         self.assertIs(result["items"][0]["screening"]["is_stale"], True)
         self.assertEqual(
             result["items"][0]["screening"]["stale_reason"],
@@ -1079,7 +1095,7 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
             "target_width",
         )
 
-    def test_list_orders_filters_by_screening_status_and_stale_flag(self):
+    def test_list_orders_filters_by_screening_status_bucket_and_stale_flag(self):
         db = _FakeDb()
         db.products.add("Film-A")
         for order_id, width in [("ORD-LIST-READY", 500), ("ORD-LIST-BLOCKED", 9999)]:
@@ -1104,12 +1120,14 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
             }
         db.order_screening_cache["ORD-LIST-READY"] = {
             "screening_status": "ready",
+            "result": {"business_bucket": "ready"},
             "is_stale": False,
         }
         db.order_screening_cache["ORD-LIST-BLOCKED"] = {
             "screening_status": "blocked",
             "code": "no_eligible_machine",
             "root_cause": "幅宽超出机台能力",
+            "result": {"business_bucket": "blocked_machine_capability"},
             "is_stale": True,
             "stale_reason": "machine_capability_changed",
         }
@@ -1117,6 +1135,7 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         result = orders_router.list_orders(
             status="PENDING",
             screening_status="blocked",
+            screening_bucket="blocked_machine_capability",
             screening_stale=True,
             q=None,
             page=1,

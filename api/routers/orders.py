@@ -798,6 +798,7 @@ def _filter_screening_result(result: dict, screening_status: str | None) -> dict
 def list_orders(
     status: str = None,
     screening_status: Optional[str] = None,
+    screening_bucket: Optional[str] = None,
     screening_stale: Optional[bool] = None,
     q: Optional[str] = Query(default=None, min_length=1),
     page: int = Query(default=1, ge=1),
@@ -817,6 +818,21 @@ def list_orders(
             raise HTTPException(status_code=400, detail="Invalid screening status.")
         where_clauses.append("LOWER(osc.screening_status)=%s")
         params.append(normalized_screening_status)
+    if screening_bucket:
+        normalized_screening_bucket = screening_bucket.lower()
+        allowed_buckets = {
+            "ready",
+            "risk",
+            "blocked_data_error",
+            "blocked_machine_capability",
+            "blocked_cleanroom",
+            "blocked_material",
+            "blocked_policy",
+        }
+        if normalized_screening_bucket not in allowed_buckets:
+            raise HTTPException(status_code=400, detail="Invalid screening bucket.")
+        where_clauses.append("LOWER(osc.result->>'business_bucket')=%s")
+        params.append(normalized_screening_bucket)
     if screening_stale is not None:
         where_clauses.append("COALESCE(osc.is_stale, FALSE)=%s")
         params.append(bool(screening_stale))
@@ -876,6 +892,7 @@ def list_orders(
             "assigned_machine": r["assigned_machine"],
             "screening": {
                 "screening_status": r.get("screening_status"),
+                "business_bucket": screening_result.get("business_bucket"),
                 "code": r.get("screening_code"),
                 "root_cause": r.get("screening_root_cause"),
                 "is_stale": r.get("screening_is_stale"),
