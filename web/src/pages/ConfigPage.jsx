@@ -29,6 +29,7 @@ import {
 } from '../api/client';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
+  buildConfigAuditMeta,
   booleanPolicyGroups,
   buildSchedulePolicyPayload,
   listPolicyFields,
@@ -198,13 +199,6 @@ const auditScopeLabels = {
   schedule_policy: '全局策略',
   rule: '规则',
 };
-const auditKeyLabels = {
-  ...policySettingLabels,
-  material_switch: '材料切换',
-  gmp_clearance: 'GMP 清场',
-  spec_change: '规格变更',
-  maintenance: '维护窗口',
-};
 const diagnosticSeverityLabels = {
   critical: '关键',
   warning: '警告',
@@ -317,14 +311,6 @@ function StatusLine({ message, tone }) {
 
 function formatConfigTime(value) {
   return value ? new Date(value).toLocaleString('zh-CN') : '-';
-}
-
-function formatAuditKey(key = '') {
-  if (!key) return '配置项';
-  return key
-    .split(',')
-    .map(item => auditKeyLabels[item] || item)
-    .join('、');
 }
 
 function changedFieldCount(entry) {
@@ -1072,7 +1058,7 @@ function ConfigAuditPanel({ audit }) {
           <article key={entry.id} className="config-audit-item">
             <div>
               <strong>{entry.scope_label || auditScopeLabels[entry.config_scope] || entry.config_scope || '配置'}</strong>
-              <span>{formatAuditKey(entry.config_key)} · {entry.changed_by || '系统'} · {formatConfigTime(entry.created_at)}</span>
+              <span>{buildConfigAuditMeta(entry, formatConfigTime)}</span>
             </div>
             <p>{entry.reason_text || '未填写原因'}</p>
             <small>{entry.entity_id || 'global'} · 影响字段 {changedFieldCount(entry)}</small>

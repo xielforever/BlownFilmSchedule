@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  buildConfigAuditMeta,
   buildSchedulePolicyPayload,
   numericPolicyFieldGroups,
   listPolicyFields,
@@ -63,4 +64,21 @@ test('policy field metadata exposes configurable non-boolean strategy groups', (
   assert.ok(numericPolicyFieldGroups.some(group => group.keys.includes('candidate_min_acceptance_ratio')));
   assert.ok(numericPolicyFieldGroups.some(group => group.keys.includes('arc_pruning_top_k_per_order')));
   assert.ok(listPolicyFields.some(field => field.key === 'screening_allowed_order_statuses'));
+});
+
+test('buildConfigAuditMeta includes policy version for traceability', () => {
+  const meta = buildConfigAuditMeta(
+    {
+      config_key: 'solver_time_limit_seconds,screening_allowed_order_statuses',
+      changed_by: 'planner-a',
+      policy_version: 7,
+      created_at: '2026-05-24T10:30:00Z',
+    },
+    value => `time:${value}`,
+  );
+
+  assert.equal(
+    meta,
+    '求解时间上限、允许入池订单状态 · 版本 #7 · planner-a · time:2026-05-24T10:30:00Z',
+  );
 });

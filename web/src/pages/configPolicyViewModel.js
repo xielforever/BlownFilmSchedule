@@ -69,6 +69,36 @@ export const listPolicyFields = [
   },
 ];
 
+export const auditKeyLabels = {
+  material_constraint_enabled: '物料约束',
+  maintenance_constraint_enabled: '维护窗口',
+  setup_rules_enabled: '换产规则',
+  cleanroom_constraint_enabled: '洁净约束',
+  machine_capability_constraint_enabled: '机台能力',
+  due_date_optimization_enabled: '交期优化',
+  solver_time_limit_seconds: '求解时间上限',
+  solver_relative_gap_limit: '求解 gap',
+  planning_must_schedule_horizon_days: '必排窗口',
+  planning_candidate_horizon_days: '候选窗口',
+  candidate_reject_penalty: '候选拒排惩罚',
+  candidate_max_deferred_count: '候选最大延后数',
+  candidate_min_acceptance_ratio: '候选最低接受率',
+  arc_pruning_enabled: '弧裁剪开关',
+  arc_pruning_max_setup_mins: '弧裁剪换产阈值',
+  arc_pruning_top_k_per_order: '弧裁剪 top-k',
+  screening_allowed_order_statuses: '允许入池订单状态',
+  screening_prohibited_override_codes: '禁止豁免原因',
+  screening_restricted_override_codes: '受限豁免原因',
+  screening_required_positive_order_fields: '必填正数字段',
+  manual_adjust_review_delay_threshold_mins: '人工调整延误复核阈值',
+  manual_adjust_review_setup_threshold_mins: '人工调整换产复核阈值',
+  manual_adjust_review_tardiness_threshold_mins: '人工调整迟交复核阈值',
+  material_switch: '材料切换',
+  gmp_clearance: 'GMP 清场',
+  spec_change: '规格变更',
+  maintenance: '维护窗口',
+};
+
 export function normalizePolicyList(value) {
   if (Array.isArray(value)) return value.map(item => String(item).trim()).filter(Boolean);
   return String(value ?? '')
@@ -101,4 +131,22 @@ export function buildSchedulePolicyPayload(draft = {}, changeReason = '') {
   });
 
   return payload;
+}
+
+export function formatAuditKey(key = '') {
+  if (!key) return '配置项';
+  return key
+    .split(',')
+    .map(item => auditKeyLabels[item] || item)
+    .join('、');
+}
+
+export function buildConfigAuditMeta(entry = {}, formatTime = value => value || '-') {
+  const version = entry.policy_version ? `版本 #${entry.policy_version}` : '未记录版本';
+  return [
+    formatAuditKey(entry.config_key),
+    version,
+    entry.changed_by || '系统',
+    formatTime(entry.created_at),
+  ].join(' · ');
 }
