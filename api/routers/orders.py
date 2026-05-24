@@ -100,6 +100,7 @@ OrderUpdate = OrderUpdatePayload
 class OrderScreeningPayload(BaseModel):
     order_ids: list[str] = Field(default_factory=list)
     scope: str = "selected"
+    screening_status: Optional[str] = None
 
 
 class OrderImportPreviewPayload(BaseModel):
@@ -582,6 +583,34 @@ def _run_order_screening(db, *, order_ids: list[str] | None, scope: str):
     return result
 
 
+def _screening_summary(items: list[dict]) -> dict:
+    return {
+        "total_orders": len(items),
+        "ready_count": sum(1 for item in items if item.get("screening_status") == "ready"),
+        "risk_count": sum(1 for item in items if item.get("screening_status") == "risk"),
+        "blocked_count": sum(1 for item in items if item.get("screening_status") == "blocked"),
+    }
+
+
+def _filter_screening_result(result: dict, screening_status: str | None) -> dict:
+    if not screening_status:
+        return result
+    status = screening_status.lower()
+    if status not in {"ready", "risk", "blocked"}:
+        raise HTTPException(status_code=400, detail="初筛状态无效。")
+    items = [
+        item
+        for item in result.get("items", [])
+        if item.get("screening_status") == status
+    ]
+    return {
+        **result,
+        "items": items,
+        "summary": _screening_summary(items),
+        "screening_status_filter": status,
+    }
+
+
 @router.get("")
 def list_orders(
     status: str = None,
@@ -766,11 +795,12 @@ def screen_orders_endpoint(
     order_ids = [item.strip() for item in payload.order_ids if item and item.strip()]
     order_ids = list(dict.fromkeys(order_ids))
     effective_scope = "selected" if order_ids and scope == "selected" else "pending"
-    return _run_order_screening(
+    result = _run_order_screening(
         db,
         order_ids=order_ids if effective_scope == "selected" else None,
         scope=effective_scope,
     )
+    return _filter_screening_result(result, payload.screening_status)
 
 
 @router.get("/{order_id}/screening")

@@ -2,6 +2,7 @@ import unittest
 
 from fastapi import HTTPException
 
+from api.routers import orders as orders_router
 from api.routers import schedule as schedule_router
 from src.models import BlownFilmMachineModel, ProductionOrderModel
 from src.order_screening import build_screening_snapshot, screen_orders
@@ -210,6 +211,23 @@ class TestOrderScreening(unittest.TestCase):
         self.assertEqual(first_snapshot["hash"], second_snapshot["hash"])
         self.assertEqual(first_snapshot["summary"], first["summary"])
         self.assertNotIn("generated_at", first_snapshot)
+
+    def test_filter_screening_result_keeps_only_requested_status(self):
+        screening = screen_orders(
+            [
+                _make_order("ORD-READY"),
+                _make_order("ORD-BLOCKED", target_width=9999),
+            ],
+            [_make_machine()],
+            scope="pending",
+        )
+
+        filtered = orders_router._filter_screening_result(screening, "blocked")
+
+        self.assertEqual(filtered["summary"]["total_orders"], 1)
+        self.assertEqual(filtered["summary"]["ready_count"], 0)
+        self.assertEqual(filtered["summary"]["blocked_count"], 1)
+        self.assertEqual([item["order_id"] for item in filtered["items"]], ["ORD-BLOCKED"])
 
 
 if __name__ == "__main__":
