@@ -31,6 +31,8 @@ class BenchmarkCase:
     arc_pruning_enabled: bool = False
     arc_pruning_max_setup_mins: int = 0
     arc_pruning_top_k_per_order: int = 0
+    comparison_group: str | None = None
+    comparison_variant: str | None = None
 
 
 def _make_setup_mgr() -> SetupMatricesManager:
@@ -46,7 +48,7 @@ def _make_setup_mgr() -> SetupMatricesManager:
 
 
 def _case_config(case: BenchmarkCase) -> dict:
-    return {
+    config = {
         "name": case.name,
         "order_count": case.order_count,
         "machine_count": case.machine_count,
@@ -61,6 +63,11 @@ def _case_config(case: BenchmarkCase) -> dict:
         "arc_pruning_max_setup_mins": case.arc_pruning_max_setup_mins,
         "arc_pruning_top_k_per_order": case.arc_pruning_top_k_per_order,
     }
+    if case.comparison_group:
+        config["comparison_group"] = case.comparison_group
+    if case.comparison_variant:
+        config["comparison_variant"] = case.comparison_variant
+    return config
 
 
 def _make_machine(index: int) -> BlownFilmMachineModel:
@@ -185,6 +192,8 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
         "order_count": case.order_count,
         "machine_count": case.machine_count,
         "profile": case.profile,
+        "comparison_group": case.comparison_group,
+        "comparison_variant": case.comparison_variant,
         "solver_status": result.status,
         "passed": bool(passed),
         "scheduled_order_count": len(result.tasks),
@@ -218,6 +227,51 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
     }
 
 
+def _numeric_delta(pruned: dict, baseline: dict, key: str) -> float | int | None:
+    left = pruned.get(key)
+    right = baseline.get(key)
+    if left is None or right is None:
+        return None
+    return left - right
+
+
+def _model_size_delta(pruned: dict, baseline: dict, key: str) -> int | None:
+    left = (pruned.get("model_size") or {}).get(key)
+    right = (baseline.get("model_size") or {}).get(key)
+    if left is None or right is None:
+        return None
+    return int(left) - int(right)
+
+
+def _arc_pruning_comparisons(case_results: list[dict]) -> list[dict]:
+    grouped: dict[str, dict[str, dict]] = {}
+    for case in case_results:
+        group = case.get("comparison_group")
+        variant = case.get("comparison_variant")
+        if not group or variant not in {"pruning_off", "pruning_on"}:
+            continue
+        grouped.setdefault(group, {})[variant] = case
+
+    comparisons = []
+    for group, variants in grouped.items():
+        baseline = variants.get("pruning_off")
+        pruned = variants.get("pruning_on")
+        if not baseline or not pruned:
+            continue
+        comparisons.append({
+            "comparison_group": group,
+            "baseline_case": baseline["name"],
+            "pruned_case": pruned["name"],
+            "wall_time_seconds_delta": _numeric_delta(pruned, baseline, "wall_time_seconds"),
+            "late_order_count_delta": _numeric_delta(pruned, baseline, "late_order_count"),
+            "weighted_tardiness_delta": _numeric_delta(pruned, baseline, "weighted_tardiness"),
+            "total_setup_time_mins_delta": _numeric_delta(pruned, baseline, "total_setup_time_mins"),
+            "arc_count_delta": _model_size_delta(pruned, baseline, "arc_count"),
+            "pruned_arc_count_delta": _model_size_delta(pruned, baseline, "pruned_arc_count"),
+        })
+    return comparisons
+
+
 def run_benchmark_suite(cases: Iterable[BenchmarkCase]) -> dict:
     case_list = list(cases)
     case_results = [run_benchmark_case(case) for case in case_list]
@@ -231,6 +285,7 @@ def run_benchmark_suite(cases: Iterable[BenchmarkCase]) -> dict:
         "failed_count": sum(1 for item in case_results if not item["passed"]),
         "case_configs": [_case_config(case) for case in case_list],
         "cases": case_results,
+        "arc_pruning_comparisons": _arc_pruning_comparisons(case_results),
     }
 
 
@@ -266,35 +321,57 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--arc-pruning-enabled", action="store_true")
     parser.add_argument("--arc-pruning-max-setup-mins", type=int, default=0)
     parser.add_argument("--arc-pruning-top-k-per-order", type=int, default=0)
+    parser.add_argument("--compare-arc-pruning", action="store_true")
     parser.add_argument("--output", default="benchmark-summary.json")
     args = parser.parse_args(argv)
 
     profiles = args.profiles or [args.profile]
-    cases = [
-        BenchmarkCase(
-            name=f"{profile}-{count}",
-            order_count=count,
-            machine_count=max(1, args.machine_count),
-            profile=profile,
-            max_wall_time_seconds=args.max_wall_time_seconds,
-            max_gap=args.max_gap,
-            min_scheduled_ratio=max(0.0, float(args.min_scheduled_ratio)),
-            max_late_order_count=(
-                None if args.max_late_order_count is None else max(0, int(args.max_late_order_count))
-            ),
-            max_weighted_tardiness=(
-                None if args.max_weighted_tardiness is None else max(0, int(args.max_weighted_tardiness))
-            ),
-            max_total_setup_time_mins=(
-                None if args.max_total_setup_time_mins is None else max(0, int(args.max_total_setup_time_mins))
-            ),
-            arc_pruning_enabled=bool(args.arc_pruning_enabled),
-            arc_pruning_max_setup_mins=max(0, int(args.arc_pruning_max_setup_mins)),
-            arc_pruning_top_k_per_order=max(0, int(args.arc_pruning_top_k_per_order)),
-        )
-        for profile in profiles
-        for count in args.order_counts
-    ]
+    cases = []
+    for profile in profiles:
+        for count in args.order_counts:
+            common = {
+                "order_count": count,
+                "machine_count": max(1, args.machine_count),
+                "profile": profile,
+                "max_wall_time_seconds": args.max_wall_time_seconds,
+                "max_gap": args.max_gap,
+                "min_scheduled_ratio": max(0.0, float(args.min_scheduled_ratio)),
+                "max_late_order_count": (
+                    None if args.max_late_order_count is None else max(0, int(args.max_late_order_count))
+                ),
+                "max_weighted_tardiness": (
+                    None if args.max_weighted_tardiness is None else max(0, int(args.max_weighted_tardiness))
+                ),
+                "max_total_setup_time_mins": (
+                    None if args.max_total_setup_time_mins is None else max(0, int(args.max_total_setup_time_mins))
+                ),
+                "arc_pruning_max_setup_mins": max(0, int(args.arc_pruning_max_setup_mins)),
+                "arc_pruning_top_k_per_order": max(0, int(args.arc_pruning_top_k_per_order)),
+            }
+            if args.compare_arc_pruning:
+                group = f"{profile}-{count}"
+                cases.extend([
+                    BenchmarkCase(
+                        name=f"{group}-pruning-off",
+                        arc_pruning_enabled=False,
+                        comparison_group=group,
+                        comparison_variant="pruning_off",
+                        **common,
+                    ),
+                    BenchmarkCase(
+                        name=f"{group}-pruning-on",
+                        arc_pruning_enabled=True,
+                        comparison_group=group,
+                        comparison_variant="pruning_on",
+                        **common,
+                    ),
+                ])
+            else:
+                cases.append(BenchmarkCase(
+                    name=f"{profile}-{count}",
+                    arc_pruning_enabled=bool(args.arc_pruning_enabled),
+                    **common,
+                ))
     summary = run_benchmark_suite(cases)
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)

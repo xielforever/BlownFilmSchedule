@@ -156,6 +156,41 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertEqual(case["model_size"]["arc_pruning_policy"]["top_k_per_order"], 1)
         self.assertGreaterEqual(case["model_size"]["pruned_arc_count"], 0)
 
+    def test_benchmark_command_compares_arc_pruning_variants(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "compare-pruning.json")
+            exit_code = main([
+                "--order-counts", "3",
+                "--machine-count", "1",
+                "--compare-arc-pruning",
+                "--arc-pruning-max-setup-mins", "999",
+                "--arc-pruning-top-k-per-order", "1",
+                "--output", path,
+                "--max-wall-time-seconds", "10",
+            ])
+            with open(path, encoding="utf-8") as f:
+                summary = json.load(f)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(summary["case_count"], 2)
+        self.assertEqual(
+            [case["arc_pruning_policy"]["enabled"] for case in summary["cases"]],
+            [False, True],
+        )
+        self.assertEqual(len(summary["arc_pruning_comparisons"]), 1)
+        comparison = summary["arc_pruning_comparisons"][0]
+        self.assertEqual(comparison["baseline_case"], "fast-3-pruning-off")
+        self.assertEqual(comparison["pruned_case"], "fast-3-pruning-on")
+        for key in [
+            "wall_time_seconds_delta",
+            "late_order_count_delta",
+            "weighted_tardiness_delta",
+            "total_setup_time_mins_delta",
+            "arc_count_delta",
+            "pruned_arc_count_delta",
+        ]:
+            self.assertIn(key, comparison)
+
 
 if __name__ == "__main__":
     unittest.main()
