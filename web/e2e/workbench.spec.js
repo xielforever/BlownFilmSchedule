@@ -136,6 +136,11 @@ async function openWorkbench(page) {
 }
 
 async function openOrderPoolIfCollapsed(page) {
+  const stage = page.getByTestId('workbench-stage-order_pool');
+  if (await stage.isVisible().catch(() => false)) {
+    await stage.click();
+  }
+  await expect(page.getByTestId('workbench-order-pool-browser')).toBeVisible();
   const toggle = page.getByTestId('workbench-order-pool-toggle');
   if (await toggle.isVisible().catch(() => false)) {
     const expanded = await toggle.getAttribute('aria-expanded');
@@ -314,6 +319,7 @@ test.describe.serial('schedule workbench closed loop', () => {
 
     await openWorkbench(page);
     await openOrderPoolIfCollapsed(page);
+    await page.getByTestId('workbench-filter-screening').selectOption('blocked');
     await page.getByTestId('workbench-search').fill(orderId);
     await expect(page.getByTestId(`workbench-pending-order-${testIdPart(orderId)}`)).toBeVisible();
     await expect(page.getByTestId(`workbench-screening-action-${testIdPart(orderId)}-expand_machine_capability`)).toContainText('调整机台规格能力');
