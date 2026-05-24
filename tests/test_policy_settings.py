@@ -162,6 +162,22 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertIn("机台能力", item["message"])
         self.assertIn("重新预排", item["message"])
 
+    def test_current_input_snapshot_uses_saved_preplan_screening_snapshot(self):
+        screening = {
+            "generated_at": "2026-05-24T09:00:00",
+            "items": [
+                {"order_id": "ORD-001", "screening_status": "ready", "reasons": []},
+            ],
+            "summary": {"ready": 1, "risk": 0, "blocked": 0},
+        }
+        order_snapshots = [
+            {"order_id": "ORD-001", "hash": "order-v1"},
+        ]
+
+        snapshot = schedule_router._screening_snapshot_for_input_snapshot(screening, order_snapshots)
+
+        self.assertEqual(snapshot, schedule_router.build_screening_snapshot(screening))
+
     def test_manual_adjustment_validation_respects_global_policy_switches(self):
         payload = SimpleNamespace(
             order_id="ORD-POLICY",

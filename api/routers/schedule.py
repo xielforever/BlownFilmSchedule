@@ -1087,7 +1087,26 @@ def _current_order_snapshot_map(cur, order_ids: list[str]) -> dict[str, dict[str
     }
 
 
-def _current_input_snapshot(cur, order_snapshots: list[dict[str, Any]]) -> dict[str, Any]:
+def _screening_snapshot_for_input_snapshot(
+    screening: dict[str, Any] | None,
+    order_snapshots: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if screening:
+        return build_screening_snapshot(screening)
+    return {
+        "count": len(order_snapshots or []),
+        "hash": stable_hash([
+            {"order_id": item.get("order_id"), "hash": item.get("hash")}
+            for item in order_snapshots or []
+        ]),
+    }
+
+
+def _current_input_snapshot(
+    cur,
+    order_snapshots: list[dict[str, Any]],
+    screening: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     cur.execute("""
         SELECT machine_id, status, cleanroom_level, layer_structure,
             die_diameter_mm, min_width, max_width, min_thickness,
@@ -1168,13 +1187,7 @@ def _current_input_snapshot(cur, order_snapshots: list[dict[str, Any]]) -> dict[
     """)
     process_snapshot = build_process_snapshot(cur.fetchall())
 
-    screening_snapshot = {
-        "count": len(order_snapshots or []),
-        "hash": stable_hash([
-            {"order_id": item.get("order_id"), "hash": item.get("hash")}
-            for item in order_snapshots or []
-        ]),
-    }
+    screening_snapshot = _screening_snapshot_for_input_snapshot(screening, order_snapshots)
     return build_input_snapshot(
         order_snapshots=order_snapshots,
         machine_capability_snapshot=machine_snapshot,
@@ -1441,6 +1454,7 @@ def _load_preplan_validation(db, run_id: int):
             current_input_snapshot = _current_input_snapshot(
                 cur,
                 list(current_snapshots.values()),
+                params.get("preplan_screening"),
             )
             input_item = _input_snapshot_validation_item(saved_input_snapshot, current_input_snapshot)
             if input_item:
