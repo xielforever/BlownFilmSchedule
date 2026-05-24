@@ -28,6 +28,12 @@ import {
   updateSpecRule,
 } from '../api/client';
 import { Link, useSearchParams } from 'react-router-dom';
+import {
+  booleanPolicyGroups,
+  buildSchedulePolicyPayload,
+  listPolicyFields,
+  numericPolicyFieldGroups,
+} from './configPolicyViewModel';
 
 const tabs = [
   { id: 'policy', label: '策略' },
@@ -141,6 +147,28 @@ const policySettingLabels = {
   cleanroom_constraint_enabled: '洁净等级约束',
   machine_capability_constraint_enabled: '机台规格能力约束',
   due_date_optimization_enabled: '交期优化目标',
+  continuous_run_limit_mins: '连续运行上限(分钟)',
+  phase2_feasible_tardiness_tolerance_mins: '二阶段延期容忍(分钟)',
+  solver_time_limit_seconds: '求解时间上限(秒)',
+  solver_relative_gap_limit: '相对 Gap 上限',
+  solver_random_seed: '随机种子',
+  solver_num_workers: '并行 workers',
+  planning_must_schedule_horizon_days: '必排窗口(天)',
+  planning_candidate_horizon_days: '候选窗口(天)',
+  candidate_reject_penalty: '候选拒排惩罚',
+  candidate_max_deferred_count: '候选最大延后数',
+  candidate_min_acceptance_ratio: '候选最低接受率',
+  arc_pruning_max_setup_mins: '弧裁剪最大换产(分钟)',
+  arc_pruning_top_k_per_order: '每单保留 top-k 弧',
+  screening_due_risk_min_slack_mins: '交期风险最小余量(分钟)',
+  screening_due_risk_duration_multiplier: '交期风险工时倍率',
+  screening_allowed_order_statuses: '允许初筛订单状态',
+  screening_prohibited_override_codes: '禁止豁免原因',
+  screening_restricted_override_codes: '受限豁免原因',
+  screening_required_positive_order_fields: '必须为正的订单字段',
+  manual_adjust_review_delay_threshold_mins: '人工调整延期复核阈值',
+  manual_adjust_review_setup_threshold_mins: '人工调整换产复核阈值',
+  manual_adjust_review_tardiness_threshold_mins: '人工调整迟交复核阈值',
 };
 const policySettingDescriptions = {
   review_required: '开启后草案必须先校验，再发布到制造队列。',
@@ -155,16 +183,7 @@ const policySettingDescriptions = {
   machine_capability_constraint_enabled: '关闭后放宽幅宽、厚度和层数边界，仅用于诊断。',
   due_date_optimization_enabled: '关闭后不以交期权重作为优先优化目标。',
 };
-const policyGroups = [
-  {
-    title: '发布与人工复核',
-    keys: ['review_required', 'manual_adjust_enabled', 'manual_adjust_reason_required', 'publish_with_warnings_allowed', 'auto_release_enabled'],
-  },
-  {
-    title: '排程约束与优化',
-    keys: ['material_constraint_enabled', 'maintenance_constraint_enabled', 'setup_rules_enabled', 'cleanroom_constraint_enabled', 'machine_capability_constraint_enabled', 'due_date_optimization_enabled'],
-  },
-];
+const policyGroups = booleanPolicyGroups;
 const highRiskPolicyKeys = [
   'maintenance_constraint_enabled',
   'cleanroom_constraint_enabled',
@@ -1103,9 +1122,7 @@ function PolicyConfig({ settings, rules, audit, onSettingsSaved, onAuditReload, 
     }
     setSaving(true);
     try {
-      const payload = policyGroups
-        .flatMap(group => group.keys)
-        .reduce((acc, key) => ({ ...acc, [key]: draft[key] !== false }), { change_reason: reason });
+      const payload = buildSchedulePolicyPayload(draft, reason);
       const res = await updateScheduleSettings(payload);
       onSettingsSaved(res.data);
       await onAuditReload?.();
@@ -1160,6 +1177,37 @@ function PolicyConfig({ settings, rules, audit, onSettingsSaved, onAuditReload, 
             </div>
           </section>
         ))}
+        {numericPolicyFieldGroups.map(group => (
+          <section key={group.title} className="policy-group">
+            <h4>{group.title}</h4>
+            <div className="config-form">
+              {group.keys.map(key => (
+                <Field key={key} label={policySettingLabels[key] || key}>
+                  <NumberInput
+                    value={draft[key]}
+                    testId={`config-policy-${key}`}
+                    onChange={value => patch(key, value)}
+                  />
+                </Field>
+              ))}
+            </div>
+          </section>
+        ))}
+        <section className="policy-group">
+          <h4>订单准入列表策略</h4>
+          <div className="config-form">
+            {listPolicyFields.map(field => (
+              <Field key={field.key} label={policySettingLabels[field.key] || field.key}>
+                <TextInput
+                  value={Array.isArray(draft[field.key]) ? draft[field.key].join(', ') : draft[field.key]}
+                  placeholder={field.placeholder}
+                  testId={`config-policy-${field.key}`}
+                  onChange={value => patch(field.key, value)}
+                />
+              </Field>
+            ))}
+          </div>
+        </section>
       </div>
 
       {requiresRiskConfirm && (
