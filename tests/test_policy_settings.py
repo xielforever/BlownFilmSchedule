@@ -140,6 +140,28 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(item["code"], "policy_snapshot_stale")
         self.assertIn("重新预排", item["message"])
 
+    def test_stale_input_snapshot_becomes_blocking_validation_item(self):
+        saved = {
+            "hash": "input-v1",
+            "machine_capability": {"hash": "machine-v1"},
+            "maintenance_calendar": {"hash": "calendar-v1"},
+            "rule_matrix": {"hash": "rules-v1"},
+            "process": {"hash": "process-v1"},
+            "screening": {"hash": "screening-v1"},
+        }
+        current = {
+            **saved,
+            "hash": "input-v2",
+            "machine_capability": {"hash": "machine-v2"},
+        }
+
+        item = schedule_router._input_snapshot_validation_item(saved, current)
+
+        self.assertEqual(item["severity"], "error")
+        self.assertEqual(item["code"], "input_snapshot_stale")
+        self.assertIn("机台能力", item["message"])
+        self.assertIn("重新预排", item["message"])
+
     def test_manual_adjustment_validation_respects_global_policy_switches(self):
         payload = SimpleNamespace(
             order_id="ORD-POLICY",

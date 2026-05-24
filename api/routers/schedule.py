@@ -26,6 +26,14 @@ from src.diagnostics import (
     parse_infeasible_log_diagnostics,
 )
 from src.scheduler import AdvancedMedicalAPS, SetupCalculator
+from src.snapshotting import (
+    build_input_snapshot,
+    build_machine_capability_snapshot,
+    build_maintenance_calendar_snapshot,
+    build_process_snapshot,
+    build_rule_matrix_snapshot,
+    stable_hash,
+)
 
 router = APIRouter(prefix="/api/schedule", tags=["Schedule"])
 
@@ -433,6 +441,40 @@ def _policy_snapshot_validation_item(saved: dict | None, current: dict | None) -
     if not message:
         return None
     return _validation_item("error", "policy_snapshot_stale", message)
+
+
+INPUT_SNAPSHOT_LABELS = {
+    "orders": "订单输入",
+    "machine_capability": "机台能力",
+    "maintenance_calendar": "维护日历",
+    "rule_matrix": "规则矩阵",
+    "process": "产品工艺",
+    "screening": "订单筛选",
+}
+
+
+def _input_snapshot_mismatch(saved: dict | None, current: dict | None) -> str | None:
+    if not saved:
+        return "当前草案缺少输入快照，请重新预排。"
+    if not current:
+        return "无法读取当前输入快照，请重新校验后再发布。"
+    if saved.get("hash") == current.get("hash"):
+        return None
+    changed = []
+    for key, label in INPUT_SNAPSHOT_LABELS.items():
+        saved_hash = (saved.get(key) or {}).get("hash")
+        current_hash = (current.get(key) or {}).get("hash")
+        if saved_hash != current_hash:
+            changed.append(label)
+    changed_text = "、".join(changed) if changed else "排程输入"
+    return f"{changed_text}已变化，请重新预排后再发布。"
+
+
+def _input_snapshot_validation_item(saved: dict | None, current: dict | None) -> dict[str, Any] | None:
+    message = _input_snapshot_mismatch(saved, current)
+    if not message:
+        return None
+    return _validation_item("error", "input_snapshot_stale", message)
 
 
 CONFIG_SCOPE_LABELS = {
@@ -1023,6 +1065,104 @@ def _current_order_snapshot_map(cur, order_ids: list[str]) -> dict[str, dict[str
     }
 
 
+def _current_input_snapshot(cur, order_snapshots: list[dict[str, Any]]) -> dict[str, Any]:
+    cur.execute("""
+        SELECT machine_id, status, cleanroom_level, layer_structure,
+            die_diameter_mm, min_width, max_width, min_thickness,
+            max_thickness, hourly_output_kg, max_slitting_lanes
+        FROM machines
+        WHERE status='ACTIVE'
+        ORDER BY machine_id
+    """)
+    machine_snapshot = build_machine_capability_snapshot(cur.fetchall())
+
+    cur.execute("""
+        SELECT machine_id, start_time, end_time, maintenance_type,
+            reason, is_enabled
+        FROM machine_maintenance_calendar
+        WHERE COALESCE(is_enabled, TRUE)=TRUE
+        ORDER BY machine_id, start_time, end_time
+    """)
+    maintenance_snapshot = build_maintenance_calendar_snapshot(cur.fetchall())
+
+    rule_rows = []
+    cur.execute("""
+        SELECT from_material, to_material, switch_time_mins, scrap_weight_kg,
+            is_enabled
+        FROM material_switch_matrix
+        ORDER BY from_material, to_material
+    """)
+    for row in cur.fetchall():
+        rule_rows.append({
+            "table": "material_switch_matrix",
+            "key": f"{row.get('from_material')}->{row.get('to_material')}",
+            "values": {
+                "switch_time_mins": row.get("switch_time_mins"),
+                "scrap_weight_kg": row.get("scrap_weight_kg"),
+            },
+            "is_enabled": row.get("is_enabled"),
+        })
+
+    cur.execute("""
+        SELECT attribute, condition_desc, threshold_lower, threshold_upper,
+            change_time_mins, scrap_weight_kg, is_enabled
+        FROM spec_change_rules
+        ORDER BY attribute, condition_desc
+    """)
+    for row in cur.fetchall():
+        rule_rows.append({
+            "table": "spec_change_rules",
+            "key": f"{row.get('attribute')}:{row.get('condition_desc')}",
+            "values": {
+                "threshold_lower": row.get("threshold_lower"),
+                "threshold_upper": row.get("threshold_upper"),
+                "change_time_mins": row.get("change_time_mins"),
+                "scrap_weight_kg": row.get("scrap_weight_kg"),
+            },
+            "is_enabled": row.get("is_enabled"),
+        })
+
+    cur.execute("""
+        SELECT from_order_class, to_order_class, clearance_time_mins,
+            is_enabled
+        FROM gmp_clearance_matrix
+        ORDER BY from_order_class, to_order_class
+    """)
+    for row in cur.fetchall():
+        rule_rows.append({
+            "table": "gmp_clearance_matrix",
+            "key": f"{row.get('from_order_class')}->{row.get('to_order_class')}",
+            "values": {
+                "clearance_time_mins": row.get("clearance_time_mins"),
+            },
+            "is_enabled": row.get("is_enabled"),
+        })
+    rule_snapshot = build_rule_matrix_snapshot(rule_rows)
+
+    cur.execute("""
+        SELECT product_type, layer, material_grade, ratio_pct
+        FROM recipes
+        ORDER BY product_type, layer
+    """)
+    process_snapshot = build_process_snapshot(cur.fetchall())
+
+    screening_snapshot = {
+        "count": len(order_snapshots or []),
+        "hash": stable_hash([
+            {"order_id": item.get("order_id"), "hash": item.get("hash")}
+            for item in order_snapshots or []
+        ]),
+    }
+    return build_input_snapshot(
+        order_snapshots=order_snapshots,
+        machine_capability_snapshot=machine_snapshot,
+        maintenance_calendar_snapshot=maintenance_snapshot,
+        rule_matrix_snapshot=rule_snapshot,
+        process_snapshot=process_snapshot,
+        screening_snapshot=screening_snapshot,
+    )
+
+
 def _snapshot_changed_fields(before_fields: dict[str, Any], after_fields: dict[str, Any]) -> list[str]:
     changed = []
     keys = set(before_fields) | set(after_fields)
@@ -1237,6 +1377,7 @@ def _load_preplan_validation(db, run_id: int):
     summary = params.get("summary") or {}
     selected_ids = params.get("selected_order_ids") or []
     saved_snapshots = params.get("order_snapshots") or []
+    saved_input_snapshot = params.get("input_snapshot")
     settings = _get_schedule_settings(db)
     if lifecycle_status in {"DRAFT", "VALIDATED"}:
         current_policy_snapshot = _policy_snapshot(settings, _load_rule_state_counts(db))
@@ -1266,6 +1407,22 @@ def _load_preplan_validation(db, run_id: int):
         ))
     elif saved_snapshots:
         items.extend(_stale_order_snapshot_items(saved_snapshots, current_snapshots))
+
+    if lifecycle_status in {"DRAFT", "VALIDATED"} and selected_ids:
+        if not saved_input_snapshot:
+            items.append(_validation_item(
+                "warning",
+                "input_snapshot_missing",
+                "旧草案未保存输入快照，请重新生成草案以获得完整校验。",
+            ))
+        else:
+            current_input_snapshot = _current_input_snapshot(
+                cur,
+                list(current_snapshots.values()),
+            )
+            input_item = _input_snapshot_validation_item(saved_input_snapshot, current_input_snapshot)
+            if input_item:
+                items.append(input_item)
 
     seen_orders = set()
     for task in tasks:
