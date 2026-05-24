@@ -402,6 +402,28 @@ class TestOrderScreening(unittest.TestCase):
 
         self.assertEqual(snapshot["items"][0]["root_cause"], screening["items"][0]["root_cause"])
 
+    def test_screening_snapshot_preserves_recommendations(self):
+        screening = screen_orders(
+            [_make_order("ORD-RECOMMENDATION-SNAPSHOT", target_width=9999)],
+            [_make_machine()],
+            scope="preplan",
+        )
+
+        snapshot = build_screening_snapshot(screening)
+
+        self.assertEqual(
+            snapshot["items"][0]["recommendations"],
+            [
+                {
+                    "action": item["action"],
+                    "category": item["category"],
+                    "label": item["label"],
+                    "href": item["href"],
+                }
+                for item in screening["items"][0]["recommendations"]
+            ],
+        )
+
     def test_screening_snapshot_preserves_override_decision(self):
         screening = screen_orders(
             [_make_order("ORD-MATERIAL-SNAPSHOT", material_available_mins=6000, due_date_mins=5000)],

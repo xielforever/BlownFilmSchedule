@@ -554,6 +554,17 @@ def build_screening_snapshot(screening: dict) -> dict:
             "reason_code": decision.get("reason_code"),
         }
 
+    def snapshot_recommendations(item: dict) -> list[dict]:
+        return [
+            {
+                "action": recommendation.get("action"),
+                "category": recommendation.get("category"),
+                "label": recommendation.get("label"),
+                "href": recommendation.get("href"),
+            }
+            for recommendation in item.get("recommendations", [])
+        ]
+
     items = [
         {
             "order_id": item.get("order_id"),
@@ -564,6 +575,7 @@ def build_screening_snapshot(screening: dict) -> dict:
             "diagnostic_code": item.get("diagnostic_code"),
             "eligible_machine_count": item.get("eligible_machine_count"),
             "override_decision": snapshot_override_decision(item),
+            "recommendations": snapshot_recommendations(item),
         }
         for item in screening.get("items", [])
     ]
