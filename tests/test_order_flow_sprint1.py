@@ -324,6 +324,30 @@ class _FakeCursor:
         if normalized.startswith("select machine_id, name, cleanroom_level") and "from machines" in normalized:
             self._rows = [dict(row) for row in self.db.machines]
             return
+        if "from production_orders o" in normalized and "limit %s offset %s" in normalized:
+            rows = []
+            for row in self.db.production_orders.values():
+                cache = self.db.order_screening_cache.get(row["order_id"], {})
+                rows.append({
+                    **row,
+                    "customer_name": self.db.customers.get(row["customer_id"], {}).get("customer_name"),
+                    "customer_class": self.db.customers.get(row["customer_id"], {}).get("customer_class", "STANDARD"),
+                    "assigned_machine": None,
+                    "sched_start": None,
+                    "sched_end": None,
+                    "scrap_kg": 0,
+                    "setup_time_mins": 0,
+                    "actual_material_required_kg": 0,
+                    "screening_status": cache.get("screening_status"),
+                    "screening_code": cache.get("code"),
+                    "screening_root_cause": cache.get("root_cause"),
+                    "screening_is_stale": cache.get("is_stale"),
+                })
+            self._rows = sorted(rows, key=lambda item: item["due_date"])
+            return
+        if normalized.startswith("select count(distinct o.order_id) as cnt"):
+            self._rows = [{"cnt": len(self.db.production_orders)}]
+            return
         if normalized.startswith("update production_orders set"):
             set_clause = sql.split("SET", 1)[1].split("WHERE", 1)[0]
             field_names = [
@@ -661,6 +685,41 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
 
         self.assertEqual(result["items"][0]["screening_status"], "ready")
         self.assertEqual(db.order_screening_cache["ORD-BULK-READY"]["screening_status"], "ready")
+
+    def test_list_orders_exposes_cached_screening_status(self):
+        db = _FakeDb()
+        db.products.add("Film-A")
+        db.production_orders["ORD-LIST-BLOCKED"] = {
+            "order_id": "ORD-LIST-BLOCKED",
+            "customer_id": "STANDARD",
+            "product_type": "Film-A",
+            "target_width": 9999,
+            "target_thickness": 35,
+            "total_quantity_kg": 1200,
+            "cleanroom_req": "Class_10K",
+            "order_class": "NORMAL",
+            "corona_req": False,
+            "core_size_inch": 3,
+            "order_date": None,
+            "due_date": datetime(2026, 5, 28, 8, 30, tzinfo=timezone.utc),
+            "material_available_time": None,
+            "status": "PENDING",
+            "priority_override": None,
+            "created_at": datetime(2026, 5, 22, 8, 0, tzinfo=timezone.utc),
+            "updated_at": datetime(2026, 5, 22, 8, 0, tzinfo=timezone.utc),
+        }
+        db.order_screening_cache["ORD-LIST-BLOCKED"] = {
+            "screening_status": "blocked",
+            "code": "no_eligible_machine",
+            "root_cause": "幅宽超出机台能力",
+            "is_stale": False,
+        }
+
+        result = orders_router.list_orders(status="PENDING", q=None, page=1, size=50, db=db)
+
+        self.assertEqual(result["items"][0]["screening"]["screening_status"], "blocked")
+        self.assertEqual(result["items"][0]["screening"]["code"], "no_eligible_machine")
+        self.assertIs(result["items"][0]["screening"]["is_stale"], False)
 
     def test_update_order_writes_diff_and_impacted_drafts(self):
         db = _FakeDb()

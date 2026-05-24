@@ -696,11 +696,14 @@ def list_orders(
         SELECT o.*, c.customer_name, c.customer_class,
             t.machine_id AS assigned_machine, t.start_time AS sched_start,
             t.end_time AS sched_end, t.scrap_kg, t.setup_time_mins,
-            t.actual_material_required_kg
+            t.actual_material_required_kg,
+            osc.screening_status, osc.code AS screening_code,
+            osc.root_cause AS screening_root_cause, osc.is_stale AS screening_is_stale
         FROM production_orders o
         LEFT JOIN customers c ON o.customer_id = c.customer_id
         LEFT JOIN scheduled_tasks t ON o.order_id = t.order_id
             AND t.run_id = (SELECT run_id FROM schedule_runs WHERE is_active=TRUE ORDER BY run_id DESC LIMIT 1)
+        LEFT JOIN order_screening_cache osc ON osc.order_id = o.order_id
         {where}
         ORDER BY o.due_date
         LIMIT %s OFFSET %s
@@ -723,6 +726,12 @@ def list_orders(
             "core_size_inch": r["core_size_inch"],
             "priority_override": r["priority_override"],
             "assigned_machine": r["assigned_machine"],
+            "screening": {
+                "screening_status": r.get("screening_status"),
+                "code": r.get("screening_code"),
+                "root_cause": r.get("screening_root_cause"),
+                "is_stale": r.get("screening_is_stale"),
+            } if r.get("screening_status") else None,
             "sched_start": r["sched_start"].isoformat() if r["sched_start"] else None,
             "sched_end": r["sched_end"].isoformat() if r["sched_end"] else None,
             "scrap_kg": float(r["scrap_kg"]) if r["scrap_kg"] else 0,
