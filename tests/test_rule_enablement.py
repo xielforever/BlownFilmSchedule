@@ -240,6 +240,54 @@ class TestRuleEnablementContracts(unittest.TestCase):
         mark_stale.assert_any_call(db.cursor_obj, reason="rule_matrix_changed")
         self.assertEqual(db.commit_count, 2)
 
+    def test_create_maintenance_window_marks_screening_cache_stale(self):
+        class Cursor:
+            rowcount = 0
+
+            def __init__(self):
+                self.fetchone_calls = 0
+
+            def execute(self, sql, params=None):
+                self.last_sql = " ".join(sql.split()).lower()
+
+            def fetchone(self):
+                self.fetchone_calls += 1
+                if self.fetchone_calls == 1:
+                    return None
+                return {"id": 51}
+
+        class Db:
+            def __init__(self):
+                self.cursor_obj = Cursor()
+                self.commit_count = 0
+
+            def cursor(self):
+                return self.cursor_obj
+
+            def commit(self):
+                self.commit_count += 1
+
+        db = Db()
+        payload = rules_router.MaintenanceWindow(
+            machine_id="LINE-01",
+            start_time="2026-05-24T08:00:00+08:00",
+            end_time="2026-05-24T10:00:00+08:00",
+            maintenance_type="ROUTINE",
+            reason="planned cleaning",
+        )
+
+        with patch.object(rules_router, "ensure_rule_enablement_schema"), \
+             patch.object(rules_router, "_mark_order_screening_cache_stale") as mark_stale:
+            result = rules_router.create_maintenance_window(
+                payload,
+                db=db,
+                _=SimpleNamespace(username="planner"),
+            )
+
+        self.assertEqual(result, {"id": 51, "created": True})
+        mark_stale.assert_called_once_with(db.cursor_obj, reason="maintenance_calendar_changed")
+        self.assertEqual(db.commit_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -643,6 +643,7 @@ def create_maintenance_window(
         _.username,
     ))
     window_id = cur.fetchone()["id"]
+    _mark_order_screening_cache_stale(cur, reason="maintenance_calendar_changed")
     db.commit()
     return {"id": window_id, "created": True}
 
