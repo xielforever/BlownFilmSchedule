@@ -203,6 +203,12 @@ def _build_schedule_run_solver_params(
     input_snapshot: Optional[dict] = None,
     screening_snapshot: Optional[dict] = None,
 ) -> dict:
+    deferred_orders = getattr(result, "deferred_orders", [])
+    deferred_reason_counts = {}
+    for order in deferred_orders:
+        reason = order.get("deferred_reason_code") or order.get("reason") or "unknown"
+        deferred_reason_counts[reason] = deferred_reason_counts.get(reason, 0) + 1
+
     payload = {
         "diagnostics": diagnostics_payload,
         "summary": {
@@ -210,10 +216,11 @@ def _build_schedule_run_solver_params(
             "schedulable_order_count": getattr(result, "schedulable_order_count", len(getattr(result, "tasks", []))),
             "scheduled_order_count": len(getattr(result, "tasks", [])),
             "blocked_order_count": getattr(result, "blocked_order_count", 0),
-            "deferred_order_count": len(getattr(result, "deferred_orders", [])),
+            "deferred_order_count": len(deferred_orders),
+            "deferred_reason_counts": deferred_reason_counts,
             "unplaced_solver_failed_order_count": len(getattr(result, "unplaced_solver_failed_orders", [])),
         },
-        "deferred_orders": getattr(result, "deferred_orders", []),
+        "deferred_orders": deferred_orders,
         "unplaced_solver_failed_orders": getattr(result, "unplaced_solver_failed_orders", []),
         "selected_order_ids": normalized_order_ids,
         "order_snapshots": order_snapshots,

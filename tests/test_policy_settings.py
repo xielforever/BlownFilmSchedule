@@ -489,7 +489,12 @@ class TestSchedulePolicySettings(unittest.TestCase):
             "schedulable_order_count": 1,
             "blocked_order_count": 1,
             "tasks": [object()],
-            "deferred_orders": [{"order_id": "ORD-CANDIDATE"}],
+            "deferred_orders": [
+                {"order_id": "ORD-CANDIDATE-A", "deferred_reason_code": "candidate_optional_rejected"},
+                {"order_id": "ORD-CANDIDATE-B", "reason": "candidate_optional_rejected"},
+                {"order_id": "ORD-WINDOW", "reason": "planning_window_deferred"},
+                {"order_id": "ORD-UNKNOWN"},
+            ],
             "unplaced_solver_failed_orders": [{"order_id": "ORD-MUST"}],
             "solver_metrics": {"phase_1": {"status": "OPTIMAL", "gap": 0.0}},
         })()
@@ -517,7 +522,12 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(params["solver_metrics"], result.solver_metrics)
         self.assertEqual(params["summary"]["input_order_count"], 2)
         self.assertEqual(params["summary"]["scheduled_order_count"], 1)
-        self.assertEqual(params["summary"]["deferred_order_count"], 1)
+        self.assertEqual(params["summary"]["deferred_order_count"], 4)
+        self.assertEqual(params["summary"]["deferred_reason_counts"], {
+            "candidate_optional_rejected": 2,
+            "planning_window_deferred": 1,
+            "unknown": 1,
+        })
         self.assertEqual(params["summary"]["unplaced_solver_failed_order_count"], 1)
         self.assertEqual(params["unplaced_solver_failed_orders"], result.unplaced_solver_failed_orders)
 
