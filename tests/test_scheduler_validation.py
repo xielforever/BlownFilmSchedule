@@ -145,6 +145,31 @@ class TestSchedulerSequencing(unittest.TestCase):
         self.assertEqual(model_size["arc_count"], 7)
         self.assertEqual([task.order.order_id for task in result.tasks], ["ORD-PRUNE-MUST"])
 
+    def test_locked_task_keeps_machine_and_time(self):
+        locked_order = _make_order("ORD-LOCKED")
+        next_order = _make_order("ORD-NEXT")
+        machine = _make_machine()
+        locked_task = ScheduledTask(
+            locked_order,
+            machine,
+            start_mins=120,
+            end_mins=180,
+            setup_time=120,
+            scrap_kg=0,
+            sequence_index=0,
+        )
+        aps = AdvancedMedicalAPS(_make_setup_mgr())
+
+        result = aps.run([locked_order, next_order], [machine], locked_tasks=[locked_task])
+
+        self.assertIn(result.status, {"OPTIMAL", "FEASIBLE"})
+        self.assertEqual(result.validation_errors, [])
+        by_order = {task.order.order_id: task for task in result.tasks}
+        self.assertEqual(by_order["ORD-LOCKED"].machine.machine_id, "LINE-T")
+        self.assertEqual(by_order["ORD-LOCKED"].start_mins, 120)
+        self.assertEqual(by_order["ORD-LOCKED"].end_mins, 180)
+        self.assertGreaterEqual(by_order["ORD-NEXT"].start_mins, by_order["ORD-LOCKED"].end_mins)
+
     def test_validation_catches_machine_overlap(self):
         order_a = _make_order("ORD-A")
         order_b = _make_order("ORD-B")

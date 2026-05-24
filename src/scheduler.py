@@ -443,6 +443,7 @@ class AdvancedMedicalAPS:
         self,
         orders: List[ProductionOrderModel],
         machines: List[BlownFilmMachineModel],
+        locked_tasks: Optional[List[ScheduledTask]] = None,
     ) -> ScheduleResult:
         """执行两阶段分层求解，返回排程结果"""
         if hasattr(self.setup_mgr, "reset_runtime_observations"):
@@ -452,6 +453,11 @@ class AdvancedMedicalAPS:
         original_orders = list(orders)
         result.input_order_count = len(original_orders)
         M = len(machines)
+        locked_tasks = locked_tasks or []
+        locked_tasks_by_order_id = {
+            task.order.order_id: task
+            for task in locked_tasks
+        }
 
         schedulable_orders: List[ProductionOrderModel] = []
         blocked_log_lines: List[str] = []
@@ -549,6 +555,7 @@ class AdvancedMedicalAPS:
         phase1_result = self._solve_phase(
             orders, machines, eligible, setup_cache, duration_cache,
             H, phase=1, tardiness_bound=None,
+            locked_tasks_by_order_id=locked_tasks_by_order_id,
         )
         result.solver_metrics["phase_1"] = getattr(self, "_last_phase_metrics", {})
 
@@ -588,6 +595,7 @@ class AdvancedMedicalAPS:
         phase2_result = self._solve_phase(
             orders, machines, eligible, setup_cache, duration_cache,
             H, phase=2, tardiness_bound=phase2_tardiness_bound,
+            locked_tasks_by_order_id=locked_tasks_by_order_id,
         )
         result.solver_metrics["phase_2"] = getattr(self, "_last_phase_metrics", {})
 
@@ -885,6 +893,7 @@ class AdvancedMedicalAPS:
         self,
         orders, machines, eligible, setup_cache, duration_cache,
         H, phase, tardiness_bound,
+        locked_tasks_by_order_id=None,
     ):
         """
         构建并求解单阶段 CP-SAT 模型。
@@ -894,6 +903,7 @@ class AdvancedMedicalAPS:
         """
         n = len(orders)
         model = cp_model.CpModel()
+        locked_tasks_by_order_id = locked_tasks_by_order_id or {}
 
         # ─── 决策变量 ───
         presence = {}   # presence[i][m_idx] = BoolVar
@@ -927,6 +937,26 @@ class AdvancedMedicalAPS:
                 rejected_candidates[idx] = rejected
             else:
                 model.add_exactly_one(presence[idx][m] for m in eligible[idx])
+
+        for idx, order in enumerate(orders):
+            locked_task = locked_tasks_by_order_id.get(order.order_id)
+            if not locked_task:
+                continue
+            locked_machine_idx = next(
+                (
+                    m_idx
+                    for m_idx, machine in enumerate(machines)
+                    if machine.machine_id == locked_task.machine.machine_id
+                ),
+                None,
+            )
+            if locked_machine_idx is None or locked_machine_idx not in eligible[idx]:
+                model.add_bool_or([])
+                continue
+            for m_idx in eligible[idx]:
+                model.add(presence[idx][m_idx] == (1 if m_idx == locked_machine_idx else 0))
+            model.add(starts[idx][locked_machine_idx] == locked_task.start_mins)
+            model.add(ends[idx][locked_machine_idx] == locked_task.end_mins)
 
         # ─── 约束 2：原料齐套等待 ───
         for idx in range(n):
