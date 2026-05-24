@@ -342,6 +342,7 @@ class _FakeCursor:
                     "screening_code": cache.get("code"),
                     "screening_root_cause": cache.get("root_cause"),
                     "screening_is_stale": cache.get("is_stale"),
+                    "screening_stale_reason": cache.get("stale_reason"),
                 })
             self._rows = sorted(rows, key=lambda item: item["due_date"])
             return
@@ -726,14 +727,19 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
             "screening_status": "blocked",
             "code": "no_eligible_machine",
             "root_cause": "幅宽超出机台能力",
-            "is_stale": False,
+            "is_stale": True,
+            "stale_reason": "machine_capability_changed",
         }
 
         result = orders_router.list_orders(status="PENDING", q=None, page=1, size=50, db=db)
 
         self.assertEqual(result["items"][0]["screening"]["screening_status"], "blocked")
         self.assertEqual(result["items"][0]["screening"]["code"], "no_eligible_machine")
-        self.assertIs(result["items"][0]["screening"]["is_stale"], False)
+        self.assertIs(result["items"][0]["screening"]["is_stale"], True)
+        self.assertEqual(
+            result["items"][0]["screening"]["stale_reason"],
+            "machine_capability_changed",
+        )
 
     def test_mark_order_screening_cache_stale_marks_requested_orders(self):
         db = _FakeDb()
