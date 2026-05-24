@@ -191,6 +191,55 @@ class TestRuleEnablementContracts(unittest.TestCase):
         mark_stale.assert_called_once_with(db.cursor_obj, reason="rule_matrix_changed")
         self.assertEqual(db.commit_count, 1)
 
+    def test_create_gmp_and_spec_rules_mark_screening_cache_stale(self):
+        class Cursor:
+            rowcount = 0
+
+            def execute(self, sql, params=None):
+                self.last_sql = " ".join(sql.split()).lower()
+
+            def fetchone(self):
+                return {"id": 41}
+
+        class Db:
+            def __init__(self):
+                self.cursor_obj = Cursor()
+                self.commit_count = 0
+
+            def cursor(self):
+                return self.cursor_obj
+
+            def commit(self):
+                self.commit_count += 1
+
+        db = Db()
+        with patch.object(rules_router, "ensure_rule_enablement_schema"), \
+             patch.object(rules_router, "_mark_order_screening_cache_stale") as mark_stale:
+            rules_router.create_gmp_rule(
+                rules_router.GmpRule(
+                    from_order_class="NORMAL",
+                    to_order_class="URGENT",
+                    clearance_time_mins=45,
+                ),
+                db=db,
+                _=SimpleNamespace(username="planner"),
+            )
+            rules_router.create_spec_rule(
+                rules_router.SpecRule(
+                    attribute="width",
+                    condition_desc="width increase",
+                    threshold_lower=100,
+                    threshold_upper=300,
+                    change_time_mins=40,
+                ),
+                db=db,
+                _=SimpleNamespace(username="planner"),
+            )
+
+        self.assertEqual(mark_stale.call_count, 2)
+        mark_stale.assert_any_call(db.cursor_obj, reason="rule_matrix_changed")
+        self.assertEqual(db.commit_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

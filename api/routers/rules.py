@@ -379,6 +379,7 @@ def create_gmp_rule(
         fields["is_enabled"], fields.get("disabled_reason"), _.username,
     ))
     rule_id = cur.fetchone()["id"]
+    _mark_order_screening_cache_stale(cur, reason="rule_matrix_changed")
     db.commit()
     return {"id": rule_id}
 
@@ -442,6 +443,7 @@ def create_spec_rule(
         fields.get("disabled_reason"), _.username,
     ))
     rule_id = cur.fetchone()["id"]
+    _mark_order_screening_cache_stale(cur, reason="rule_matrix_changed")
     db.commit()
     return {"id": rule_id}
 
