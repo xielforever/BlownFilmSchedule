@@ -8,11 +8,13 @@ test('selectableOrderIds excludes blocked screening orders', () => {
     { order_id: 'ORD-READY' },
     { order_id: 'ORD-RISK' },
     { order_id: 'ORD-BLOCKED' },
+    { order_id: 'ORD-STALE' },
   ];
   const screeningByOrderId = new Map([
     ['ORD-READY', { screening_status: 'ready' }],
     ['ORD-RISK', { screening_status: 'risk' }],
     ['ORD-BLOCKED', { screening_status: 'blocked' }],
+    ['ORD-STALE', { screening_status: 'ready', is_stale: true }],
   ]);
 
   assert.deepEqual(
