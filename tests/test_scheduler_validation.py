@@ -276,6 +276,41 @@ class TestSchedulerSequencing(unittest.TestCase):
         self.assertEqual(model_size["locked_order_count"], 1)
         self.assertEqual(model_size["external_locked_interval_count"], 1)
 
+    def test_solver_metrics_explain_locked_task_protection(self):
+        locked_order = _make_order("ORD-LOCKED-EXPLAIN")
+        external_order = _make_order("ORD-EXTERNAL-EXPLAIN")
+        order = _make_order("ORD-LOCK-FREE")
+        machine = _make_machine()
+        aps = AdvancedMedicalAPS(_make_setup_mgr())
+
+        result = aps.run(
+            [locked_order, order],
+            [machine],
+            locked_tasks=[
+                ScheduledTask(
+                    locked_order,
+                    machine,
+                    120,
+                    180,
+                    120,
+                    0,
+                    0,
+                    manual_lock_machine=True,
+                    manual_lock_time=False,
+                ),
+                ScheduledTask(external_order, machine, 240, 300, 0, 0, 0),
+            ],
+        )
+
+        protection = result.solver_metrics["locked_task_protection"]
+        self.assertEqual(protection["locked_input_order_count"], 1)
+        self.assertEqual(protection["external_locked_interval_count"], 1)
+        self.assertEqual(protection["machine_locked_order_ids"], ["ORD-LOCKED-EXPLAIN"])
+        self.assertEqual(protection["time_locked_order_ids"], [])
+        self.assertEqual(protection["external_locked_order_ids"], ["ORD-EXTERNAL-EXPLAIN"])
+        self.assertEqual(protection["items"][0]["protection_mode"], "machine")
+        self.assertEqual(protection["items"][1]["protection_mode"], "external_interval")
+
     def test_validation_catches_machine_overlap(self):
         order_a = _make_order("ORD-A")
         order_b = _make_order("ORD-B")

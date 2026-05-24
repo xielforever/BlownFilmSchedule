@@ -554,6 +554,11 @@ class AdvancedMedicalAPS:
         ]
 
         # ─── 能力硬过滤：订单→可用机台列表 ───
+        locked_tasks_by_order_id = {
+            order_id: task
+            for order_id, task in locked_tasks_by_order_id.items()
+            if order_id in schedulable_order_ids
+        }
         eligible: Dict[int, List[int]] = {}
         fit_audit: Dict[int, List] = {}
         for idx in range(n):
@@ -596,6 +601,10 @@ class AdvancedMedicalAPS:
             machines,
             eligible,
             setup_cache,
+            locked_tasks_by_order_id,
+            external_locked_tasks,
+        )
+        result.solver_metrics["locked_task_protection"] = self._locked_task_protection_metrics(
             locked_tasks_by_order_id,
             external_locked_tasks,
         )
@@ -970,6 +979,69 @@ class AdvancedMedicalAPS:
                 1 for order in orders if order.order_id in locked_tasks_by_order_id
             ),
             "external_locked_interval_count": len(external_locked_tasks),
+        }
+
+    @staticmethod
+    def _locked_task_protection_mode(task: ScheduledTask, *, external: bool = False) -> str:
+        if external:
+            return "external_interval"
+        machine_locked = bool(getattr(task, "manual_lock_machine", True))
+        time_locked = bool(getattr(task, "manual_lock_time", True))
+        if machine_locked and time_locked:
+            return "machine_and_time"
+        if machine_locked:
+            return "machine"
+        if time_locked:
+            return "time"
+        return "reference"
+
+    def _locked_task_protection_metrics(
+        self,
+        locked_tasks_by_order_id: Dict[str, ScheduledTask],
+        external_locked_tasks: List[ScheduledTask],
+    ) -> Dict:
+        items = []
+        machine_locked_order_ids = []
+        time_locked_order_ids = []
+        for order_id in sorted(locked_tasks_by_order_id):
+            task = locked_tasks_by_order_id[order_id]
+            machine_locked = bool(getattr(task, "manual_lock_machine", True))
+            time_locked = bool(getattr(task, "manual_lock_time", True))
+            if machine_locked:
+                machine_locked_order_ids.append(order_id)
+            if time_locked:
+                time_locked_order_ids.append(order_id)
+            items.append({
+                "order_id": order_id,
+                "machine_id": task.machine.machine_id,
+                "start_mins": task.start_mins,
+                "end_mins": task.end_mins,
+                "manual_lock_machine": machine_locked,
+                "manual_lock_time": time_locked,
+                "protection_mode": self._locked_task_protection_mode(task),
+            })
+
+        external_locked_order_ids = []
+        for task in sorted(external_locked_tasks, key=lambda item: (item.machine.machine_id, item.start_mins, item.order.order_id)):
+            order_id = task.order.order_id
+            external_locked_order_ids.append(order_id)
+            items.append({
+                "order_id": order_id,
+                "machine_id": task.machine.machine_id,
+                "start_mins": task.start_mins,
+                "end_mins": task.end_mins,
+                "manual_lock_machine": bool(getattr(task, "manual_lock_machine", True)),
+                "manual_lock_time": bool(getattr(task, "manual_lock_time", True)),
+                "protection_mode": self._locked_task_protection_mode(task, external=True),
+            })
+
+        return {
+            "locked_input_order_count": len(locked_tasks_by_order_id),
+            "external_locked_interval_count": len(external_locked_tasks),
+            "machine_locked_order_ids": machine_locked_order_ids,
+            "time_locked_order_ids": time_locked_order_ids,
+            "external_locked_order_ids": external_locked_order_ids,
+            "items": items,
         }
 
     def _solve_phase(
