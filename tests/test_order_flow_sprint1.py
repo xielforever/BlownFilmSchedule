@@ -738,10 +738,12 @@ class _FakeCursor:
             return
         if normalized.startswith("select id, order_id, screening_status, business_bucket, screening_code"):
             order_id = params[0]
+            handling_status_filter = params[1] if "and handling_status=%s" in normalized else None
             rows = [
                 dict(row)
                 for row in self.db.order_screening_action_audit
                 if row["order_id"] == order_id
+                and (not handling_status_filter or row.get("handling_status") == handling_status_filter)
             ]
             rows.sort(key=lambda item: (item.get("created_at"), item["id"]), reverse=True)
             self._rows = rows[:50]
@@ -1419,6 +1421,49 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         self.assertEqual(result["items"][0]["handling_status"], "resolved")
         self.assertEqual(result["items"][0]["reason_text"], "订单宽度已修正")
         self.assertEqual(result["items"][1]["actor"], "planner-a")
+
+    def test_screening_exception_actions_can_be_filtered_by_status(self):
+        db = _FakeDb()
+        db.order_screening_action_audit.extend([
+            {
+                "id": 40,
+                "order_id": "ORD-ACTION-FILTER",
+                "screening_status": "blocked",
+                "business_bucket": "blocked_machine_capability",
+                "screening_code": "no_eligible_machine",
+                "action_type": "request_data_fix",
+                "handling_status": "in_progress",
+                "reason_text": "处理中",
+                "assignee": "order-admin",
+                "actor": "planner-a",
+                "details": {},
+                "created_at": datetime(2026, 5, 24, 8, 0, tzinfo=timezone.utc),
+            },
+            {
+                "id": 41,
+                "order_id": "ORD-ACTION-FILTER",
+                "screening_status": "blocked",
+                "business_bucket": "blocked_machine_capability",
+                "screening_code": "no_eligible_machine",
+                "action_type": "mark_resolved",
+                "handling_status": "resolved",
+                "reason_text": "已处理",
+                "assignee": "order-admin",
+                "actor": "planner-b",
+                "details": {},
+                "created_at": datetime(2026, 5, 24, 9, 0, tzinfo=timezone.utc),
+            },
+        ])
+
+        result = orders_router.get_order_screening_actions(
+            "ORD-ACTION-FILTER",
+            handling_status="resolved",
+            db=db,
+            _=SimpleNamespace(username="planner"),
+        )
+
+        self.assertEqual([item["id"] for item in result["items"]], [41])
+        self.assertEqual(result["items"][0]["handling_status"], "resolved")
 
     def test_screening_action_options_are_exposed_for_ui_configuration(self):
         result = orders_router.get_order_screening_action_options(

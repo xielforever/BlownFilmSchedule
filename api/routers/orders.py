@@ -1450,20 +1450,29 @@ def get_order_screening_overrides(
 @router.get("/{order_id}/screening-actions")
 def get_order_screening_actions(
     order_id: str,
+    handling_status: Optional[str] = None,
     db=Depends(get_db),
     _=Depends(get_current_user),
 ):
     _ensure_order_screening_action_schema(db)
     cur = db.cursor()
+    where = "WHERE order_id=%s"
+    params: list[Any] = [order_id]
+    if handling_status:
+        normalized_status = handling_status.lower()
+        if normalized_status not in SCREENING_HANDLING_STATUSES:
+            raise HTTPException(status_code=400, detail="Invalid screening action status.")
+        where += " AND handling_status=%s"
+        params.append(normalized_status)
     cur.execute("""
         SELECT id, order_id, screening_status, business_bucket, screening_code,
             action_type, handling_status, reason_text, assignee, actor, details,
             created_at
         FROM order_screening_action_audit
-        WHERE order_id=%s
+        {where}
         ORDER BY created_at DESC, id DESC
         LIMIT 50
-    """, (order_id,))
+    """.format(where=where), params)
     return {
         "order_id": order_id,
         "items": [
