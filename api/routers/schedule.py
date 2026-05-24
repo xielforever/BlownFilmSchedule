@@ -942,6 +942,30 @@ def _manual_adjustment_review_reason_details(
     return details
 
 
+def _manual_adjustment_review_reason_summary(review_reasons: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    summary: dict[str, dict[str, Any]] = {}
+    for item in review_reasons or []:
+        order_id = item.get("order_id")
+        for detail in item.get("reason_details") or []:
+            code = detail["code"]
+            entry = summary.setdefault(code, {
+                "code": code,
+                "label": detail["label"],
+                "count": 0,
+                "order_ids": [],
+                "max_actual_delta_mins": 0,
+                "threshold_mins": detail["threshold_mins"],
+            })
+            entry["count"] += 1
+            if order_id:
+                entry["order_ids"].append(order_id)
+            entry["max_actual_delta_mins"] = max(
+                entry["max_actual_delta_mins"],
+                int(detail.get("actual_delta_mins") or 0),
+            )
+    return summary
+
+
 def _manual_adjustment_impact_summary(
     adjustments: list[dict[str, Any]],
     review_policy: dict[str, Any] | None = None,
@@ -1000,6 +1024,7 @@ def _manual_adjustment_impact_summary(
         "review_required_count": len(negative_impact_order_ids),
         "review_required_order_ids": negative_impact_order_ids,
         "review_reasons": review_reasons,
+        "review_reason_summary": _manual_adjustment_review_reason_summary(review_reasons),
         "review_policy": review_policy,
         "affected_order_ids": affected_order_ids,
     }

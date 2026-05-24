@@ -739,6 +739,32 @@ class TestSchedulePolicySettings(unittest.TestCase):
         ])
         self.assertEqual(summary["review_required_count"], 1)
         self.assertEqual(summary["review_required_order_ids"], ["ORD-REVIEW"])
+        self.assertEqual(summary["review_reason_summary"], {
+            "end_delayed": {
+                "code": "end_delayed",
+                "label": "完工延后",
+                "count": 1,
+                "order_ids": ["ORD-REVIEW"],
+                "max_actual_delta_mins": 31,
+                "threshold_mins": 30,
+            },
+            "setup_increased": {
+                "code": "setup_increased",
+                "label": "换产增加",
+                "count": 1,
+                "order_ids": ["ORD-REVIEW"],
+                "max_actual_delta_mins": 21,
+                "threshold_mins": 20,
+            },
+            "tardiness_increased": {
+                "code": "tardiness_increased",
+                "label": "逾期增加",
+                "count": 1,
+                "order_ids": ["ORD-REVIEW"],
+                "max_actual_delta_mins": 16,
+                "threshold_mins": 15,
+            },
+        })
 
     def test_locked_task_summary_lists_protected_orders(self):
         summary = schedule_router._locked_task_summary([
