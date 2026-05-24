@@ -366,7 +366,10 @@ def screen_order(
             root_cause=f"订单 {order.order_id} 当前状态为 {status}，只有待排订单可以进入预排。",
             candidate_machine_count=candidate_machine_count,
             eligible_machine_count=eligible_machine_count,
-            evidence=_evidence(order_status=status),
+            evidence=_evidence(
+                order_status=status,
+                allowed_order_statuses=sorted(policy["allowed_order_statuses"]),
+            ),
             override_policy=policy,
         )
 

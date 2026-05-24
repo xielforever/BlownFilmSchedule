@@ -95,6 +95,10 @@ class TestOrderScreening(unittest.TestCase):
         self.assertEqual(item["screening_status"], "blocked")
         self.assertEqual(item["code"], "status_not_pending")
         self.assertEqual(result["summary"]["blocked_count"], 1)
+        self.assertIn(
+            {"metric": "allowed_order_statuses", "actual": ["PENDING"]},
+            item["evidence"],
+        )
 
     def test_allowed_order_statuses_are_configurable(self):
         order = _make_order("ORD-RELEASED")
