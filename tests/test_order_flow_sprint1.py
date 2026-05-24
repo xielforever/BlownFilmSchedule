@@ -187,6 +187,19 @@ class _FakeCursor:
         if normalized.startswith("alter table order_screening_cache"):
             self._rows = []
             return
+        if normalized.startswith("update order_screening_cache set business_bucket"):
+            updated = 0
+            for row in self.db.order_screening_cache.values():
+                if row.get("business_bucket"):
+                    continue
+                business_bucket = (row.get("result") or {}).get("business_bucket")
+                if not business_bucket:
+                    continue
+                row["business_bucket"] = business_bucket
+                updated += 1
+            self._rows = []
+            self.rowcount = updated
+            return
         if normalized.startswith("alter table schedule_runs"):
             self._rows = []
             return
@@ -1155,6 +1168,21 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         self.assertEqual(result["total"], 1)
         self.assertEqual([item["order_id"] for item in result["items"]], ["ORD-LIST-BLOCKED"])
         self.assertIs(result["items"][0]["screening"]["is_stale"], True)
+
+    def test_ensure_screening_schema_backfills_business_bucket_from_cached_result(self):
+        db = _FakeDb()
+        db.order_screening_cache["ORD-OLD-CACHE"] = {
+            "screening_status": "blocked",
+            "result": {"business_bucket": "blocked_machine_capability"},
+            "is_stale": False,
+        }
+
+        orders_router._ensure_order_screening_schema(db)
+
+        self.assertEqual(
+            db.order_screening_cache["ORD-OLD-CACHE"]["business_bucket"],
+            "blocked_machine_capability",
+        )
 
     def test_mark_order_screening_cache_stale_marks_requested_orders(self):
         db = _FakeDb()

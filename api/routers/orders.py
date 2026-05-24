@@ -246,6 +246,12 @@ def _ensure_order_screening_schema(db) -> None:
             ADD COLUMN IF NOT EXISTS business_bucket VARCHAR(80)
     """)
     cur.execute("""
+        UPDATE order_screening_cache
+        SET business_bucket = result->>'business_bucket'
+        WHERE business_bucket IS NULL
+          AND result ? 'business_bucket'
+    """)
+    cur.execute("""
         CREATE INDEX IF NOT EXISTS idx_order_screening_cache_status
         ON order_screening_cache(screening_status, is_stale)
     """)
