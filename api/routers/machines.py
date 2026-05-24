@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from api.deps import get_db
 from api.auth import get_current_user, require_role
+from api.routers.orders import _mark_order_screening_cache_stale
 from src.config import MANDATORY_CLEANING_DURATION_MINUTES
 
 router = APIRouter(prefix="/api/machines", tags=["Machines"])
@@ -273,6 +274,7 @@ def update_machine(
         if cur.rowcount == 0:
             db.rollback()
             raise HTTPException(status_code=404, detail="Machine not found.")
+        _mark_order_screening_cache_stale(cur, reason="machine_capability_changed")
 
     state_fields = {state_key_map[k]: v for k, v in fields.items() if k in state_key_map}
     if state_fields:

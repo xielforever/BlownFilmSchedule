@@ -1,6 +1,9 @@
 import unittest
 from datetime import datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import patch
 
+from api.routers import machines as machines_router
 from api.routers.machines import _continuous_run_mins_after_schedule
 from src.config import MANDATORY_CLEANING_DURATION_MINUTES
 
@@ -36,6 +39,42 @@ class TestMachineStateHelpers(unittest.TestCase):
         ]
 
         self.assertEqual(_continuous_run_mins_after_schedule(120, tasks), 90)
+
+    def test_machine_capability_update_marks_screening_cache_stale(self):
+        class Cursor:
+            def __init__(self):
+                self.rowcount = 0
+                self.sql = []
+
+            def execute(self, sql, params=None):
+                self.sql.append(" ".join(sql.split()).lower())
+                if self.sql[-1].startswith("update machines"):
+                    self.rowcount = 1
+
+        class Db:
+            def __init__(self):
+                self.cursor_obj = Cursor()
+                self.commit_count = 0
+
+            def cursor(self):
+                return self.cursor_obj
+
+            def commit(self):
+                self.commit_count += 1
+
+        db = Db()
+
+        with patch.object(machines_router, "_mark_order_screening_cache_stale") as mark_stale:
+            result = machines_router.update_machine(
+                "LINE-01",
+                machines_router.MachineUpdate(max_width=1800),
+                db=db,
+                _=SimpleNamespace(username="planner"),
+            )
+
+        self.assertEqual(result, {"machine_id": "LINE-01", "updated": ["max_width"]})
+        mark_stale.assert_called_once_with(db.cursor_obj, reason="machine_capability_changed")
+        self.assertEqual(db.commit_count, 1)
 
 
 if __name__ == "__main__":
