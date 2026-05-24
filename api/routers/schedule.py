@@ -961,9 +961,15 @@ def _build_preplan_order_buckets(
     selected_order_ids,
     screening_items_by_order_id=None,
     planning_bucket_policy=None,
+    deferred_order_items=None,
 ):
     orders_by_id = {row["order_id"]: dict(row) for row in order_rows or []}
     screening_items_by_order_id = screening_items_by_order_id or {}
+    deferred_items_by_order_id = {
+        item.get("order_id"): item
+        for item in deferred_order_items or []
+        if item.get("order_id")
+    }
     task_by_order = {}
     for task in tasks or []:
         task_by_order.setdefault(task.get("order_id"), task)
@@ -997,6 +1003,7 @@ def _build_preplan_order_buckets(
         order["eligible_machine_count"] = _count_eligible_machines(order, machines)
         task = task_by_order.get(order_id)
         diagnostic = diagnostics_by_order.get(order_id)
+        deferred_item = deferred_items_by_order_id.get(order_id)
         diagnostic_blocks = diagnostic and diagnostic.get("category") == "eligibility"
         planning_bucket = "blocked" if diagnostic_blocks or order["eligible_machine_count"] == 0 else _planning_bucket(order, planning_bucket_policy)
         order["planning_bucket"] = planning_bucket
@@ -1010,6 +1017,9 @@ def _build_preplan_order_buckets(
         elif task:
             bucket = "scheduled"
             reason = "已落位到预排程任务。"
+        elif deferred_item:
+            bucket = "deferred"
+            reason = deferred_item.get("message") or deferred_item.get("reason") or "candidate_optional_rejected"
         elif planning_bucket in {"candidate", "deferred"}:
             bucket = "deferred"
             reason = "订单未进入当前计划窗口，按策略推迟到候选或后续周期。"
@@ -1018,6 +1028,9 @@ def _build_preplan_order_buckets(
             reason = "订单满足硬能力约束，但当前草案未生成落位任务。"
 
         input_row = _preplan_order_bucket_row(order_id, order, task, diagnostic, bucket, reason)
+        if deferred_item:
+            input_row["deferred_reason_code"] = deferred_item.get("reason")
+            input_row["deferred_reason"] = deferred_item
         input_orders.append(input_row)
 
         if bucket == "blocked":
@@ -1113,6 +1126,7 @@ def _load_preplan_order_context(cur, run, tasks, diagnostics):
         selected_ids,
         screening_items_by_order_id=screening_items_by_order_id,
         planning_bucket_policy=planning_bucket_policy,
+        deferred_order_items=params.get("deferred_orders") or [],
     )
 
 

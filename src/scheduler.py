@@ -1121,6 +1121,7 @@ class AdvancedMedicalAPS:
                     "order_id": order.order_id,
                     "planning_bucket": getattr(order, "planning_bucket", "candidate"),
                     "reason": "candidate_optional_rejected",
+                    "message": "Candidate order was deferred by the configured acceptance policy.",
                 })
 
         # 按开始时间排序，计算换产与废料

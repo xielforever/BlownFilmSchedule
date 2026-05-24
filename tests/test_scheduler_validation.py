@@ -206,6 +206,7 @@ class TestSchedulerSequencing(unittest.TestCase):
         self.assertEqual(len(result.deferred_orders), 1)
         self.assertEqual(result.deferred_orders[0]["order_id"], "ORD-CANDIDATE")
         self.assertEqual(result.deferred_orders[0]["planning_bucket"], "candidate")
+        self.assertIn("message", result.deferred_orders[0])
 
     def test_solver_profile_policy_sets_cp_sat_parameters(self):
         aps = AdvancedMedicalAPS(
