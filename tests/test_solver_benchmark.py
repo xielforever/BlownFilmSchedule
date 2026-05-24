@@ -30,6 +30,8 @@ class TestSolverBenchmark(unittest.TestCase):
             "max_late_order_count": None,
             "max_weighted_tardiness": None,
             "max_total_setup_time_mins": None,
+            "arc_pruning_enabled": False,
+            "arc_pruning_max_setup_mins": 0,
         }])
         case = summary["cases"][0]
         self.assertEqual(case["name"], "tiny")
@@ -124,6 +126,30 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertEqual([case["profile"] for case in summary["cases"]], ["fast", "standard"])
         self.assertEqual([case["order_count"] for case in summary["cases"]], [3, 3])
         self.assertEqual([case["name"] for case in summary["cases"]], ["fast-3", "standard-3"])
+
+    def test_benchmark_command_passes_arc_pruning_policy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "pruning.json")
+            exit_code = main([
+                "--order-counts", "1",
+                "--machine-count", "1",
+                "--arc-pruning-enabled",
+                "--arc-pruning-max-setup-mins", "999",
+                "--output", path,
+                "--max-wall-time-seconds", "10",
+            ])
+            with open(path, encoding="utf-8") as f:
+                summary = json.load(f)
+
+        case = summary["cases"][0]
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(summary["case_configs"][0]["arc_pruning_enabled"], True)
+        self.assertEqual(summary["case_configs"][0]["arc_pruning_max_setup_mins"], 999)
+        self.assertEqual(case["arc_pruning_policy"], {
+            "enabled": True,
+            "max_setup_time_mins": 999,
+        })
+        self.assertGreaterEqual(case["model_size"]["pruned_arc_count"], 0)
 
 
 if __name__ == "__main__":

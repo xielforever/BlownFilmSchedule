@@ -28,6 +28,8 @@ class BenchmarkCase:
     max_late_order_count: int | None = None
     max_weighted_tardiness: int | None = None
     max_total_setup_time_mins: int | None = None
+    arc_pruning_enabled: bool = False
+    arc_pruning_max_setup_mins: int = 0
 
 
 def _make_setup_mgr() -> SetupMatricesManager:
@@ -54,6 +56,8 @@ def _case_config(case: BenchmarkCase) -> dict:
         "max_late_order_count": case.max_late_order_count,
         "max_weighted_tardiness": case.max_weighted_tardiness,
         "max_total_setup_time_mins": case.max_total_setup_time_mins,
+        "arc_pruning_enabled": case.arc_pruning_enabled,
+        "arc_pruning_max_setup_mins": case.arc_pruning_max_setup_mins,
     }
 
 
@@ -130,6 +134,10 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
             "log_search_progress": False,
         },
         candidate_acceptance_policy={"reject_penalty": 10_000_000},
+        arc_pruning_policy={
+            "enabled": case.arc_pruning_enabled,
+            "max_setup_time_mins": case.arc_pruning_max_setup_mins,
+        },
     )
     result = aps.run(orders, machines)
     phase_metrics = result.solver_metrics.get("phase_1") or {}
@@ -191,6 +199,10 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
             "max_weighted_tardiness": case.max_weighted_tardiness,
             "max_total_setup_time_mins": case.max_total_setup_time_mins,
         },
+        "arc_pruning_policy": {
+            "enabled": case.arc_pruning_enabled,
+            "max_setup_time_mins": case.arc_pruning_max_setup_mins,
+        },
         "failed_checks": failed_checks,
         "machine_load": _machine_load(result.tasks),
         "phase_metrics": {
@@ -247,6 +259,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-late-order-count", type=int, default=None)
     parser.add_argument("--max-weighted-tardiness", type=int, default=None)
     parser.add_argument("--max-total-setup-time-mins", type=int, default=None)
+    parser.add_argument("--arc-pruning-enabled", action="store_true")
+    parser.add_argument("--arc-pruning-max-setup-mins", type=int, default=0)
     parser.add_argument("--output", default="benchmark-summary.json")
     args = parser.parse_args(argv)
 
@@ -269,6 +283,8 @@ def main(argv: list[str] | None = None) -> int:
             max_total_setup_time_mins=(
                 None if args.max_total_setup_time_mins is None else max(0, int(args.max_total_setup_time_mins))
             ),
+            arc_pruning_enabled=bool(args.arc_pruning_enabled),
+            arc_pruning_max_setup_mins=max(0, int(args.arc_pruning_max_setup_mins)),
         )
         for profile in profiles
         for count in args.order_counts
