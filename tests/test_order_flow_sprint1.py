@@ -853,6 +853,92 @@ class _FakeCursor:
                 for key, value in counts.items()
             ]
             return
+        if normalized.startswith("select coalesce(latest_action.actor, 'unassigned')"):
+            param_index = 0
+            status_filter = None
+            screening_status_filter = None
+            screening_bucket_filter = None
+            screening_stale_filter = None
+            screening_action_status_filter = None
+            screening_action_type_filter = None
+            screening_action_assignee_filter = None
+            screening_action_actor_filter = None
+            if "o.status=%s" in normalized:
+                status_filter = params[param_index]
+                param_index += 1
+            if "lower(osc.screening_status)=%s" in normalized:
+                screening_status_filter = params[param_index]
+                param_index += 1
+            if "business_bucket" in normalized and "coalesce" in normalized and "=%s" in normalized:
+                screening_bucket_filter = params[param_index]
+                param_index += 1
+            if "coalesce(osc.is_stale, false)=%s" in normalized:
+                screening_stale_filter = params[param_index]
+                param_index += 1
+            if "lower(latest_action.handling_status)=%s" in normalized:
+                screening_action_status_filter = params[param_index]
+                param_index += 1
+            if "lower(latest_action.action_type)=%s" in normalized:
+                screening_action_type_filter = params[param_index]
+                param_index += 1
+            if "lower(trim(latest_action.assignee))=%s" in normalized:
+                screening_action_assignee_filter = params[param_index]
+                param_index += 1
+            if "lower(trim(latest_action.actor))=%s" in normalized:
+                screening_action_actor_filter = params[param_index]
+                param_index += 1
+            screening_action_unhandled_filter = "latest_action.handling_status is null" in normalized
+            screening_action_unassigned_filter = "latest_action.assignee is null" in normalized
+            counts = {}
+            for row in self.db.production_orders.values():
+                cache = self.db.order_screening_cache.get(row["order_id"], {})
+                actions = [
+                    dict(item)
+                    for item in self.db.order_screening_action_audit
+                    if item["order_id"] == row["order_id"]
+                ]
+                actions.sort(key=lambda item: (item.get("created_at"), item["id"]), reverse=True)
+                latest_action = actions[0] if actions else {}
+                if status_filter and row["status"] != status_filter:
+                    continue
+                if screening_status_filter and (cache.get("screening_status") or "").lower() != screening_status_filter:
+                    continue
+                business_bucket = (cache.get("result") or {}).get("business_bucket")
+                if screening_bucket_filter and (business_bucket or "").lower() != screening_bucket_filter:
+                    continue
+                if screening_stale_filter is not None and bool(cache.get("is_stale")) is not bool(screening_stale_filter):
+                    continue
+                if (
+                    screening_action_status_filter
+                    and (latest_action.get("handling_status") or "").lower() != screening_action_status_filter
+                ):
+                    continue
+                if screening_action_unhandled_filter and latest_action.get("handling_status"):
+                    continue
+                if (
+                    screening_action_type_filter
+                    and (latest_action.get("action_type") or "").lower() != screening_action_type_filter
+                ):
+                    continue
+                if (
+                    screening_action_assignee_filter
+                    and (latest_action.get("assignee") or "").strip().lower() != screening_action_assignee_filter
+                ):
+                    continue
+                if screening_action_unassigned_filter and latest_action.get("assignee"):
+                    continue
+                if (
+                    screening_action_actor_filter
+                    and (latest_action.get("actor") or "").strip().lower() != screening_action_actor_filter
+                ):
+                    continue
+                key = latest_action.get("actor") or "unassigned"
+                counts[key] = counts.get(key, 0) + 1
+            self._rows = [
+                {"actor": key, "cnt": value}
+                for key, value in counts.items()
+            ]
+            return
         if normalized.startswith("update production_orders set"):
             set_clause = sql.split("SET", 1)[1].split("WHERE", 1)[0]
             field_names = [
@@ -2742,6 +2828,83 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
             "unassigned": 1,
             "order-admin": 1,
             "material-admin": 1,
+        })
+
+    def test_list_orders_summarizes_latest_screening_action_actors(self):
+        db = _FakeDb()
+        db.products.add("Film-A")
+        for order_id in ["ORD-NO-ACTOR", "ORD-PLANNER-A", "ORD-PLANNER-B"]:
+            db.production_orders[order_id] = {
+                "order_id": order_id,
+                "customer_id": "STANDARD",
+                "product_type": "Film-A",
+                "target_width": 9999,
+                "target_thickness": 35,
+                "total_quantity_kg": 1200,
+                "cleanroom_req": "Class_10K",
+                "order_class": "NORMAL",
+                "corona_req": False,
+                "core_size_inch": 3,
+                "order_date": None,
+                "due_date": datetime(2026, 5, 28, 8, 30, tzinfo=timezone.utc),
+                "material_available_time": None,
+                "status": "PENDING",
+                "priority_override": None,
+                "created_at": datetime(2026, 5, 22, 8, 0, tzinfo=timezone.utc),
+                "updated_at": datetime(2026, 5, 22, 8, 0, tzinfo=timezone.utc),
+            }
+            db.order_screening_cache[order_id] = {
+                "screening_status": "blocked",
+                "code": "no_eligible_machine",
+                "root_cause": "幅宽超出机台能力",
+                "business_bucket": "blocked_machine_capability",
+                "result": {"business_bucket": "blocked_machine_capability"},
+                "is_stale": False,
+            }
+        db.order_screening_action_audit.extend([
+            {
+                "id": 43,
+                "order_id": "ORD-PLANNER-A",
+                "screening_status": "blocked",
+                "business_bucket": "blocked_machine_capability",
+                "screening_code": "no_eligible_machine",
+                "action_type": "request_data_fix",
+                "handling_status": "in_progress",
+                "reason_text": "排程员甲处理",
+                "assignee": "order-admin",
+                "actor": " planner-a ",
+                "details": {},
+                "created_at": datetime(2026, 5, 24, 8, 0, tzinfo=timezone.utc),
+            },
+            {
+                "id": 44,
+                "order_id": "ORD-PLANNER-B",
+                "screening_status": "blocked",
+                "business_bucket": "blocked_material",
+                "screening_code": "material_not_ready",
+                "action_type": "confirm_material",
+                "handling_status": "waiting_external",
+                "reason_text": "排程员乙处理",
+                "assignee": "material-admin",
+                "actor": "planner-b",
+                "details": {},
+                "created_at": datetime(2026, 5, 24, 9, 0, tzinfo=timezone.utc),
+            },
+        ])
+
+        result = orders_router.list_orders(
+            status="PENDING",
+            screening_status="blocked",
+            q=None,
+            page=1,
+            size=50,
+            db=db,
+        )
+
+        self.assertEqual(result["screening_action_actor_counts"], {
+            "unassigned": 1,
+            " planner-a ": 1,
+            "planner-b": 1,
         })
 
     def test_list_orders_filters_by_screening_status_bucket_and_stale_flag(self):
