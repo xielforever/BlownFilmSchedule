@@ -56,6 +56,7 @@ class TestOrderScreening(unittest.TestCase):
         self.assertEqual(result["summary"]["ready_count"], 1)
         self.assertEqual(result["summary"]["risk_count"], 0)
         self.assertEqual(result["summary"]["blocked_count"], 0)
+        self.assertEqual(result["summary"]["business_bucket_counts"], {"ready": 1})
         item = result["items"][0]
         self.assertEqual(item["screening_status"], "ready")
         self.assertEqual(item["code"], "ready")
@@ -338,6 +339,7 @@ class TestOrderScreening(unittest.TestCase):
         self.assertEqual(filtered["summary"]["total_orders"], 1)
         self.assertEqual(filtered["summary"]["ready_count"], 0)
         self.assertEqual(filtered["summary"]["blocked_count"], 1)
+        self.assertEqual(filtered["summary"]["business_bucket_counts"], {"blocked_machine_capability": 1})
         self.assertEqual([item["order_id"] for item in filtered["items"]], ["ORD-BLOCKED"])
         self.assertEqual(filtered["screening_bucket_filter"], "blocked_machine_capability")
 

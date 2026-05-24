@@ -429,6 +429,10 @@ def _summary(items: list[dict]) -> dict:
         "ready_count": sum(1 for item in items if item["screening_status"] == "ready"),
         "risk_count": sum(1 for item in items if item["screening_status"] == "risk"),
         "blocked_count": sum(1 for item in items if item["screening_status"] == "blocked"),
+        "business_bucket_counts": {
+            bucket: sum(1 for item in items if item.get("business_bucket") == bucket)
+            for bucket in sorted({item.get("business_bucket") for item in items if item.get("business_bucket")})
+        },
     }
 
 
