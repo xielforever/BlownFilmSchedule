@@ -844,7 +844,8 @@ def list_orders(
             t.actual_material_required_kg,
             osc.screening_status, osc.code AS screening_code,
             osc.root_cause AS screening_root_cause, osc.is_stale AS screening_is_stale,
-            osc.stale_reason AS screening_stale_reason
+            osc.stale_reason AS screening_stale_reason,
+            osc.result AS screening_result
         FROM production_orders o
         LEFT JOIN customers c ON o.customer_id = c.customer_id
         LEFT JOIN scheduled_tasks t ON o.order_id = t.order_id
@@ -856,6 +857,7 @@ def list_orders(
     """, params + [size, offset])
     items = []
     for r in cur.fetchall():
+        screening_result = r.get("screening_result") or {}
         items.append({
             "order_id": r["order_id"],
             "product_type": r["product_type"],
@@ -878,6 +880,9 @@ def list_orders(
                 "root_cause": r.get("screening_root_cause"),
                 "is_stale": r.get("screening_is_stale"),
                 "stale_reason": r.get("screening_stale_reason"),
+                "recommendations": screening_result.get("recommendations") or [],
+                "evidence": screening_result.get("evidence") or [],
+                "override_decision": screening_result.get("override_decision"),
             } if r.get("screening_status") else None,
             "sched_start": r["sched_start"].isoformat() if r["sched_start"] else None,
             "sched_end": r["sched_end"].isoformat() if r["sched_end"] else None,

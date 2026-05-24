@@ -382,6 +382,7 @@ class _FakeCursor:
                     "screening_root_cause": cache.get("root_cause"),
                     "screening_is_stale": cache.get("is_stale"),
                     "screening_stale_reason": cache.get("stale_reason"),
+                    "screening_result": cache.get("result"),
                 })
             self._rows = sorted(rows, key=lambda item: item["due_date"])
             return
@@ -1044,6 +1045,18 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
             "screening_status": "blocked",
             "code": "no_eligible_machine",
             "root_cause": "幅宽超出机台能力",
+            "result": {
+                "recommendations": [
+                    {
+                        "action": "expand_machine_capability",
+                        "label": "调整机台规格能力",
+                        "href": "/config?tab=machines",
+                        "category": "machine",
+                        "guidance": "订单规格超出当前可用机台范围。",
+                    },
+                ],
+                "evidence": [{"metric": "target_width", "actual": 9999}],
+            },
             "is_stale": True,
             "stale_reason": "machine_capability_changed",
         }
@@ -1056,6 +1069,14 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         self.assertEqual(
             result["items"][0]["screening"]["stale_reason"],
             "machine_capability_changed",
+        )
+        self.assertEqual(
+            result["items"][0]["screening"]["recommendations"][0]["action"],
+            "expand_machine_capability",
+        )
+        self.assertEqual(
+            result["items"][0]["screening"]["evidence"][0]["metric"],
+            "target_width",
         )
 
     def test_list_orders_filters_by_screening_status_and_stale_flag(self):
