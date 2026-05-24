@@ -249,6 +249,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
             "blocked_order_count": 1,
         })()
         snapshot = {"policy_version": 5, "settings": {"review_required": True}}
+        input_snapshot = {"hash": "input-v1", "orders": {"count": 2}}
 
         params = database._build_schedule_run_solver_params(
             result=result,
@@ -257,9 +258,11 @@ class TestSchedulePolicySettings(unittest.TestCase):
             order_snapshots=[],
             mode="AUTO",
             policy_snapshot=snapshot,
+            input_snapshot=input_snapshot,
         )
 
         self.assertEqual(params["policy_snapshot"], snapshot)
+        self.assertEqual(params["input_snapshot"], input_snapshot)
         self.assertEqual(params["summary"]["input_order_count"], 2)
 
     def test_task_row_to_dict_exposes_prev_order_and_setup_detail(self):

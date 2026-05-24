@@ -477,6 +477,7 @@ def _run_row_to_dict(row):
         "selected_order_ids": params.get("selected_order_ids") or [],
         "order_snapshots": params.get("order_snapshots") or [],
         "policy_snapshot": params.get("policy_snapshot"),
+        "input_snapshot": params.get("input_snapshot"),
         "last_validated_at": params.get("last_validated_at"),
         "last_validation_summary": params.get("last_validation_summary"),
         "summary": summary,

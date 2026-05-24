@@ -21,23 +21,20 @@ from src.diagnostics import diagnostics_to_dicts
 from src.models import BlownFilmMachineModel, ForbiddenWindow, ProductionOrderModel
 from src.scheduler import ScheduleResult
 from src.setup_matrices import SetupMatricesManager
+from src.snapshotting import (
+    ORDER_SNAPSHOT_FIELDS,
+    build_input_snapshot,
+    build_machine_capability_snapshot,
+    build_maintenance_calendar_snapshot,
+    build_order_snapshot,
+    build_process_snapshot,
+    build_rule_matrix_snapshot,
+    stable_hash,
+)
 
 logger = logging.getLogger(__name__)
 
 DDL_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "db", "init_schema.sql")
-
-ORDER_SNAPSHOT_FIELDS = (
-    "product_type",
-    "target_width",
-    "target_thickness",
-    "total_quantity_kg",
-    "cleanroom_req",
-    "order_class",
-    "due_date",
-    "material_available_time",
-    "status",
-    "priority_override",
-)
 
 RULE_ENABLEMENT_TABLES = (
     "material_switch_matrix",
@@ -60,15 +57,103 @@ def _snapshot_order_value(value):
 
 
 def _build_order_snapshot(row) -> dict:
-    fields = {key: _snapshot_order_value(row.get(key)) for key in ORDER_SNAPSHOT_FIELDS}
-    snapshot = {
-        "order_id": row.get("order_id"),
-        "updated_at": _snapshot_order_value(row.get("updated_at")),
-        "fields": fields,
+    return build_order_snapshot(row)
+
+
+def _fetch_input_snapshot(cur, order_snapshots: list[dict]) -> dict:
+    cur.execute("""
+        SELECT machine_id, status, cleanroom_level, layer_structure,
+            die_diameter_mm, min_width, max_width, min_thickness,
+            max_thickness, hourly_output_kg, max_slitting_lanes
+        FROM machines
+        WHERE status='ACTIVE'
+        ORDER BY machine_id
+    """)
+    machine_snapshot = build_machine_capability_snapshot(cur.fetchall())
+
+    cur.execute("""
+        SELECT machine_id, start_time, end_time, maintenance_type,
+            reason, is_enabled
+        FROM machine_maintenance_calendar
+        WHERE COALESCE(is_enabled, TRUE)=TRUE
+        ORDER BY machine_id, start_time, end_time
+    """)
+    maintenance_snapshot = build_maintenance_calendar_snapshot(cur.fetchall())
+
+    rule_rows = []
+    cur.execute("""
+        SELECT from_material, to_material, switch_time_mins, scrap_weight_kg,
+            is_enabled
+        FROM material_switch_matrix
+        ORDER BY from_material, to_material
+    """)
+    for row in cur.fetchall():
+        rule_rows.append({
+            "table": "material_switch_matrix",
+            "key": f"{row.get('from_material')}->{row.get('to_material')}",
+            "values": {
+                "switch_time_mins": row.get("switch_time_mins"),
+                "scrap_weight_kg": row.get("scrap_weight_kg"),
+            },
+            "is_enabled": row.get("is_enabled"),
+        })
+    cur.execute("""
+        SELECT attribute, condition_desc, threshold_lower, threshold_upper,
+            change_time_mins, scrap_weight_kg, is_enabled
+        FROM spec_change_rules
+        ORDER BY attribute, condition_desc
+    """)
+    for row in cur.fetchall():
+        rule_rows.append({
+            "table": "spec_change_rules",
+            "key": f"{row.get('attribute')}:{row.get('condition_desc')}",
+            "values": {
+                "threshold_lower": row.get("threshold_lower"),
+                "threshold_upper": row.get("threshold_upper"),
+                "change_time_mins": row.get("change_time_mins"),
+                "scrap_weight_kg": row.get("scrap_weight_kg"),
+            },
+            "is_enabled": row.get("is_enabled"),
+        })
+    cur.execute("""
+        SELECT from_order_class, to_order_class, clearance_time_mins,
+            is_enabled
+        FROM gmp_clearance_matrix
+        ORDER BY from_order_class, to_order_class
+    """)
+    for row in cur.fetchall():
+        rule_rows.append({
+            "table": "gmp_clearance_matrix",
+            "key": f"{row.get('from_order_class')}->{row.get('to_order_class')}",
+            "values": {
+                "clearance_time_mins": row.get("clearance_time_mins"),
+            },
+            "is_enabled": row.get("is_enabled"),
+        })
+    rule_snapshot = build_rule_matrix_snapshot(rule_rows)
+
+    cur.execute("""
+        SELECT product_type, layer, material_grade, ratio_pct
+        FROM recipes
+        ORDER BY product_type, layer
+    """)
+    process_snapshot = build_process_snapshot(cur.fetchall())
+
+    screening_snapshot = {
+        "count": len(order_snapshots or []),
+        "hash": stable_hash([
+            {"order_id": item.get("order_id"), "hash": item.get("hash")}
+            for item in order_snapshots or []
+        ]),
     }
-    payload = json.dumps(fields, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    snapshot["hash"] = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-    return snapshot
+    return build_input_snapshot(
+        order_snapshots=order_snapshots,
+        machine_capability_snapshot=machine_snapshot,
+        maintenance_calendar_snapshot=maintenance_snapshot,
+        rule_matrix_snapshot=rule_snapshot,
+        process_snapshot=process_snapshot,
+        screening_snapshot=screening_snapshot,
+    )
 
 
 def _apply_schedule_policy_to_master_data(
@@ -110,6 +195,7 @@ def _build_schedule_run_solver_params(
     order_snapshots: list[dict],
     mode: str,
     policy_snapshot: Optional[dict] = None,
+    input_snapshot: Optional[dict] = None,
 ) -> dict:
     payload = {
         "diagnostics": diagnostics_payload,
@@ -124,6 +210,8 @@ def _build_schedule_run_solver_params(
     }
     if policy_snapshot is not None:
         payload["policy_snapshot"] = policy_snapshot
+    if input_snapshot is not None:
+        payload["input_snapshot"] = input_snapshot
     return payload
 
 
@@ -881,6 +969,8 @@ class DatabaseManager:
                     row = order_rows.get(order_id)
                     if row:
                         order_snapshots.append(_build_order_snapshot(row))
+            with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as snapshot_cur:
+                input_snapshot = _fetch_input_snapshot(snapshot_cur, order_snapshots)
 
             diagnostics_payload = diagnostics_to_dicts(
                 getattr(result, "diagnostics", []),
@@ -895,6 +985,7 @@ class DatabaseManager:
                     order_snapshots=order_snapshots,
                     mode=mode,
                     policy_snapshot=policy_snapshot,
+                    input_snapshot=input_snapshot,
                 )), run_id),
             )
 
