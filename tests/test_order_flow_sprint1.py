@@ -349,7 +349,15 @@ class _FakeCursor:
             self._rows = [dict(row)] if row else []
             return
         if normalized.startswith("select o.*, coalesce(c.customer_class"):
-            order_ids = params[0] if params else list(self.db.production_orders)
+            if "o.status = any" in normalized and params:
+                allowed_statuses = set(params[0])
+                order_ids = [
+                    order_id
+                    for order_id, row in self.db.production_orders.items()
+                    if row.get("status") in allowed_statuses
+                ]
+            else:
+                order_ids = params[0] if params else list(self.db.production_orders)
             rows = []
             for order_id in order_ids:
                 row = self.db.production_orders.get(order_id)
@@ -1542,6 +1550,30 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
 
         self.assertEqual(result["items"][0]["screening_status"], "ready")
         self.assertEqual(db.order_screening_cache["ORD-SCHEDULED-RESCREEN"]["screening_status"], "ready")
+
+    def test_bulk_screening_query_uses_configured_allowed_order_statuses(self):
+        class Cursor:
+            def __init__(self):
+                self.sql = ""
+                self.params = None
+
+            def execute(self, sql, params=None):
+                self.sql = sql
+                self.params = params
+
+            def fetchall(self):
+                return []
+
+        cur = Cursor()
+
+        orders_router._load_screening_order_rows(
+            cur,
+            None,
+            allowed_statuses=["PENDING", "SCHEDULED"],
+        )
+
+        self.assertIn("o.status = ANY(%s)", cur.sql)
+        self.assertEqual(cur.params, [["PENDING", "SCHEDULED"]])
 
     def test_screening_override_requires_reason_and_writes_audit(self):
         db = _FakeDb()

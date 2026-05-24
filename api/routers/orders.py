@@ -689,12 +689,18 @@ def _load_order_screening_policy(cur) -> dict[str, Any]:
     }
 
 
-def _load_screening_order_rows(cur, order_ids: list[str] | None):
+def _load_screening_order_rows(
+    cur,
+    order_ids: list[str] | None,
+    *,
+    allowed_statuses: list[str] | None = None,
+):
     params = []
-    where = "WHERE o.status='PENDING'"
+    where = "WHERE o.status = ANY(%s)"
+    params.append(allowed_statuses or DEFAULT_SCREENING_POLICY["allowed_order_statuses"])
     if order_ids:
         where = "WHERE o.order_id = ANY(%s)"
-        params.append(order_ids)
+        params = [order_ids]
     cur.execute(f"""
         SELECT o.*, COALESCE(c.customer_class, 'STANDARD') AS customer_class,
             (p.product_type IS NOT NULL) AS product_exists,
@@ -724,7 +730,12 @@ def _load_screening_order_rows(cur, order_ids: list[str] | None):
 
 def _run_order_screening(db, *, order_ids: list[str] | None, scope: str):
     cur = db.cursor()
-    order_rows = _load_screening_order_rows(cur, order_ids)
+    screening_policy = _load_order_screening_policy(cur)
+    order_rows = _load_screening_order_rows(
+        cur,
+        order_ids,
+        allowed_statuses=screening_policy.get("allowed_order_statuses"),
+    )
     cur.execute("""
         SELECT machine_id, name, cleanroom_level, layer_structure,
             die_diameter_mm, min_width, max_width, min_thickness,
@@ -735,7 +746,6 @@ def _run_order_screening(db, *, order_ids: list[str] | None, scope: str):
     """)
     machines = [_screening_machine_from_row(row) for row in cur.fetchall()]
     orders = [_screening_order_from_row(row) for row in order_rows]
-    screening_policy = _load_order_screening_policy(cur)
     result = screen_orders(
         orders,
         machines,
