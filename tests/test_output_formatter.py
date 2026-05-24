@@ -75,6 +75,24 @@ class TestOutputFormatter(unittest.TestCase):
 
         self.assertEqual(data["solver_metrics"], result.solver_metrics)
 
+    def test_schedule_json_exports_deferred_orders(self):
+        result = ScheduleResult()
+        result.status = "FEASIBLE"
+        result.deferred_orders = [{
+            "order_id": "ORD-CANDIDATE",
+            "planning_bucket": "candidate",
+            "reason": "candidate_optional_rejected",
+        }]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "schedule.json")
+            export_schedule_json(result, path)
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+
+        self.assertEqual(data["deferred_order_count"], 1)
+        self.assertEqual(data["deferred_orders"], result.deferred_orders)
+
     def test_schedule_report_contains_order_and_global_root_causes(self):
         result = ScheduleResult()
         result.status = "FEASIBLE"

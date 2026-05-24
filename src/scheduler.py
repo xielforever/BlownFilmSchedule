@@ -66,6 +66,7 @@ class ScheduleResult:
         self.input_order_count: int = 0
         self.schedulable_order_count: int = 0
         self.blocked_order_count: int = 0
+        self.deferred_orders: List[Dict] = []
         self.solver_metrics: Dict[str, Dict] = {}
 
     def add_task(self, task: ScheduledTask):
@@ -322,12 +323,14 @@ class AdvancedMedicalAPS:
         continuous_run_policy: Optional[Dict] = None,
         solver_quality_policy: Optional[Dict] = None,
         solver_profile_policy: Optional[Dict] = None,
+        candidate_acceptance_policy: Optional[Dict] = None,
     ):
         self.setup_calc = SetupCalculator(setup_mgr)
         self.setup_mgr = setup_mgr
         self.continuous_run_policy = self._normalize_continuous_run_policy(continuous_run_policy)
         self.solver_quality_policy = self._normalize_solver_quality_policy(solver_quality_policy)
         self.solver_profile_policy = self._normalize_solver_profile_policy(solver_profile_policy)
+        self.candidate_acceptance_policy = self._normalize_candidate_acceptance_policy(candidate_acceptance_policy)
 
     @staticmethod
     def _normalize_continuous_run_policy(policy: Optional[Dict]) -> Dict:
@@ -368,6 +371,17 @@ class AdvancedMedicalAPS:
             "num_workers": max(1, int(policy.get("num_workers") or 8)),
             "log_search_progress": bool(policy.get("log_search_progress", False)),
         }
+
+    @staticmethod
+    def _normalize_candidate_acceptance_policy(policy: Optional[Dict]) -> Dict:
+        policy = policy or {}
+        return {
+            "reject_penalty": max(0, int(policy.get("reject_penalty") or 10_000_000)),
+        }
+
+    @staticmethod
+    def _is_optional_candidate(order: ProductionOrderModel) -> bool:
+        return str(getattr(order, "planning_bucket", "") or "").lower() == "candidate"
 
     def _apply_solver_profile(self, solver) -> None:
         policy = self.solver_profile_policy
@@ -581,7 +595,12 @@ class AdvancedMedicalAPS:
             result.status = status2
             logger.info("第二阶段完成: status=%s, total_setup=%d", status2, setup_score)
 
-        self._validate_result(result, expected_order_count=n)
+        required_order_ids = [
+            order.order_id
+            for order in orders
+            if not self._is_optional_candidate(order)
+        ]
+        self._validate_result(result, expected_order_count=None, required_order_ids=required_order_ids)
         if result.validation_errors:
             result.status = "INVALID"
             for err in result.validation_errors[:10]:
@@ -823,6 +842,7 @@ class AdvancedMedicalAPS:
         starts = {}     # starts[i][m_idx] = IntVar
         ends = {}       # ends[i][m_idx] = IntVar
         intervals = {}  # intervals[i][m_idx] = IntervalVar
+        rejected_candidates = {}
 
         for idx in range(n):
             presence[idx] = {}
@@ -842,7 +862,13 @@ class AdvancedMedicalAPS:
 
         # ─── 约束 1：唯一分派 ───
         for idx in range(n):
-            model.add_exactly_one(presence[idx][m] for m in eligible[idx])
+            assigned = sum(presence[idx][m] for m in eligible[idx])
+            if self._is_optional_candidate(orders[idx]):
+                rejected = model.new_bool_var(f'rejected_candidate_{idx}')
+                model.add(assigned + rejected == 1)
+                rejected_candidates[idx] = rejected
+            else:
+                model.add_exactly_one(presence[idx][m] for m in eligible[idx])
 
         # ─── 约束 2：原料齐套等待 ───
         for idx in range(n):
@@ -984,19 +1010,25 @@ class AdvancedMedicalAPS:
         total_starts = model.new_int_var(0, H * n, 'total_starts')
         model.add(total_starts == sum(start_terms))
 
+        rejection_penalty = self.candidate_acceptance_policy["reject_penalty"]
+        candidate_rejection_cost = sum(
+            rejected * rejection_penalty
+            for rejected in rejected_candidates.values()
+        )
+
         if phase == 1:
             # 第一阶段：主要目标最小化延期，次要目标尽量提早开工
-            model.minimize(total_tardiness * 10000 + total_starts)
+            model.minimize(total_tardiness * 10000 + candidate_rejection_cost + total_starts)
         else:
             # 第二阶段：锁死交期，最小化换产时间，次要目标尽量提早开工
             model.add(total_tardiness <= tardiness_bound)
             if setup_delay_vars:
                 total_setup = model.new_int_var(0, H * n, 'total_setup')
                 model.add(total_setup == sum(setup_delay_vars))
-                model.minimize(total_setup * 10000 + total_starts)
+                model.minimize(total_setup * 10000 + candidate_rejection_cost + total_starts)
             else:
                 total_setup = model.new_int_var(0, 0, 'total_setup')
-                model.minimize(total_starts)
+                model.minimize(candidate_rejection_cost + total_starts)
 
         # ─── 求解 ───
         solver = cp_model.CpSolver()
@@ -1030,6 +1062,7 @@ class AdvancedMedicalAPS:
         if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             vars_dict = {
                 'presence': presence, 'starts': starts, 'ends': ends,
+                'rejected_candidates': rejected_candidates,
             }
             return (status_str, solver, vars_dict, obj_val)
         logger.warning("第 %d 阶段求解未获得可行解: status=%s", phase, status_str)
@@ -1060,6 +1093,7 @@ class AdvancedMedicalAPS:
         presence = vars_dict['presence']
         starts = vars_dict['starts']
         ends = vars_dict['ends']
+        rejected_candidates = vars_dict.get('rejected_candidates', {})
         n = len(orders)
 
         # 收集每台机台上的已排订单
@@ -1074,6 +1108,20 @@ class AdvancedMedicalAPS:
                         machine_tasks[m_idx] = []
                     machine_tasks[m_idx].append((idx, s, e))
                     break
+
+        scheduled_indices = {
+            idx
+            for task_list in machine_tasks.values()
+            for idx, _s, _e in task_list
+        }
+        for idx, rejected in rejected_candidates.items():
+            if idx not in scheduled_indices and solver.value(rejected):
+                order = orders[idx]
+                result.deferred_orders.append({
+                    "order_id": order.order_id,
+                    "planning_bucket": getattr(order, "planning_bucket", "candidate"),
+                    "reason": "candidate_optional_rejected",
+                })
 
         # 按开始时间排序，计算换产与废料
         for m_idx, task_list in machine_tasks.items():
@@ -1107,11 +1155,16 @@ class AdvancedMedicalAPS:
 
         logger.info("解提取完成: %d 个任务已排程", len(result.tasks))
 
-    def _validate_result(self, result: ScheduleResult, expected_order_count: int):
+    def _validate_result(
+        self,
+        result: ScheduleResult,
+        expected_order_count: Optional[int],
+        required_order_ids: Optional[List[str]] = None,
+    ):
         """校验提取后的排程结果，防止错误结果进入导出/API。"""
         errors: List[str] = []
 
-        if len(result.tasks) != expected_order_count:
+        if expected_order_count is not None and len(result.tasks) != expected_order_count:
             errors.append(
                 f"已排订单数 {len(result.tasks)} 与输入订单数 {expected_order_count} 不一致"
             )
@@ -1120,12 +1173,17 @@ class AdvancedMedicalAPS:
         for task in result.tasks:
             oid = task.order.order_id
             if oid in seen:
-                errors.append(f"订单 {oid} 被重复排程")
+                errors.append(f"order {oid} was scheduled more than once")
             seen.add(oid)
             if task.end_mins <= task.start_mins:
                 errors.append(
                     f"订单 {oid} 时间窗口非法: {task.start_mins}-{task.end_mins}"
                 )
+
+        if required_order_ids is not None:
+            missing_required = sorted(set(required_order_ids) - seen)
+            for oid in missing_required:
+                errors.append(f"required order {oid} was not scheduled")
 
         for mid, tasks in result.machine_sequences.items():
             ordered = sorted(tasks, key=lambda x: (x.start_mins, x.end_mins))

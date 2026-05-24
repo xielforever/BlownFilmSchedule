@@ -43,6 +43,7 @@ class ProductionOrderModel:
     due_date_mins: int = 0
     material_available_mins: int = 0    # 原料齐套时点
     priority_override: Optional[int] = None
+    planning_bucket: str = "must_schedule"
 
     # 运行时注入的配方信息
     recipe_materials: List[str] = field(default_factory=list)
@@ -80,6 +81,7 @@ class ProductionOrderModel:
                     else None
                 )
             ),
+            planning_bucket=str(d.get("planningBucket") or d.get("planning_bucket") or "must_schedule"),
             recipe_materials=list(d.get("recipeMaterialsSequence", [])),
         )
 

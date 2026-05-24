@@ -209,7 +209,9 @@ def _build_schedule_run_solver_params(
             "input_order_count": getattr(result, "input_order_count", len(getattr(result, "tasks", []))),
             "schedulable_order_count": getattr(result, "schedulable_order_count", len(getattr(result, "tasks", []))),
             "blocked_order_count": getattr(result, "blocked_order_count", 0),
+            "deferred_order_count": len(getattr(result, "deferred_orders", [])),
         },
+        "deferred_orders": getattr(result, "deferred_orders", []),
         "selected_order_ids": normalized_order_ids,
         "order_snapshots": order_snapshots,
         "mode": mode,
@@ -305,6 +307,7 @@ class DatabaseManager:
                     solver_log_search_progress          BOOLEAN NOT NULL DEFAULT FALSE,
                     planning_must_schedule_horizon_days INTEGER NOT NULL DEFAULT 3,
                     planning_candidate_horizon_days     INTEGER NOT NULL DEFAULT 14,
+                    candidate_reject_penalty            INTEGER NOT NULL DEFAULT 10000000,
                     updated_at                          TIMESTAMPTZ DEFAULT NOW()
                 )
             """)
@@ -513,6 +516,7 @@ class DatabaseManager:
                 ADD COLUMN IF NOT EXISTS solver_log_search_progress BOOLEAN NOT NULL DEFAULT FALSE,
                 ADD COLUMN IF NOT EXISTS planning_must_schedule_horizon_days INTEGER NOT NULL DEFAULT 3,
                 ADD COLUMN IF NOT EXISTS planning_candidate_horizon_days INTEGER NOT NULL DEFAULT 14,
+                ADD COLUMN IF NOT EXISTS candidate_reject_penalty INTEGER NOT NULL DEFAULT 10000000,
                 ADD COLUMN IF NOT EXISTS policy_version INTEGER NOT NULL DEFAULT 1,
                 ADD COLUMN IF NOT EXISTS updated_by VARCHAR(50),
                 ADD COLUMN IF NOT EXISTS change_reason TEXT
@@ -528,7 +532,8 @@ class DatabaseManager:
                     phase2_feasible_tardiness_tolerance_mins,
                     solver_profile, solver_time_limit_seconds, solver_relative_gap_limit,
                     solver_random_seed, solver_num_workers, solver_log_search_progress,
-                    planning_must_schedule_horizon_days, planning_candidate_horizon_days
+                    planning_must_schedule_horizon_days, planning_candidate_horizon_days,
+                    candidate_reject_penalty
                 FROM schedule_settings
                 WHERE id=TRUE
             """)
@@ -553,6 +558,7 @@ class DatabaseManager:
             "solver_log_search_progress": False,
             "planning_must_schedule_horizon_days": 3,
             "planning_candidate_horizon_days": 14,
+            "candidate_reject_penalty": 10_000_000,
         }
         return {**defaults, **dict(row or {})}
 

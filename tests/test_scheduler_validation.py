@@ -183,6 +183,30 @@ class TestSchedulerSequencing(unittest.TestCase):
         self.assertEqual(aps._phase2_tardiness_bound(120, "FEASIBLE"), 150)
         self.assertEqual(aps._phase2_tardiness_bound(120, "UNKNOWN"), 150)
 
+    def test_candidate_order_can_be_deferred_without_invalidating_schedule(self):
+        must = _make_order("ORD-MUST")
+        candidate = _make_order(
+            "ORD-CANDIDATE",
+            planningBucket="candidate",
+            materialAvailableMins=999999,
+        )
+        machine = _make_machine()
+        aps = AdvancedMedicalAPS(
+            _make_setup_mgr(),
+            candidate_acceptance_policy={"reject_penalty": 1},
+        )
+
+        result = aps.run([must, candidate], [machine])
+
+        self.assertIn(result.status, {"OPTIMAL", "FEASIBLE", "PARTIAL"})
+        self.assertEqual(result.validation_errors, [])
+        self.assertEqual([task.order.order_id for task in result.tasks], ["ORD-MUST"])
+        self.assertEqual(result.input_order_count, 2)
+        self.assertEqual(result.schedulable_order_count, 2)
+        self.assertEqual(len(result.deferred_orders), 1)
+        self.assertEqual(result.deferred_orders[0]["order_id"], "ORD-CANDIDATE")
+        self.assertEqual(result.deferred_orders[0]["planning_bucket"], "candidate")
+
     def test_solver_profile_policy_sets_cp_sat_parameters(self):
         aps = AdvancedMedicalAPS(
             _make_setup_mgr(),

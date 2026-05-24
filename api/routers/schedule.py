@@ -172,6 +172,7 @@ class ScheduleSettingsPayload(BaseModel):
     solver_log_search_progress: Optional[bool] = None
     planning_must_schedule_horizon_days: Optional[int] = None
     planning_candidate_horizon_days: Optional[int] = None
+    candidate_reject_penalty: Optional[int] = None
     change_reason: Optional[str] = None
 
 
@@ -202,6 +203,7 @@ POLICY_VALUE_KEYS = (
     "solver_log_search_progress",
     "planning_must_schedule_horizon_days",
     "planning_candidate_horizon_days",
+    "candidate_reject_penalty",
 )
 
 
@@ -229,6 +231,7 @@ POLICY_DEFAULTS = {
     "solver_log_search_progress": False,
     "planning_must_schedule_horizon_days": 3,
     "planning_candidate_horizon_days": 14,
+    "candidate_reject_penalty": 10_000_000,
 }
 
 
@@ -314,6 +317,7 @@ def _ensure_planning_schema_locked(db):
             solver_log_search_progress          BOOLEAN NOT NULL DEFAULT FALSE,
             planning_must_schedule_horizon_days INTEGER NOT NULL DEFAULT 3,
             planning_candidate_horizon_days     INTEGER NOT NULL DEFAULT 14,
+            candidate_reject_penalty            INTEGER NOT NULL DEFAULT 10000000,
             policy_version                      INTEGER NOT NULL DEFAULT 1,
             updated_by                          VARCHAR(50),
             change_reason                       TEXT,
@@ -339,6 +343,7 @@ def _ensure_planning_schema_locked(db):
             ADD COLUMN IF NOT EXISTS solver_log_search_progress BOOLEAN NOT NULL DEFAULT FALSE,
             ADD COLUMN IF NOT EXISTS planning_must_schedule_horizon_days INTEGER NOT NULL DEFAULT 3,
             ADD COLUMN IF NOT EXISTS planning_candidate_horizon_days INTEGER NOT NULL DEFAULT 14,
+            ADD COLUMN IF NOT EXISTS candidate_reject_penalty INTEGER NOT NULL DEFAULT 10000000,
             ADD COLUMN IF NOT EXISTS policy_version INTEGER NOT NULL DEFAULT 1,
             ADD COLUMN IF NOT EXISTS updated_by VARCHAR(50),
             ADD COLUMN IF NOT EXISTS change_reason TEXT
@@ -471,6 +476,7 @@ def _get_schedule_settings(db):
             solver_profile, solver_time_limit_seconds, solver_relative_gap_limit,
             solver_random_seed, solver_num_workers, solver_log_search_progress,
             planning_must_schedule_horizon_days, planning_candidate_horizon_days,
+            candidate_reject_penalty,
             policy_version, updated_by,
             change_reason, updated_at
         FROM schedule_settings WHERE id=TRUE
@@ -509,6 +515,9 @@ def _policy_snapshot(settings: dict, enabled_rule_counts: dict | None = None) ->
             "must_schedule_horizon_days": int(settings.get("planning_must_schedule_horizon_days") or 3),
             "candidate_horizon_days": int(settings.get("planning_candidate_horizon_days") or 14),
         },
+        "candidate_acceptance": {
+            "reject_penalty": int(settings.get("candidate_reject_penalty") or 10_000_000),
+        },
         "enabled_rule_counts": enabled_rule_counts or {},
         "runtime_rule_source": "db_only",
         "fallback_setup_used": False,
@@ -532,6 +541,8 @@ def _policy_snapshot_mismatch(saved: dict | None, current: dict | None) -> str |
         return "求解 profile 已变化，请重新预排后再发布。"
     if (saved.get("planning_bucket") or {}) != (current.get("planning_bucket") or {}):
         return "计划窗口策略已变化，请重新预排后再发布。"
+    if (saved.get("candidate_acceptance") or {}) != (current.get("candidate_acceptance") or {}):
+        return "candidate acceptance policy changed; rerun pre-schedule before publishing."
     if (saved.get("enabled_rule_counts") or {}) != (current.get("enabled_rule_counts") or {}):
         return "启用规则数量已变化，请重新预排后再发布。"
     return None
@@ -568,6 +579,9 @@ def _build_scheduler(setup_mgr, settings: dict) -> AdvancedMedicalAPS:
             "random_seed": int(settings.get("solver_random_seed") or 0),
             "num_workers": int(settings.get("solver_num_workers") or 8),
             "log_search_progress": bool(settings.get("solver_log_search_progress", False)),
+        },
+        candidate_acceptance_policy={
+            "reject_penalty": int(settings.get("candidate_reject_penalty") or 10_000_000),
         },
     )
 
@@ -3091,6 +3105,9 @@ def update_schedule_settings(
             assignments.append(f"{key}=%s")
             params.append(max(0, int(value)))
         elif key == "planning_candidate_horizon_days":
+            assignments.append(f"{key}=%s")
+            params.append(max(0, int(value)))
+        elif key == "candidate_reject_penalty":
             assignments.append(f"{key}=%s")
             params.append(max(0, int(value)))
         elif key == "continuous_run_enforcement_mode":
