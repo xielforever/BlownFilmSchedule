@@ -504,6 +504,12 @@ class AdvancedMedicalAPS:
 
         orders = schedulable_orders
         n = len(orders)
+        schedulable_order_ids = {order.order_id for order in orders}
+        external_locked_tasks = [
+            task
+            for task in locked_tasks
+            if task.order.order_id not in schedulable_order_ids
+        ]
 
         # ─── 能力硬过滤：订单→可用机台列表 ───
         eligible: Dict[int, List[int]] = {}
@@ -559,6 +565,7 @@ class AdvancedMedicalAPS:
             orders, machines, eligible, setup_cache, duration_cache,
             H, phase=1, tardiness_bound=None,
             locked_tasks_by_order_id=locked_tasks_by_order_id,
+            external_locked_tasks=external_locked_tasks,
         )
         result.solver_metrics["phase_1"] = getattr(self, "_last_phase_metrics", {})
 
@@ -599,6 +606,7 @@ class AdvancedMedicalAPS:
             orders, machines, eligible, setup_cache, duration_cache,
             H, phase=2, tardiness_bound=phase2_tardiness_bound,
             locked_tasks_by_order_id=locked_tasks_by_order_id,
+            external_locked_tasks=external_locked_tasks,
         )
         result.solver_metrics["phase_2"] = getattr(self, "_last_phase_metrics", {})
 
@@ -897,6 +905,7 @@ class AdvancedMedicalAPS:
         orders, machines, eligible, setup_cache, duration_cache,
         H, phase, tardiness_bound,
         locked_tasks_by_order_id=None,
+        external_locked_tasks=None,
     ):
         """
         构建并求解单阶段 CP-SAT 模型。
@@ -907,6 +916,10 @@ class AdvancedMedicalAPS:
         n = len(orders)
         model = cp_model.CpModel()
         locked_tasks_by_order_id = locked_tasks_by_order_id or {}
+        external_locked_tasks = external_locked_tasks or []
+        external_locked_tasks_by_machine_id: Dict[str, List[ScheduledTask]] = {}
+        for task in external_locked_tasks:
+            external_locked_tasks_by_machine_id.setdefault(task.machine.machine_id, []).append(task)
 
         # ─── 决策变量 ───
         presence = {}   # presence[i][m_idx] = BoolVar
@@ -1050,6 +1063,12 @@ class AdvancedMedicalAPS:
             model.add_circuit(arcs)
 
             machine_intervals = [intervals[i][m_idx] for i in m_orders]
+            for locked_task in external_locked_tasks_by_machine_id.get(m.machine_id, []):
+                machine_intervals.append(model.new_fixed_size_interval_var(
+                    locked_task.start_mins,
+                    locked_task.end_mins - locked_task.start_mins,
+                    f'locked_iv_{m_idx}_{locked_task.order.order_id}',
+                ))
             for fw in m.forbidden_calendar:
                 maintenance_interval = model.new_fixed_size_interval_var(
                     fw.start_mins,

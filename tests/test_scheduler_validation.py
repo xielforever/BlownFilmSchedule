@@ -194,6 +194,28 @@ class TestSchedulerSequencing(unittest.TestCase):
         self.assertNotEqual(task.start_mins, 999)
         self.assertNotEqual(task.end_mins, 1059)
 
+    def test_external_locked_task_blocks_machine_interval(self):
+        external_order = _make_order("ORD-EXTERNAL-LOCKED")
+        order = _make_order("ORD-AFTER-EXTERNAL")
+        machine = _make_machine()
+        locked_task = ScheduledTask(
+            external_order,
+            machine,
+            start_mins=120,
+            end_mins=240,
+            setup_time=0,
+            scrap_kg=0,
+            sequence_index=0,
+        )
+        aps = AdvancedMedicalAPS(_make_setup_mgr())
+
+        result = aps.run([order], [machine], locked_tasks=[locked_task])
+
+        self.assertIn(result.status, {"OPTIMAL", "FEASIBLE"})
+        task = result.tasks[0]
+        overlaps_locked = task.start_mins < locked_task.end_mins and task.end_mins > locked_task.start_mins
+        self.assertFalse(overlaps_locked)
+
     def test_validation_catches_machine_overlap(self):
         order_a = _make_order("ORD-A")
         order_b = _make_order("ORD-B")
