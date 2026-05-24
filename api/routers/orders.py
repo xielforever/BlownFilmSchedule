@@ -767,12 +767,15 @@ def create_order(
             impacted_draft_run_ids=[],
             changed_by=user.username,
         )
+        screening_result = _run_order_screening(db, order_ids=[payload.order_id], scope="selected")
+        screening_item = screening_result["items"][0] if screening_result.get("items") else None
         db.commit()
         return {
             "order_id": payload.order_id,
             "created": True,
             "revision_id": revision_id,
             "impacted_draft_run_ids": [],
+            "screening": screening_item,
         }
     except HTTPException:
         db.rollback()

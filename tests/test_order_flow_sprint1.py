@@ -277,6 +277,27 @@ class _FakeCursor:
             row = self.db.production_orders.get(order_id)
             self._rows = [dict(row)] if row else []
             return
+        if normalized.startswith("select o.*, coalesce(c.customer_class"):
+            order_ids = params[0] if params else list(self.db.production_orders)
+            rows = []
+            for order_id in order_ids:
+                row = self.db.production_orders.get(order_id)
+                if not row:
+                    continue
+                product_type = row["product_type"]
+                recipe_materials = self.db.recipes.get(product_type, [])
+                rows.append({
+                    **row,
+                    "customer_class": self.db.customers.get(row["customer_id"], {}).get("customer_class", "STANDARD"),
+                    "product_exists": product_type in self.db.products,
+                    "recipe_layers": len(recipe_materials),
+                    "recipe_materials": recipe_materials,
+                })
+            self._rows = rows
+            return
+        if normalized.startswith("select machine_id, name, cleanroom_level") and "from machines" in normalized:
+            self._rows = [dict(row) for row in self.db.machines]
+            return
         if normalized.startswith("update production_orders set"):
             set_clause = sql.split("SET", 1)[1].split("WHERE", 1)[0]
             field_names = [
@@ -353,6 +374,22 @@ class _FakeDb:
         self.production_orders = {}
         self.products = set()
         self.customers = {}
+        self.machines = [
+            {
+                "machine_id": "LINE-A",
+                "name": "LINE-A",
+                "cleanroom_level": "Class_10K",
+                "layer_structure": 5,
+                "die_diameter_mm": 300,
+                "min_width": 100,
+                "max_width": 1500,
+                "min_thickness": 20,
+                "max_thickness": 80,
+                "hourly_output_kg": 600,
+                "max_slitting_lanes": 4,
+            }
+        ]
+        self.recipes = {"Film-A": ["L1", "L2", "L3", "L4", "L5"]}
         self.schedule_runs = []
         self.order_revision_audit = []
         self.schedule_settings = {
@@ -407,6 +444,7 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         self.assertTrue(result["created"])
         self.assertEqual(result["order_id"], "ORD-NEW-001")
         self.assertEqual(result["impacted_draft_run_ids"], [])
+        self.assertEqual(result["screening"]["screening_status"], "ready")
         self.assertEqual(db.production_orders["ORD-NEW-001"]["status"], "PENDING")
         self.assertEqual(len(db.order_revision_audit), 1)
         self.assertEqual(db.order_revision_audit[0]["action_type"], "CREATE")
