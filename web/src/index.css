@@ -269,6 +269,18 @@ h1, h2, h3, h4, h5, h6, .kpi-value, .machine-name {
   transition: background 0.2s;
 }
 .data-table tr:hover td { background: rgba(14, 165, 233, 0.05); }
+.screening-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  max-width: 220px;
+}
+.screening-cell small {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
 .table-card { padding: 0; overflow: hidden; }
 .table-footer {
   display: flex;

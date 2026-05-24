@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getOrders, screenOrders } from '../api/client';
+import { screeningDetailLines } from './ordersViewModel';
 
 const PAGE_SIZE = 50;
 const statusOptions = ['', 'PENDING', 'SCHEDULED', 'IN_PRODUCTION', 'COMPLETED', 'CANCELLED'];
@@ -24,10 +25,14 @@ function ScreeningBadge({ item }) {
     risk: 'badge-urgent',
     blocked: 'badge-pending',
   }[item.screening_status] || 'badge-pending';
+  const detailLines = screeningDetailLines(item);
   return (
-    <span className={`badge ${cls}`} title={item.root_cause}>
-      {screeningLabels[item.screening_status] || item.screening_status}
-    </span>
+    <div className="screening-cell">
+      <span className={`badge ${cls}`} title={item.root_cause}>
+        {screeningLabels[item.screening_status] || item.screening_status}
+      </span>
+      {detailLines.map(line => <small key={line}>{line}</small>)}
+    </div>
   );
 }
 
