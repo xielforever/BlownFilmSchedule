@@ -690,6 +690,8 @@ def _filter_screening_result(result: dict, screening_status: str | None) -> dict
 @router.get("")
 def list_orders(
     status: str = None,
+    screening_status: Optional[str] = None,
+    screening_stale: Optional[bool] = None,
     q: Optional[str] = Query(default=None, min_length=1),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=50, ge=1, le=500),
@@ -702,6 +704,15 @@ def list_orders(
     if status:
         where_clauses.append("o.status=%s")
         params.append(status)
+    if screening_status:
+        normalized_screening_status = screening_status.lower()
+        if normalized_screening_status not in {"ready", "risk", "blocked"}:
+            raise HTTPException(status_code=400, detail="Invalid screening status.")
+        where_clauses.append("LOWER(osc.screening_status)=%s")
+        params.append(normalized_screening_status)
+    if screening_stale is not None:
+        where_clauses.append("COALESCE(osc.is_stale, FALSE)=%s")
+        params.append(bool(screening_stale))
     if q:
         like = f"%{q.strip()}%"
         where_clauses.append(

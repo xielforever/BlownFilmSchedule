@@ -339,9 +339,28 @@ class _FakeCursor:
             self._rows = [dict(row) for row in self.db.machines]
             return
         if "from production_orders o" in normalized and "limit %s offset %s" in normalized:
+            param_index = 0
+            status_filter = None
+            screening_status_filter = None
+            screening_stale_filter = None
+            if "o.status=%s" in normalized:
+                status_filter = params[param_index]
+                param_index += 1
+            if "lower(osc.screening_status)=%s" in normalized:
+                screening_status_filter = params[param_index]
+                param_index += 1
+            if "coalesce(osc.is_stale, false)=%s" in normalized:
+                screening_stale_filter = params[param_index]
+                param_index += 1
             rows = []
             for row in self.db.production_orders.values():
                 cache = self.db.order_screening_cache.get(row["order_id"], {})
+                if status_filter and row["status"] != status_filter:
+                    continue
+                if screening_status_filter and (cache.get("screening_status") or "").lower() != screening_status_filter:
+                    continue
+                if screening_stale_filter is not None and bool(cache.get("is_stale")) is not bool(screening_stale_filter):
+                    continue
                 rows.append({
                     **row,
                     "customer_name": self.db.customers.get(row["customer_id"], {}).get("customer_name"),
@@ -361,7 +380,30 @@ class _FakeCursor:
             self._rows = sorted(rows, key=lambda item: item["due_date"])
             return
         if normalized.startswith("select count(distinct o.order_id) as cnt"):
-            self._rows = [{"cnt": len(self.db.production_orders)}]
+            param_index = 0
+            status_filter = None
+            screening_status_filter = None
+            screening_stale_filter = None
+            if "o.status=%s" in normalized:
+                status_filter = params[param_index]
+                param_index += 1
+            if "lower(osc.screening_status)=%s" in normalized:
+                screening_status_filter = params[param_index]
+                param_index += 1
+            if "coalesce(osc.is_stale, false)=%s" in normalized:
+                screening_stale_filter = params[param_index]
+                param_index += 1
+            count = 0
+            for row in self.db.production_orders.values():
+                cache = self.db.order_screening_cache.get(row["order_id"], {})
+                if status_filter and row["status"] != status_filter:
+                    continue
+                if screening_status_filter and (cache.get("screening_status") or "").lower() != screening_status_filter:
+                    continue
+                if screening_stale_filter is not None and bool(cache.get("is_stale")) is not bool(screening_stale_filter):
+                    continue
+                count += 1
+            self._rows = [{"cnt": count}]
             return
         if normalized.startswith("update production_orders set"):
             set_clause = sql.split("SET", 1)[1].split("WHERE", 1)[0]
@@ -777,6 +819,55 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
             result["items"][0]["screening"]["stale_reason"],
             "machine_capability_changed",
         )
+
+    def test_list_orders_filters_by_screening_status_and_stale_flag(self):
+        db = _FakeDb()
+        db.products.add("Film-A")
+        for order_id, width in [("ORD-LIST-READY", 500), ("ORD-LIST-BLOCKED", 9999)]:
+            db.production_orders[order_id] = {
+                "order_id": order_id,
+                "customer_id": "STANDARD",
+                "product_type": "Film-A",
+                "target_width": width,
+                "target_thickness": 35,
+                "total_quantity_kg": 1200,
+                "cleanroom_req": "Class_10K",
+                "order_class": "NORMAL",
+                "corona_req": False,
+                "core_size_inch": 3,
+                "order_date": None,
+                "due_date": datetime(2026, 5, 28, 8, 30, tzinfo=timezone.utc),
+                "material_available_time": None,
+                "status": "PENDING",
+                "priority_override": None,
+                "created_at": datetime(2026, 5, 22, 8, 0, tzinfo=timezone.utc),
+                "updated_at": datetime(2026, 5, 22, 8, 0, tzinfo=timezone.utc),
+            }
+        db.order_screening_cache["ORD-LIST-READY"] = {
+            "screening_status": "ready",
+            "is_stale": False,
+        }
+        db.order_screening_cache["ORD-LIST-BLOCKED"] = {
+            "screening_status": "blocked",
+            "code": "no_eligible_machine",
+            "root_cause": "幅宽超出机台能力",
+            "is_stale": True,
+            "stale_reason": "machine_capability_changed",
+        }
+
+        result = orders_router.list_orders(
+            status="PENDING",
+            screening_status="blocked",
+            screening_stale=True,
+            q=None,
+            page=1,
+            size=50,
+            db=db,
+        )
+
+        self.assertEqual(result["total"], 1)
+        self.assertEqual([item["order_id"] for item in result["items"]], ["ORD-LIST-BLOCKED"])
+        self.assertIs(result["items"][0]["screening"]["is_stale"], True)
 
     def test_mark_order_screening_cache_stale_marks_requested_orders(self):
         db = _FakeDb()
