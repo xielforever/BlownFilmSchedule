@@ -172,6 +172,52 @@ class TestMachineStateHelpers(unittest.TestCase):
         mark_stale.assert_called_once_with(db.cursor_obj, reason="machine_state_changed")
         self.assertEqual(db.commit_count, 1)
 
+    def test_apply_schedule_end_state_without_rows_does_not_mark_screening_cache_stale(self):
+        class Cursor:
+            def __init__(self):
+                self.rows = []
+
+            def execute(self, sql, params=None):
+                normalized = " ".join(sql.split()).lower()
+                if normalized.startswith("select run_id from schedule_runs"):
+                    self.rows = [{"run_id": 8}]
+                    return
+                if normalized.startswith("select machine_id, coalesce(continuous_run_mins"):
+                    self.rows = []
+                    return
+                self.rows = []
+
+            def fetchone(self):
+                return self.rows[0] if self.rows else None
+
+            def fetchall(self):
+                return list(self.rows)
+
+        class Db:
+            def __init__(self):
+                self.cursor_obj = Cursor()
+                self.commit_count = 0
+
+            def cursor(self):
+                return self.cursor_obj
+
+            def commit(self):
+                self.commit_count += 1
+
+        db = Db()
+
+        with patch.object(machines_router, "_mark_order_screening_cache_stale") as mark_stale:
+            result = machines_router.apply_schedule_end_state(
+                run_id=8,
+                db=db,
+                _=SimpleNamespace(username="planner"),
+            )
+
+        self.assertEqual(result["run_id"], 8)
+        self.assertEqual(result["applied_count"], 0)
+        mark_stale.assert_not_called()
+        self.assertEqual(db.commit_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
