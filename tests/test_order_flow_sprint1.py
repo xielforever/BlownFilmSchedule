@@ -166,6 +166,9 @@ class _FakeCursor:
         if normalized.startswith("create table if not exists order_screening_cache"):
             self._rows = []
             return
+        if normalized.startswith("create table if not exists order_screening_override_audit"):
+            self._rows = []
+            return
         if normalized.startswith("create index if not exists idx_order_revision_audit_order"):
             self._rows = []
             return
@@ -173,6 +176,9 @@ class _FakeCursor:
             self._rows = []
             return
         if normalized.startswith("create index if not exists idx_order_screening_cache_status"):
+            self._rows = []
+            return
+        if normalized.startswith("create index if not exists idx_order_screening_override_order"):
             self._rows = []
             return
         if normalized.startswith("alter table schedule_runs"):
@@ -539,6 +545,37 @@ class _FakeCursor:
             self._rows = []
             self.rowcount = 1
             return
+        if normalized.startswith("insert into order_screening_override_audit"):
+            (
+                order_id,
+                screening_status,
+                screening_code,
+                override_policy,
+                reason_code,
+                reason_text,
+                mode,
+                policy_version,
+                actor,
+                details,
+            ) = params
+            row = {
+                "id": self.db.next_screening_override_audit_id,
+                "order_id": order_id,
+                "screening_status": screening_status,
+                "screening_code": screening_code,
+                "override_policy": override_policy,
+                "reason_code": reason_code,
+                "reason_text": reason_text,
+                "mode": mode,
+                "policy_version": policy_version,
+                "actor": actor,
+                "details": self._unwrap(details),
+            }
+            self.db.next_screening_override_audit_id += 1
+            self.db.order_screening_override_audit.append(row)
+            self._rows = [{"id": row["id"]}]
+            self.rowcount = 1
+            return
         if normalized.startswith("update order_screening_cache"):
             reason = params[0]
             order_ids = params[1] if len(params) > 1 else list(self.db.order_screening_cache)
@@ -593,6 +630,7 @@ class _FakeDb:
         self.order_ingestion_batches = []
         self.order_ingestion_rows = []
         self.order_screening_cache = {}
+        self.order_screening_override_audit = []
         self.config_change_audit = []
         self.schedule_settings = {
             "policy_version": 1,
@@ -613,6 +651,7 @@ class _FakeDb:
         }
         self.next_audit_id = 1
         self.next_batch_id = 1
+        self.next_screening_override_audit_id = 1
         self.commit_count = 0
         self.rollback_count = 0
 
@@ -779,6 +818,94 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
 
         self.assertEqual(result["items"][0]["screening_status"], "ready")
         self.assertEqual(db.order_screening_cache["ORD-BULK-READY"]["screening_status"], "ready")
+
+    def test_screening_override_requires_reason_and_writes_audit(self):
+        db = _FakeDb()
+        db.products.add("Film-A")
+        db.production_orders["ORD-RISK-OVERRIDE"] = {
+            "order_id": "ORD-RISK-OVERRIDE",
+            "customer_id": "STANDARD",
+            "product_type": "Film-A",
+            "target_width": 520,
+            "target_thickness": 35,
+            "total_quantity_kg": 1200,
+            "cleanroom_req": "Class_10K",
+            "order_class": "NORMAL",
+            "corona_req": False,
+            "core_size_inch": 3,
+            "order_date": None,
+            "due_date": datetime(2026, 5, 17, 10, 30, tzinfo=timezone.utc),
+            "material_available_time": None,
+            "status": "PENDING",
+            "priority_override": None,
+            "created_at": datetime(2026, 5, 22, 8, 0, tzinfo=timezone.utc),
+            "updated_at": datetime(2026, 5, 22, 8, 0, tzinfo=timezone.utc),
+        }
+
+        with self.assertRaises(HTTPException) as missing_reason:
+            orders_router.create_order_screening_override(
+                "ORD-RISK-OVERRIDE",
+                orders_router.OrderScreeningOverridePayload(reason_text=" "),
+                db=db,
+                user=SimpleNamespace(username="planner"),
+            )
+
+        self.assertEqual(missing_reason.exception.status_code, 400)
+        self.assertEqual(len(db.order_screening_override_audit), 0)
+
+        result = orders_router.create_order_screening_override(
+            "ORD-RISK-OVERRIDE",
+            orders_router.OrderScreeningOverridePayload(reason_text="客户确认急单插入，接受延期风险"),
+            db=db,
+            user=SimpleNamespace(username="planner"),
+        )
+
+        self.assertEqual(result["order_id"], "ORD-RISK-OVERRIDE")
+        self.assertEqual(result["override"]["policy"], "restricted")
+        self.assertEqual(result["override_audit_id"], 1)
+        self.assertEqual(len(db.order_screening_override_audit), 1)
+        audit = db.order_screening_override_audit[0]
+        self.assertEqual(audit["order_id"], "ORD-RISK-OVERRIDE")
+        self.assertEqual(audit["screening_status"], "risk")
+        self.assertEqual(audit["override_policy"], "restricted")
+        self.assertEqual(audit["reason_text"], "客户确认急单插入，接受延期风险")
+        self.assertEqual(audit["policy_version"], 1)
+        self.assertEqual(audit["actor"], "planner")
+
+    def test_screening_override_rejects_prohibited_machine_capability_order(self):
+        db = _FakeDb()
+        db.products.add("Film-A")
+        db.production_orders["ORD-WIDE-NO-OVERRIDE"] = {
+            "order_id": "ORD-WIDE-NO-OVERRIDE",
+            "customer_id": "STANDARD",
+            "product_type": "Film-A",
+            "target_width": 9999,
+            "target_thickness": 35,
+            "total_quantity_kg": 1200,
+            "cleanroom_req": "Class_10K",
+            "order_class": "NORMAL",
+            "corona_req": False,
+            "core_size_inch": 3,
+            "order_date": None,
+            "due_date": datetime(2026, 5, 28, 8, 30, tzinfo=timezone.utc),
+            "material_available_time": None,
+            "status": "PENDING",
+            "priority_override": None,
+            "created_at": datetime(2026, 5, 22, 8, 0, tzinfo=timezone.utc),
+            "updated_at": datetime(2026, 5, 22, 8, 0, tzinfo=timezone.utc),
+        }
+
+        with self.assertRaises(HTTPException) as ctx:
+            orders_router.create_order_screening_override(
+                "ORD-WIDE-NO-OVERRIDE",
+                orders_router.OrderScreeningOverridePayload(reason_text="业务要求强制排入"),
+                db=db,
+                user=SimpleNamespace(username="planner"),
+            )
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertEqual(ctx.exception.detail["code"], "screening_override_prohibited")
+        self.assertEqual(len(db.order_screening_override_audit), 0)
 
     def test_list_orders_exposes_cached_screening_status(self):
         db = _FakeDb()

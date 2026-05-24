@@ -103,6 +103,12 @@ class OrderScreeningPayload(BaseModel):
     screening_status: Optional[str] = None
 
 
+class OrderScreeningOverridePayload(BaseModel):
+    reason_text: str = ""
+    reason_code: str = "SCREENING_OVERRIDE"
+    mode: str = "formal"
+
+
 class OrderImportPreviewPayload(BaseModel):
     rows: list[dict[str, Any]] = Field(default_factory=list)
     conflict_policy: str = "reject_duplicates"
@@ -230,6 +236,30 @@ def _ensure_order_screening_schema(db) -> None:
     cur.execute("""
         CREATE INDEX IF NOT EXISTS idx_order_screening_cache_status
         ON order_screening_cache(screening_status, is_stale)
+    """)
+
+
+def _ensure_order_screening_override_schema(db) -> None:
+    cur = db.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS order_screening_override_audit (
+            id                  SERIAL       PRIMARY KEY,
+            order_id            VARCHAR(20)  NOT NULL REFERENCES production_orders(order_id),
+            screening_status    VARCHAR(20)  NOT NULL,
+            screening_code      VARCHAR(80),
+            override_policy     VARCHAR(30)  NOT NULL,
+            reason_code         VARCHAR(80)  NOT NULL,
+            reason_text         TEXT         NOT NULL,
+            mode                VARCHAR(30)  NOT NULL DEFAULT 'formal',
+            policy_version      INTEGER      NOT NULL DEFAULT 1,
+            actor               VARCHAR(50),
+            details             JSONB        NOT NULL DEFAULT '{}'::jsonb,
+            created_at          TIMESTAMPTZ  DEFAULT NOW()
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_order_screening_override_order
+        ON order_screening_override_audit(order_id, created_at DESC)
     """)
 
 
@@ -659,6 +689,41 @@ def _mark_order_screening_cache_stale(
     return int(getattr(cur, "rowcount", 0) or 0)
 
 
+def _insert_order_screening_override_audit(
+    cur,
+    *,
+    order_id: str,
+    screening_item: dict[str, Any],
+    override_decision: dict[str, Any],
+    payload: OrderScreeningOverridePayload,
+    policy_version: int,
+    actor: str,
+) -> int:
+    cur.execute("""
+        INSERT INTO order_screening_override_audit
+            (order_id, screening_status, screening_code, override_policy,
+             reason_code, reason_text, mode, policy_version, actor, details)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        RETURNING id
+    """, (
+        order_id,
+        screening_item.get("screening_status"),
+        screening_item.get("code"),
+        override_decision.get("policy"),
+        payload.reason_code,
+        payload.reason_text.strip(),
+        payload.mode,
+        policy_version,
+        actor,
+        Json({
+            "override_decision": override_decision,
+            "screening": screening_item,
+        }),
+    ))
+    row = cur.fetchone()
+    return int(row["id"] if isinstance(row, dict) else row[0])
+
+
 def _screening_summary(items: list[dict]) -> dict:
     return {
         "total_orders": len(items),
@@ -926,6 +991,77 @@ def get_order_screening(
         **result,
         "item": item,
     }
+
+
+@router.post("/{order_id}/screening-override")
+def create_order_screening_override(
+    order_id: str,
+    payload: OrderScreeningOverridePayload,
+    db=Depends(get_db),
+    user=Depends(require_role("admin", "planner")),
+):
+    mode = payload.mode.lower()
+    if mode not in {"formal", "experimental"}:
+        raise HTTPException(status_code=400, detail="Invalid screening override mode.")
+
+    _ensure_order_screening_schema(db)
+    _ensure_order_screening_override_schema(db)
+    cur = db.cursor()
+    try:
+        screening_result = _run_order_screening(db, order_ids=[order_id], scope="selected")
+        screening_item = screening_result["items"][0] if screening_result.get("items") else None
+        if not screening_item:
+            raise HTTPException(status_code=404, detail="Order not found.")
+        _persist_order_screening_result(cur, screening_result)
+
+        override_decision = screening_item.get("override_decision") or {}
+        if not override_decision.get("allowed"):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "screening_override_prohibited",
+                    "order_id": order_id,
+                    "override_decision": override_decision,
+                },
+            )
+        if override_decision.get("requires_reason") and not payload.reason_text.strip():
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "screening_override_reason_required",
+                    "order_id": order_id,
+                    "override_decision": override_decision,
+                },
+            )
+
+        cur.execute("SELECT policy_version FROM schedule_settings WHERE id=TRUE")
+        row = cur.fetchone() or {}
+        policy_version = int(row.get("policy_version") or 1)
+        payload = payload.model_copy(update={"mode": mode})
+        audit_id = _insert_order_screening_override_audit(
+            cur,
+            order_id=order_id,
+            screening_item=screening_item,
+            override_decision=override_decision,
+            payload=payload,
+            policy_version=policy_version,
+            actor=user.username,
+        )
+        db.commit()
+        return {
+            "order_id": order_id,
+            "override_audit_id": audit_id,
+            "override": override_decision,
+            "screening": screening_item,
+            "mode": mode,
+            "policy_version": policy_version,
+        }
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        raise
 
 
 @router.post("/import-preview")
