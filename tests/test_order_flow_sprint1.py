@@ -713,6 +713,8 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
 
         self.assertEqual(result["updated"], ["due_date", "target_width"])
         self.assertEqual(result["impacted_draft_run_ids"], [7])
+        self.assertEqual(result["screening"]["screening_status"], "ready")
+        self.assertEqual(db.order_screening_cache["ORD-REV-001"]["screening_status"], "ready")
         self.assertEqual(len(db.order_revision_audit), 1)
         audit = db.order_revision_audit[0]
         self.assertEqual(audit["action_type"], "UPDATE")

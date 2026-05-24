@@ -1029,6 +1029,7 @@ def update_order(
     _validate_order_enums(fields)
 
     _ensure_order_revision_schema(db)
+    _ensure_order_screening_schema(db)
     cur = db.cursor()
     try:
         cur.execute("SELECT * FROM production_orders WHERE order_id=%s", (order_id,))
@@ -1076,12 +1077,16 @@ def update_order(
             impacted_draft_run_ids=impacted_draft_run_ids,
             changed_by=user.username,
         )
+        screening_result = _run_order_screening(db, order_ids=[order_id], scope="selected")
+        screening_item = screening_result["items"][0] if screening_result.get("items") else None
+        _persist_order_screening_result(cur, screening_result)
         db.commit()
         return {
             "order_id": order_id,
             "updated": sorted(diff.keys()),
             "revision_id": revision_id,
             "impacted_draft_run_ids": impacted_draft_run_ids,
+            "screening": screening_item,
         }
     except HTTPException:
         db.rollback()
