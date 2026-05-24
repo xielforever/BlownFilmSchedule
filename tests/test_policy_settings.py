@@ -574,6 +574,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "machine_id": "LINE-A",
                 "start_time": "2026-05-17T08:00:00",
                 "end_time": "2026-05-17T10:00:00",
+                "setup_time_mins": 20,
                 "tardiness_mins": 0,
                 "manual_lock_machine": False,
                 "manual_lock_time": False,
@@ -582,6 +583,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "machine_id": "LINE-B",
                 "start_time": "2026-05-17T09:30:00",
                 "end_time": "2026-05-17T12:15:00",
+                "setup_time_mins": 50,
                 "tardiness_mins": 45,
                 "lock_machine": True,
                 "lock_time": True,
@@ -594,6 +596,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(impact["start_delta_mins"], 90)
         self.assertEqual(impact["end_delta_mins"], 135)
         self.assertEqual(impact["duration_delta_mins"], 45)
+        self.assertEqual(impact["setup_time_delta_mins"], 30)
         self.assertEqual(impact["tardiness_delta_mins"], 45)
         self.assertTrue(impact["lock_machine"])
         self.assertTrue(impact["lock_time"])
@@ -607,6 +610,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
                     "start_delta_mins": 90,
                     "end_delta_mins": 120,
                     "duration_delta_mins": 30,
+                    "setup_time_delta_mins": 40,
                     "tardiness_delta_mins": 45,
                     "lock_machine": True,
                     "lock_time": False,
@@ -619,6 +623,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
                     "start_delta_mins": -30,
                     "end_delta_mins": -15,
                     "duration_delta_mins": 15,
+                    "setup_time_delta_mins": -10,
                     "tardiness_delta_mins": -20,
                     "lock_machine": False,
                     "lock_time": True,
@@ -630,6 +635,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(summary["machine_change_count"], 1)
         self.assertEqual(summary["time_changed_count"], 2)
         self.assertEqual(summary["locked_after_adjustment_count"], 2)
+        self.assertEqual(summary["total_setup_time_delta_mins"], 30)
         self.assertEqual(summary["total_tardiness_delta_mins"], 25)
         self.assertEqual(summary["max_delay_delta_mins"], 120)
         self.assertEqual(summary["affected_order_ids"], ["ORD-A", "ORD-B"])

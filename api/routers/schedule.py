@@ -829,6 +829,8 @@ def _manual_adjustment_impact(before_state: dict[str, Any] | None, after_state: 
     after_end = _adjustment_datetime(after_state.get("end_time"))
     before_tardiness = int(before_state.get("tardiness_mins") or 0)
     after_tardiness = int(after_state.get("tardiness_mins") or before_tardiness)
+    before_setup = int(before_state.get("setup_time_mins") or 0)
+    after_setup = int(after_state.get("setup_time_mins") or before_setup)
     from_machine = before_state.get("machine_id")
     to_machine = after_state.get("machine_id")
     return {
@@ -842,6 +844,7 @@ def _manual_adjustment_impact(before_state: dict[str, Any] | None, after_state: 
             if _duration_between(before_start, before_end) is None or _duration_between(after_start, after_end) is None
             else _duration_between(after_start, after_end) - _duration_between(before_start, before_end)
         ),
+        "setup_time_delta_mins": after_setup - before_setup,
         "tardiness_delta_mins": after_tardiness - before_tardiness,
         "lock_machine": bool(after_state.get("lock_machine", after_state.get("manual_lock_machine", False))),
         "lock_time": bool(after_state.get("lock_time", after_state.get("manual_lock_time", False))),
@@ -853,6 +856,7 @@ def _manual_adjustment_impact_summary(adjustments: list[dict[str, Any]]) -> dict
     machine_change_count = 0
     time_changed_count = 0
     locked_after_adjustment_count = 0
+    total_setup_time_delta_mins = 0
     total_tardiness_delta_mins = 0
     delay_deltas = []
     for item in adjustments or []:
@@ -866,6 +870,7 @@ def _manual_adjustment_impact_summary(adjustments: list[dict[str, Any]]) -> dict
             time_changed_count += 1
         if impact.get("lock_machine") or impact.get("lock_time"):
             locked_after_adjustment_count += 1
+        total_setup_time_delta_mins += int(impact.get("setup_time_delta_mins") or 0)
         total_tardiness_delta_mins += int(impact.get("tardiness_delta_mins") or 0)
         for key in ("start_delta_mins", "end_delta_mins"):
             value = impact.get(key)
@@ -876,6 +881,7 @@ def _manual_adjustment_impact_summary(adjustments: list[dict[str, Any]]) -> dict
         "machine_change_count": machine_change_count,
         "time_changed_count": time_changed_count,
         "locked_after_adjustment_count": locked_after_adjustment_count,
+        "total_setup_time_delta_mins": total_setup_time_delta_mins,
         "total_tardiness_delta_mins": total_tardiness_delta_mins,
         "max_delay_delta_mins": max(delay_deltas) if delay_deltas else 0,
         "affected_order_ids": affected_order_ids,
@@ -3651,6 +3657,7 @@ def apply_manual_adjustment(
         "setup_start_time": candidate_busy_start.isoformat(),
         "start_time": payload.start_time.isoformat(),
         "end_time": payload.end_time.isoformat(),
+        "setup_time_mins": max(0, int((_as_naive(payload.start_time) - _as_naive(candidate_busy_start)).total_seconds() / 60)),
         "sequence_index": payload.sequence_index,
         "lock_machine": payload.lock_machine,
         "lock_time": payload.lock_time,
