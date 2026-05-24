@@ -863,10 +863,13 @@ def get_order_screening(
     db=Depends(get_db),
     _=Depends(get_current_user),
 ):
+    _ensure_order_screening_schema(db)
     result = _run_order_screening(db, order_ids=[order_id], scope="selected")
     item = result["items"][0] if result["items"] else None
     if not item:
         raise HTTPException(status_code=404, detail="Order not found.")
+    _persist_order_screening_result(db.cursor(), result)
+    db.commit()
     return {
         **result,
         "item": item,
