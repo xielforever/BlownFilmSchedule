@@ -767,7 +767,7 @@ class _FakeCursor:
                 for key, value in counts.items()
             ]
             return
-        if normalized.startswith("select coalesce(latest_action.assignee, 'unassigned')"):
+        if normalized.startswith("select coalesce(trim(latest_action.assignee), 'unassigned')"):
             param_index = 0
             status_filter = None
             screening_status_filter = None
@@ -846,7 +846,7 @@ class _FakeCursor:
                     and (latest_action.get("actor") or "").strip().lower() != screening_action_actor_filter
                 ):
                     continue
-                key = latest_action.get("assignee") or "unassigned"
+                key = (latest_action.get("assignee") or "").strip() or "unassigned"
                 counts[key] = counts.get(key, 0) + 1
             self._rows = [
                 {"assignee": key, "cnt": value}
@@ -2794,7 +2794,7 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
                 "action_type": "request_data_fix",
                 "handling_status": "in_progress",
                 "reason_text": "退回数据修正",
-                "assignee": "order-admin",
+                "assignee": " order-admin ",
                 "actor": "planner",
                 "details": {},
                 "created_at": datetime(2026, 5, 24, 8, 0, tzinfo=timezone.utc),
