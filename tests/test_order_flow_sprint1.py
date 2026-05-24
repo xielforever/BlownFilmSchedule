@@ -1536,8 +1536,13 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         status_values = [item["value"] for item in result["handling_statuses"]]
         self.assertIn("request_data_fix", action_values)
         self.assertIn("mark_resolved", action_values)
+        self.assertIn("unhandled", status_values)
         self.assertIn("in_progress", status_values)
         self.assertIn("resolved", status_values)
+        self.assertEqual(
+            next(item for item in result["handling_statuses"] if item["value"] == "unhandled")["label"],
+            "未处理",
+        )
         self.assertEqual(
             next(item for item in result["action_types"] if item["value"] == "request_data_fix")["label"],
             "退回订单数据修正",

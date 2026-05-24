@@ -32,6 +32,10 @@ SCREENING_HANDLING_STATUS_OPTIONS = (
     ("waiting_external", "等待外部确认"),
     ("resolved", "已处理"),
 )
+SCREENING_ACTION_FILTER_STATUS_OPTIONS = (
+    ("unhandled", "未处理"),
+    *SCREENING_HANDLING_STATUS_OPTIONS,
+)
 SCREENING_ACTION_TYPES = {value for value, _ in SCREENING_ACTION_TYPE_OPTIONS}
 SCREENING_HANDLING_STATUSES = {value for value, _ in SCREENING_HANDLING_STATUS_OPTIONS}
 ORDER_SCHEDULING_FIELDS = {
@@ -1296,7 +1300,7 @@ def get_order_screening_action_options(
         ],
         "handling_statuses": [
             {"value": value, "label": label}
-            for value, label in SCREENING_HANDLING_STATUS_OPTIONS
+            for value, label in SCREENING_ACTION_FILTER_STATUS_OPTIONS
         ],
     }
 
