@@ -365,6 +365,30 @@ class TestSchedulerSequencing(unittest.TestCase):
         }
         self.assertGreaterEqual(len(scheduled_candidate_ids), 1)
 
+    def test_model_size_records_candidate_acceptance_policy(self):
+        orders = [
+            _make_order("ORD-METRIC-MUST"),
+            _make_order("ORD-METRIC-CANDIDATE", planningBucket="candidate"),
+        ]
+        machine = _make_machine()
+        aps = AdvancedMedicalAPS(
+            _make_setup_mgr(),
+            candidate_acceptance_policy={
+                "reject_penalty": 123,
+                "max_deferred_count": 1,
+            },
+        )
+
+        result = aps.run(orders, [machine])
+
+        self.assertEqual(
+            result.solver_metrics["model_size"]["candidate_acceptance_policy"],
+            {
+                "reject_penalty": 123,
+                "max_deferred_count": 1,
+            },
+        )
+
     def test_solver_profile_policy_sets_cp_sat_parameters(self):
         aps = AdvancedMedicalAPS(
             _make_setup_mgr(),

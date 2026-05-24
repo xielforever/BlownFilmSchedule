@@ -910,6 +910,7 @@ class AdvancedMedicalAPS:
             "arc_count": arc_count,
             "pruned_arc_count": pruned_arc_count,
             "setup_cache_size": len(setup_cache),
+            "candidate_acceptance_policy": dict(self.candidate_acceptance_policy),
             "locked_order_count": sum(
                 1 for order in orders if order.order_id in locked_tasks_by_order_id
             ),
