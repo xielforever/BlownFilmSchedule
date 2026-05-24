@@ -97,6 +97,23 @@ class TestOrderScreening(unittest.TestCase):
         self.assertEqual(item["screening_status"], "ready")
         self.assertEqual(item["code"], "ready")
 
+    def test_empty_policy_value_lists_fall_back_to_defaults(self):
+        order = _make_order("ORD-DEFAULT-STATUS")
+        result = screen_orders(
+            [order],
+            [_make_machine()],
+            status_by_order_id={"ORD-DEFAULT-STATUS": "PENDING"},
+            screening_policy={
+                "allowed_order_statuses": None,
+                "prohibited_override_codes": None,
+                "restricted_override_codes": None,
+            },
+        )
+
+        item = result["items"][0]
+        self.assertEqual(item["screening_status"], "ready")
+        self.assertEqual(item["code"], "ready")
+
     def test_missing_recipe_blocks_order(self):
         order = _make_order("ORD-NO-RECIPE", recipe_materials=[])
         result = screen_orders([order], [_make_machine()])

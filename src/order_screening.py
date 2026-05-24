@@ -324,6 +324,8 @@ def _normalize_screening_policy(policy: Optional[dict] = None) -> dict:
 
 
 def _normalize_policy_values(values, *, transform=str.lower) -> set[str]:
+    if values is None:
+        return set()
     if isinstance(values, str):
         values = [values]
     return {
