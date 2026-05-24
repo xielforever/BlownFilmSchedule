@@ -18,15 +18,22 @@ router = APIRouter(prefix="/api/orders", tags=["Orders"])
 ORDER_ALLOWED_STATUS = {"PENDING", "SCHEDULED", "IN_PRODUCTION", "COMPLETED", "CANCELLED"}
 ORDER_ALLOWED_CLASS = {"URGENT", "NORMAL", "SAMPLE"}
 ORDER_ALLOWED_CLEANROOM = {"Class_10K", "Class_100K"}
-SCREENING_ACTION_TYPES = {
-    "request_data_fix",
-    "update_master_data",
-    "confirm_material",
-    "reconfirm_due_date",
-    "mark_reviewed",
-    "mark_resolved",
-}
-SCREENING_HANDLING_STATUSES = {"open", "in_progress", "waiting_external", "resolved"}
+SCREENING_ACTION_TYPE_OPTIONS = (
+    ("request_data_fix", "退回订单数据修正"),
+    ("update_master_data", "维护机台/工艺主数据"),
+    ("confirm_material", "确认物料方案"),
+    ("reconfirm_due_date", "重新确认交期"),
+    ("mark_reviewed", "标记已复核"),
+    ("mark_resolved", "标记已处理"),
+)
+SCREENING_HANDLING_STATUS_OPTIONS = (
+    ("open", "待处理"),
+    ("in_progress", "处理中"),
+    ("waiting_external", "等待外部确认"),
+    ("resolved", "已处理"),
+)
+SCREENING_ACTION_TYPES = {value for value, _ in SCREENING_ACTION_TYPE_OPTIONS}
+SCREENING_HANDLING_STATUSES = {value for value, _ in SCREENING_HANDLING_STATUS_OPTIONS}
 ORDER_SCHEDULING_FIELDS = {
     "product_type",
     "target_width",
@@ -1243,6 +1250,22 @@ def get_order_screening(
     return {
         **result,
         "item": item,
+    }
+
+
+@router.get("/screening-action-options")
+def get_order_screening_action_options(
+    _=Depends(get_current_user),
+):
+    return {
+        "action_types": [
+            {"value": value, "label": label}
+            for value, label in SCREENING_ACTION_TYPE_OPTIONS
+        ],
+        "handling_statuses": [
+            {"value": value, "label": label}
+            for value, label in SCREENING_HANDLING_STATUS_OPTIONS
+        ],
     }
 
 

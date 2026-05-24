@@ -1420,6 +1420,26 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         self.assertEqual(result["items"][0]["reason_text"], "订单宽度已修正")
         self.assertEqual(result["items"][1]["actor"], "planner-a")
 
+    def test_screening_action_options_are_exposed_for_ui_configuration(self):
+        result = orders_router.get_order_screening_action_options(
+            _=SimpleNamespace(username="planner"),
+        )
+
+        action_values = [item["value"] for item in result["action_types"]]
+        status_values = [item["value"] for item in result["handling_statuses"]]
+        self.assertIn("request_data_fix", action_values)
+        self.assertIn("mark_resolved", action_values)
+        self.assertIn("in_progress", status_values)
+        self.assertIn("resolved", status_values)
+        self.assertEqual(
+            next(item for item in result["action_types"] if item["value"] == "request_data_fix")["label"],
+            "退回订单数据修正",
+        )
+        self.assertEqual(
+            next(item for item in result["handling_statuses"] if item["value"] == "waiting_external")["label"],
+            "等待外部确认",
+        )
+
     def test_list_orders_filters_by_latest_screening_action_status(self):
         db = _FakeDb()
         db.products.add("Film-A")
