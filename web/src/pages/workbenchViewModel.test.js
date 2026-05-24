@@ -30,3 +30,10 @@ test('matchesScreeningFilter treats schedulable as ready or risk only', () => {
   assert.equal(matchesScreeningFilter('blocked', 'blocked'), true);
   assert.equal(matchesScreeningFilter('ready', ''), true);
 });
+
+test('matchesScreeningFilter separates stale screening results from schedulable pool', () => {
+  assert.equal(matchesScreeningFilter({ screening_status: 'ready', is_stale: true }, 'schedulable'), false);
+  assert.equal(matchesScreeningFilter({ screening_status: 'risk', is_stale: false }, 'schedulable'), true);
+  assert.equal(matchesScreeningFilter({ screening_status: 'blocked', is_stale: true }, 'stale'), true);
+  assert.equal(matchesScreeningFilter({ screening_status: 'ready', is_stale: false }, 'stale'), false);
+});

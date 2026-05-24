@@ -587,7 +587,7 @@ export default function ScheduleWorkbench() {
     return orders.filter(order => {
       if (orderClassFilter && order.order_class !== orderClassFilter) return false;
       if (cleanroomFilter && order.cleanroom_req !== cleanroomFilter) return false;
-      if (!matchesScreeningFilter(screeningByOrderId.get(order.order_id)?.screening_status, screeningFilter)) return false;
+      if (!matchesScreeningFilter(screeningByOrderId.get(order.order_id), screeningFilter)) return false;
       if (!query) return true;
       return [
         order.order_id,
@@ -1517,6 +1517,7 @@ export default function ScheduleWorkbench() {
           </select>
           <select value={screeningFilter} data-testid="workbench-filter-screening" onChange={event => setScreeningFilter(event.target.value)}>
             <option value="schedulable">可排订单池</option>
+            <option value="stale">{'\u9700\u91cd\u65b0\u7b5b\u9009'}</option>
             <option value="blocked">异常/阻断订单</option>
             <option value="">全部初筛</option>
             {Object.entries(screeningLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}

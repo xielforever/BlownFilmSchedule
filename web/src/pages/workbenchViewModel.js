@@ -224,8 +224,14 @@ export function isSelectableScreening(screening) {
   return isSelectableScreeningStatus(screening.screening_status);
 }
 
-export function matchesScreeningFilter(screeningStatus, filter) {
+export function matchesScreeningFilter(screeningOrStatus, filter) {
+  const screening = typeof screeningOrStatus === 'object' && screeningOrStatus !== null
+    ? screeningOrStatus
+    : { screening_status: screeningOrStatus, is_stale: false };
+  const screeningStatus = screening.screening_status;
   if (!filter) return true;
+  if (filter === 'stale') return Boolean(screening.is_stale);
+  if (screening.is_stale) return false;
   if (filter === 'schedulable') return screeningStatus === 'ready' || screeningStatus === 'risk';
   return screeningStatus === filter;
 }
