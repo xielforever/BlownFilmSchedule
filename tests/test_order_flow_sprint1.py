@@ -169,6 +169,9 @@ class _FakeCursor:
         if normalized.startswith("create table if not exists order_screening_override_audit"):
             self._rows = []
             return
+        if normalized.startswith("create table if not exists order_screening_action_audit"):
+            self._rows = []
+            return
         if normalized.startswith("create index if not exists idx_order_revision_audit_order"):
             self._rows = []
             return
@@ -182,6 +185,9 @@ class _FakeCursor:
             self._rows = []
             return
         if normalized.startswith("create index if not exists idx_order_screening_override_order"):
+            self._rows = []
+            return
+        if normalized.startswith("create index if not exists idx_order_screening_action_order"):
             self._rows = []
             return
         if normalized.startswith("alter table order_screening_cache"):
@@ -391,6 +397,13 @@ class _FakeCursor:
                 ]
                 overrides.sort(key=lambda item: (item.get("created_at"), item["id"]), reverse=True)
                 latest_override = overrides[0] if overrides else {}
+                actions = [
+                    dict(item)
+                    for item in self.db.order_screening_action_audit
+                    if item["order_id"] == row["order_id"]
+                ]
+                actions.sort(key=lambda item: (item.get("created_at"), item["id"]), reverse=True)
+                latest_action = actions[0] if actions else {}
                 if status_filter and row["status"] != status_filter:
                     continue
                 if screening_status_filter and (cache.get("screening_status") or "").lower() != screening_status_filter:
@@ -428,6 +441,17 @@ class _FakeCursor:
                     "screening_override_actor": latest_override.get("actor"),
                     "screening_override_details": latest_override.get("details"),
                     "screening_override_created_at": latest_override.get("created_at"),
+                    "screening_action_id": latest_action.get("id"),
+                    "screening_action_status": latest_action.get("screening_status"),
+                    "screening_action_bucket": latest_action.get("business_bucket"),
+                    "screening_action_code": latest_action.get("screening_code"),
+                    "screening_action_type": latest_action.get("action_type"),
+                    "screening_action_handling_status": latest_action.get("handling_status"),
+                    "screening_action_reason_text": latest_action.get("reason_text"),
+                    "screening_action_assignee": latest_action.get("assignee"),
+                    "screening_action_actor": latest_action.get("actor"),
+                    "screening_action_details": latest_action.get("details"),
+                    "screening_action_created_at": latest_action.get("created_at"),
                 })
             self._rows = sorted(rows, key=lambda item: item["due_date"])
             return
@@ -630,6 +654,53 @@ class _FakeCursor:
             self._rows = [{"id": row["id"]}]
             self.rowcount = 1
             return
+        if normalized.startswith("select o.order_id, osc.screening_status, osc.business_bucket"):
+            order_id = params[0]
+            order = self.db.production_orders.get(order_id)
+            cache = self.db.order_screening_cache.get(order_id)
+            self._rows = [
+                {
+                    "order_id": order_id,
+                    "screening_status": cache.get("screening_status") if cache else None,
+                    "business_bucket": cache.get("business_bucket") if cache else None,
+                    "screening_code": cache.get("code") if cache else None,
+                    "root_cause": cache.get("root_cause") if cache else None,
+                    "screening_result": cache.get("result") if cache else None,
+                }
+            ] if order else []
+            return
+        if normalized.startswith("insert into order_screening_action_audit"):
+            (
+                order_id,
+                screening_status,
+                business_bucket,
+                screening_code,
+                action_type,
+                handling_status,
+                reason_text,
+                assignee,
+                actor,
+                details,
+            ) = params
+            row = {
+                "id": self.db.next_screening_action_audit_id,
+                "order_id": order_id,
+                "screening_status": screening_status,
+                "business_bucket": business_bucket,
+                "screening_code": screening_code,
+                "action_type": action_type,
+                "handling_status": handling_status,
+                "reason_text": reason_text,
+                "assignee": assignee,
+                "actor": actor,
+                "details": self._unwrap(details),
+                "created_at": datetime(2026, 5, 24, 10, 0, tzinfo=timezone.utc),
+            }
+            self.db.next_screening_action_audit_id += 1
+            self.db.order_screening_action_audit.append(row)
+            self._rows = [dict(row)]
+            self.rowcount = 1
+            return
         if normalized.startswith("select id, order_id, screening_status, screening_code, override_policy"):
             order_id = params[0]
             rows = [
@@ -708,6 +779,7 @@ class _FakeDb:
         self.order_ingestion_rows = []
         self.order_screening_cache = {}
         self.order_screening_override_audit = []
+        self.order_screening_action_audit = []
         self.config_change_audit = []
         self.schedule_settings = {
             "policy_version": 1,
@@ -729,6 +801,7 @@ class _FakeDb:
         self.next_audit_id = 1
         self.next_batch_id = 1
         self.next_screening_override_audit_id = 1
+        self.next_screening_action_audit_id = 1
         self.commit_count = 0
         self.rollback_count = 0
 
@@ -1205,6 +1278,67 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         self.assertEqual(override["policy_version"], 2)
         self.assertEqual(override["actor"], "planner-b")
         self.assertEqual(override["created_at"], "2026-05-24T09:00:00+00:00")
+
+    def test_screening_exception_action_writes_audit_and_updates_order_list(self):
+        db = _FakeDb()
+        db.products.add("Film-A")
+        db.production_orders["ORD-ACTION"] = {
+            "order_id": "ORD-ACTION",
+            "customer_id": "STANDARD",
+            "product_type": "Film-A",
+            "target_width": 9999,
+            "target_thickness": 35,
+            "total_quantity_kg": 1200,
+            "cleanroom_req": "Class_10K",
+            "order_class": "NORMAL",
+            "corona_req": False,
+            "core_size_inch": 3,
+            "order_date": None,
+            "due_date": datetime(2026, 5, 28, 8, 30, tzinfo=timezone.utc),
+            "material_available_time": None,
+            "status": "PENDING",
+            "priority_override": None,
+            "created_at": datetime(2026, 5, 22, 8, 0, tzinfo=timezone.utc),
+            "updated_at": datetime(2026, 5, 22, 8, 0, tzinfo=timezone.utc),
+        }
+        db.order_screening_cache["ORD-ACTION"] = {
+            "screening_status": "blocked",
+            "code": "no_eligible_machine",
+            "root_cause": "幅宽超出机台能力",
+            "business_bucket": "blocked_machine_capability",
+            "result": {"business_bucket": "blocked_machine_capability"},
+            "is_stale": False,
+        }
+
+        result = orders_router.create_order_screening_action(
+            "ORD-ACTION",
+            orders_router.OrderScreeningActionPayload(
+                action_type="request_data_fix",
+                handling_status="in_progress",
+                reason_text="目标幅宽疑似录入错误，已退回订单维护",
+                assignee="order-admin",
+            ),
+            db=db,
+            user=SimpleNamespace(username="planner"),
+        )
+
+        self.assertEqual(result["action_audit_id"], 1)
+        self.assertEqual(result["latest_action"]["action_type"], "request_data_fix")
+        self.assertEqual(result["latest_action"]["handling_status"], "in_progress")
+        self.assertEqual(result["latest_action"]["assignee"], "order-admin")
+        self.assertEqual(len(db.order_screening_action_audit), 1)
+        audit = db.order_screening_action_audit[0]
+        self.assertEqual(audit["order_id"], "ORD-ACTION")
+        self.assertEqual(audit["business_bucket"], "blocked_machine_capability")
+        self.assertEqual(audit["actor"], "planner")
+
+        list_result = orders_router.list_orders(status="PENDING", q=None, page=1, size=50, db=db)
+
+        latest_action = list_result["items"][0]["screening"]["latest_action"]
+        self.assertEqual(latest_action["id"], 1)
+        self.assertEqual(latest_action["action_type"], "request_data_fix")
+        self.assertEqual(latest_action["handling_status"], "in_progress")
+        self.assertEqual(latest_action["reason_text"], "目标幅宽疑似录入错误，已退回订单维护")
 
     def test_list_orders_filters_by_screening_status_bucket_and_stale_flag(self):
         db = _FakeDb()

@@ -18,6 +18,15 @@ router = APIRouter(prefix="/api/orders", tags=["Orders"])
 ORDER_ALLOWED_STATUS = {"PENDING", "SCHEDULED", "IN_PRODUCTION", "COMPLETED", "CANCELLED"}
 ORDER_ALLOWED_CLASS = {"URGENT", "NORMAL", "SAMPLE"}
 ORDER_ALLOWED_CLEANROOM = {"Class_10K", "Class_100K"}
+SCREENING_ACTION_TYPES = {
+    "request_data_fix",
+    "update_master_data",
+    "confirm_material",
+    "reconfirm_due_date",
+    "mark_reviewed",
+    "mark_resolved",
+}
+SCREENING_HANDLING_STATUSES = {"open", "in_progress", "waiting_external", "resolved"}
 ORDER_SCHEDULING_FIELDS = {
     "product_type",
     "target_width",
@@ -108,6 +117,13 @@ class OrderScreeningOverridePayload(BaseModel):
     reason_text: str = ""
     reason_code: str = "SCREENING_OVERRIDE"
     mode: str = "formal"
+
+
+class OrderScreeningActionPayload(BaseModel):
+    action_type: str
+    handling_status: str = "in_progress"
+    reason_text: str = Field(min_length=1)
+    assignee: Optional[str] = None
 
 
 class OrderImportPreviewPayload(BaseModel):
@@ -282,6 +298,30 @@ def _ensure_order_screening_override_schema(db) -> None:
     cur.execute("""
         CREATE INDEX IF NOT EXISTS idx_order_screening_override_order
         ON order_screening_override_audit(order_id, created_at DESC)
+    """)
+
+
+def _ensure_order_screening_action_schema(db) -> None:
+    cur = db.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS order_screening_action_audit (
+            id                  SERIAL       PRIMARY KEY,
+            order_id            VARCHAR(20)  NOT NULL REFERENCES production_orders(order_id),
+            screening_status    VARCHAR(20)  NOT NULL,
+            business_bucket     VARCHAR(80),
+            screening_code      VARCHAR(80),
+            action_type         VARCHAR(50)  NOT NULL,
+            handling_status     VARCHAR(30)  NOT NULL,
+            reason_text         TEXT         NOT NULL,
+            assignee            VARCHAR(80),
+            actor               VARCHAR(50),
+            details             JSONB        NOT NULL DEFAULT '{}'::jsonb,
+            created_at          TIMESTAMPTZ  DEFAULT NOW()
+        )
+    """)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_order_screening_action_order
+        ON order_screening_action_audit(order_id, created_at DESC)
     """)
 
 
@@ -803,6 +843,42 @@ def _latest_screening_override_from_order_row(row) -> dict[str, Any] | None:
     }
 
 
+def _screening_action_audit_row_to_dict(row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "order_id": row["order_id"],
+        "screening_status": row["screening_status"],
+        "business_bucket": row.get("business_bucket"),
+        "screening_code": row.get("screening_code"),
+        "action_type": row["action_type"],
+        "handling_status": row["handling_status"],
+        "reason_text": row["reason_text"],
+        "assignee": row.get("assignee"),
+        "actor": row.get("actor"),
+        "details": row.get("details") or {},
+        "created_at": _iso(row.get("created_at")),
+    }
+
+
+def _latest_screening_action_from_order_row(row) -> dict[str, Any] | None:
+    if not row.get("screening_action_id"):
+        return None
+    return _screening_action_audit_row_to_dict({
+        "id": row["screening_action_id"],
+        "order_id": row["order_id"],
+        "screening_status": row.get("screening_action_status"),
+        "business_bucket": row.get("screening_action_bucket"),
+        "screening_code": row.get("screening_action_code"),
+        "action_type": row.get("screening_action_type"),
+        "handling_status": row.get("screening_action_handling_status"),
+        "reason_text": row.get("screening_action_reason_text"),
+        "assignee": row.get("screening_action_assignee"),
+        "actor": row.get("screening_action_actor"),
+        "details": row.get("screening_action_details") or {},
+        "created_at": row.get("screening_action_created_at"),
+    })
+
+
 def _screening_summary(items: list[dict]) -> dict:
     return {
         "total_orders": len(items),
@@ -871,6 +947,7 @@ def list_orders(
     _=Depends(get_current_user),
 ):
     _ensure_order_screening_override_schema(db)
+    _ensure_order_screening_action_schema(db)
     cur = db.cursor()
     where_clauses = ["1=1"]
     params = []
@@ -929,7 +1006,18 @@ def list_orders(
             latest_override.policy_version AS screening_override_policy_version,
             latest_override.actor AS screening_override_actor,
             latest_override.details AS screening_override_details,
-            latest_override.created_at AS screening_override_created_at
+            latest_override.created_at AS screening_override_created_at,
+            latest_action.id AS screening_action_id,
+            latest_action.screening_status AS screening_action_status,
+            latest_action.business_bucket AS screening_action_bucket,
+            latest_action.screening_code AS screening_action_code,
+            latest_action.action_type AS screening_action_type,
+            latest_action.handling_status AS screening_action_handling_status,
+            latest_action.reason_text AS screening_action_reason_text,
+            latest_action.assignee AS screening_action_assignee,
+            latest_action.actor AS screening_action_actor,
+            latest_action.details AS screening_action_details,
+            latest_action.created_at AS screening_action_created_at
         FROM production_orders o
         LEFT JOIN customers c ON o.customer_id = c.customer_id
         LEFT JOIN scheduled_tasks t ON o.order_id = t.order_id
@@ -943,6 +1031,14 @@ def list_orders(
             ORDER BY created_at DESC, id DESC
             LIMIT 1
         ) latest_override ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT id, screening_status, business_bucket, screening_code,
+                   action_type, handling_status, reason_text, assignee, actor, details, created_at
+            FROM order_screening_action_audit saa
+            WHERE saa.order_id = o.order_id
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+        ) latest_action ON TRUE
         {where}
         ORDER BY o.due_date
         LIMIT %s OFFSET %s
@@ -977,6 +1073,7 @@ def list_orders(
                 "evidence": screening_result.get("evidence") or [],
                 "override_decision": screening_result.get("override_decision"),
                 "latest_override": _latest_screening_override_from_order_row(r),
+                "latest_action": _latest_screening_action_from_order_row(r),
             } if r.get("screening_status") else None,
             "sched_start": r["sched_start"].isoformat() if r["sched_start"] else None,
             "sched_end": r["sched_end"].isoformat() if r["sched_end"] else None,
@@ -1201,6 +1298,87 @@ def create_order_screening_override(
     except HTTPException:
         db.rollback()
         raise
+    except Exception:
+        db.rollback()
+        raise
+
+
+@router.post("/{order_id}/screening-action")
+def create_order_screening_action(
+    order_id: str,
+    payload: OrderScreeningActionPayload,
+    db=Depends(get_db),
+    user=Depends(require_role("admin", "planner")),
+):
+    action_type = payload.action_type.strip().lower()
+    handling_status = payload.handling_status.strip().lower()
+    reason_text = payload.reason_text.strip()
+    if action_type not in SCREENING_ACTION_TYPES:
+        raise HTTPException(status_code=400, detail="Invalid screening action type.")
+    if handling_status not in SCREENING_HANDLING_STATUSES:
+        raise HTTPException(status_code=400, detail="Invalid screening handling status.")
+    if not reason_text:
+        raise HTTPException(status_code=400, detail="筛选异常处理原因不能为空。")
+
+    _ensure_order_screening_schema(db)
+    _ensure_order_screening_action_schema(db)
+    cur = db.cursor()
+    try:
+        cur.execute("""
+            SELECT o.order_id, osc.screening_status, osc.business_bucket,
+                   osc.code AS screening_code, osc.root_cause, osc.result AS screening_result
+            FROM production_orders o
+            LEFT JOIN order_screening_cache osc ON osc.order_id = o.order_id
+            WHERE o.order_id=%s
+        """, (order_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Order not found.")
+        if not row.get("screening_status"):
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "order_screening_required", "message": "请先完成订单筛选后再记录处理动作。"},
+            )
+        screening_status = str(row["screening_status"]).lower()
+        if screening_status not in {"risk", "blocked"}:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "screening_action_not_required", "message": "当前订单不需要异常处理动作。"},
+            )
+
+        screening_result = row.get("screening_result") or {}
+        business_bucket = row.get("business_bucket") or screening_result.get("business_bucket")
+        details = {
+            "root_cause": row.get("root_cause"),
+            "screening_result": screening_result,
+        }
+        cur.execute("""
+            INSERT INTO order_screening_action_audit
+                (order_id, screening_status, business_bucket, screening_code,
+                 action_type, handling_status, reason_text, assignee, actor, details)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            RETURNING id, order_id, screening_status, business_bucket, screening_code,
+                      action_type, handling_status, reason_text, assignee, actor, details, created_at
+        """, (
+            order_id,
+            screening_status,
+            business_bucket,
+            row.get("screening_code"),
+            action_type,
+            handling_status,
+            reason_text,
+            payload.assignee.strip() if payload.assignee else None,
+            user.username,
+            Json(details),
+        ))
+        audit_row = cur.fetchone()
+        db.commit()
+        latest_action = _screening_action_audit_row_to_dict(audit_row)
+        return {
+            "order_id": order_id,
+            "action_audit_id": latest_action["id"],
+            "latest_action": latest_action,
+        }
     except Exception:
         db.rollback()
         raise
