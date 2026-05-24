@@ -208,10 +208,13 @@ def _build_schedule_run_solver_params(
         "summary": {
             "input_order_count": getattr(result, "input_order_count", len(getattr(result, "tasks", []))),
             "schedulable_order_count": getattr(result, "schedulable_order_count", len(getattr(result, "tasks", []))),
+            "scheduled_order_count": len(getattr(result, "tasks", [])),
             "blocked_order_count": getattr(result, "blocked_order_count", 0),
             "deferred_order_count": len(getattr(result, "deferred_orders", [])),
+            "unplaced_solver_failed_order_count": len(getattr(result, "unplaced_solver_failed_orders", [])),
         },
         "deferred_orders": getattr(result, "deferred_orders", []),
+        "unplaced_solver_failed_orders": getattr(result, "unplaced_solver_failed_orders", []),
         "selected_order_ids": normalized_order_ids,
         "order_snapshots": order_snapshots,
         "mode": mode,

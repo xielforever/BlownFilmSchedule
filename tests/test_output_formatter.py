@@ -93,6 +93,27 @@ class TestOutputFormatter(unittest.TestCase):
         self.assertEqual(data["deferred_order_count"], 1)
         self.assertEqual(data["deferred_orders"], result.deferred_orders)
 
+    def test_schedule_json_exports_result_bucket_counts(self):
+        result = ScheduleResult()
+        result.status = "INVALID"
+        result.input_order_count = 4
+        result.blocked_order_count = 1
+        result.deferred_orders = [{"order_id": "ORD-CANDIDATE"}]
+        result.unplaced_solver_failed_orders = [{"order_id": "ORD-MUST"}]
+        result.add_task(ScheduledTask(make_order("ORD-SCHEDULED"), make_machine(), 120, 260, 30, 0, 0))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "schedule.json")
+            export_schedule_json(result, path)
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+
+        self.assertEqual(data["scheduled_order_count"], 1)
+        self.assertEqual(data["blocked_order_count"], 1)
+        self.assertEqual(data["deferred_order_count"], 1)
+        self.assertEqual(data["unplaced_solver_failed_order_count"], 1)
+        self.assertEqual(data["unplaced_solver_failed_orders"], result.unplaced_solver_failed_orders)
+
     def test_schedule_report_contains_order_and_global_root_causes(self):
         result = ScheduleResult()
         result.status = "FEASIBLE"

@@ -488,6 +488,9 @@ class TestSchedulePolicySettings(unittest.TestCase):
             "input_order_count": 2,
             "schedulable_order_count": 1,
             "blocked_order_count": 1,
+            "tasks": [object()],
+            "deferred_orders": [{"order_id": "ORD-CANDIDATE"}],
+            "unplaced_solver_failed_orders": [{"order_id": "ORD-MUST"}],
             "solver_metrics": {"phase_1": {"status": "OPTIMAL", "gap": 0.0}},
         })()
         snapshot = {"policy_version": 5, "settings": {"review_required": True}}
@@ -513,6 +516,10 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(params["preplan_screening"], screening_snapshot)
         self.assertEqual(params["solver_metrics"], result.solver_metrics)
         self.assertEqual(params["summary"]["input_order_count"], 2)
+        self.assertEqual(params["summary"]["scheduled_order_count"], 1)
+        self.assertEqual(params["summary"]["deferred_order_count"], 1)
+        self.assertEqual(params["summary"]["unplaced_solver_failed_order_count"], 1)
+        self.assertEqual(params["unplaced_solver_failed_orders"], result.unplaced_solver_failed_orders)
 
     def test_run_row_to_dict_exposes_preplan_screening_snapshot(self):
         screening_snapshot = {

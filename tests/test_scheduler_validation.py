@@ -249,6 +249,19 @@ class TestSchedulerSequencing(unittest.TestCase):
 
         self.assertTrue(result.validation_errors)
 
+    def test_validation_records_unplaced_required_orders(self):
+        result = ScheduleResult()
+        aps = AdvancedMedicalAPS(_make_setup_mgr())
+
+        aps._validate_result(result, expected_order_count=None, required_order_ids=["ORD-MUST"])
+
+        self.assertIn("required order ORD-MUST was not scheduled", result.validation_errors)
+        self.assertEqual(result.unplaced_solver_failed_orders, [{
+            "order_id": "ORD-MUST",
+            "reason": "required_order_unplaced",
+            "message": "Required order was not placed by the solver.",
+        }])
+
     def test_infeasible_order_returns_order_diagnostic(self):
         order = _make_order("ORD-WIDE", targetWidth=9999)
         machine = _make_machine()

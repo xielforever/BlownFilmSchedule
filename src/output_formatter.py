@@ -41,6 +41,8 @@ def export_schedule_json(result: ScheduleResult, path: str):
         "blocked_order_count": getattr(result, "blocked_order_count", 0),
         "deferred_order_count": len(getattr(result, "deferred_orders", [])),
         "deferred_orders": getattr(result, "deferred_orders", []),
+        "unplaced_solver_failed_order_count": len(getattr(result, "unplaced_solver_failed_orders", [])),
+        "unplaced_solver_failed_orders": getattr(result, "unplaced_solver_failed_orders", []),
         "phase1_tardiness_score": result.phase1_score,
         "phase2_setup_score": result.phase2_score,
         "solver_metrics": getattr(result, "solver_metrics", {}),

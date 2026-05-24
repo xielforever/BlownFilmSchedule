@@ -71,6 +71,7 @@ class ScheduleResult:
         self.schedulable_order_count: int = 0
         self.blocked_order_count: int = 0
         self.deferred_orders: List[Dict] = []
+        self.unplaced_solver_failed_orders: List[Dict] = []
         self.solver_metrics: Dict[str, Dict] = {}
 
     def add_task(self, task: ScheduledTask):
@@ -1326,6 +1327,11 @@ class AdvancedMedicalAPS:
             missing_required = sorted(set(required_order_ids) - seen)
             for oid in missing_required:
                 errors.append(f"required order {oid} was not scheduled")
+                result.unplaced_solver_failed_orders.append({
+                    "order_id": oid,
+                    "reason": "required_order_unplaced",
+                    "message": "Required order was not placed by the solver.",
+                })
 
         for mid, tasks in result.machine_sequences.items():
             ordered = sorted(tasks, key=lambda x: (x.start_mins, x.end_mins))
