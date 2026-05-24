@@ -1075,6 +1075,14 @@ def _adjustment_reason_summary(adjustments: list[dict[str, Any]]) -> dict[str, A
         "reason_counts": reason_counts,
         "actor_counts": actor_counts,
         "reason_texts": reason_texts,
+        "reason_items": [
+            {
+                "reason_code": reason,
+                "count": count,
+                "sample_reason_text": reason_texts.get(reason, ""),
+            }
+            for reason, count in sorted(reason_counts.items(), key=lambda item: (-item[1], item[0]))
+        ],
     }
 
 

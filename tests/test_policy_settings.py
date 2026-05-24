@@ -657,21 +657,21 @@ class TestSchedulePolicySettings(unittest.TestCase):
                     {
                         "code": "end_delayed",
                         "label": "完工延后",
-                        "description": "调整后完工时间超过复核阈值。",
+                        "description": schedule_router.ADJUSTMENT_REVIEW_REASON_DETAILS["end_delayed"]["description"],
                         "actual_delta_mins": 120,
                         "threshold_mins": 0,
                     },
                     {
                         "code": "setup_increased",
                         "label": "换产增加",
-                        "description": "调整后换产时间超过复核阈值。",
+                        "description": schedule_router.ADJUSTMENT_REVIEW_REASON_DETAILS["setup_increased"]["description"],
                         "actual_delta_mins": 40,
                         "threshold_mins": 0,
                     },
                     {
                         "code": "tardiness_increased",
                         "label": "逾期增加",
-                        "description": "调整后逾期时间超过复核阈值。",
+                        "description": schedule_router.ADJUSTMENT_REVIEW_REASON_DETAILS["tardiness_increased"]["description"],
                         "actual_delta_mins": 45,
                         "threshold_mins": 0,
                     },
@@ -716,21 +716,21 @@ class TestSchedulePolicySettings(unittest.TestCase):
                     {
                         "code": "end_delayed",
                         "label": "完工延后",
-                        "description": "调整后完工时间超过复核阈值。",
+                        "description": schedule_router.ADJUSTMENT_REVIEW_REASON_DETAILS["end_delayed"]["description"],
                         "actual_delta_mins": 31,
                         "threshold_mins": 30,
                     },
                     {
                         "code": "setup_increased",
                         "label": "换产增加",
-                        "description": "调整后换产时间超过复核阈值。",
+                        "description": schedule_router.ADJUSTMENT_REVIEW_REASON_DETAILS["setup_increased"]["description"],
                         "actual_delta_mins": 21,
                         "threshold_mins": 20,
                     },
                     {
                         "code": "tardiness_increased",
                         "label": "逾期增加",
-                        "description": "调整后逾期时间超过复核阈值。",
+                        "description": schedule_router.ADJUSTMENT_REVIEW_REASON_DETAILS["tardiness_increased"]["description"],
                         "actual_delta_mins": 16,
                         "threshold_mins": 15,
                     },
@@ -866,6 +866,18 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(summary["reason_counts"], {"URGENT_INSERT": 2, "MATERIAL_DELAY": 1})
         self.assertEqual(summary["actor_counts"], {"planner-a": 2, "planner-b": 1})
         self.assertEqual(summary["reason_texts"]["URGENT_INSERT"], "客户急单插入")
+        self.assertEqual(summary["reason_items"], [
+            {
+                "reason_code": "URGENT_INSERT",
+                "count": 2,
+                "sample_reason_text": summary["reason_texts"]["URGENT_INSERT"],
+            },
+            {
+                "reason_code": "MATERIAL_DELAY",
+                "count": 1,
+                "sample_reason_text": summary["reason_texts"]["MATERIAL_DELAY"],
+            },
+        ])
 
 
 if __name__ == "__main__":
