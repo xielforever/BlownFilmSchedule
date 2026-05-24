@@ -7,6 +7,7 @@ from api.routers import schedule as schedule_router
 from src.models import BlownFilmMachineModel, ProductionOrderModel
 from src.order_screening import (
     DEFAULT_SCREENING_POLICY,
+    _normalize_screening_policy,
     build_screening_snapshot,
     override_decision_for_screening_item,
     screen_orders,
@@ -63,6 +64,15 @@ class TestOrderScreening(unittest.TestCase):
             set(DEFAULT_SCREENING_POLICY["restricted_override_codes"]),
             {"material_not_ready", "due_risk"},
         )
+
+    def test_screening_policy_normalization_removes_override_code_conflicts(self):
+        policy = _normalize_screening_policy({
+            "prohibited_override_codes": ["material_not_ready", "due_risk"],
+            "restricted_override_codes": ["material_not_ready", "due_risk", "custom_review"],
+        })
+
+        self.assertEqual(policy["prohibited_override_codes"], {"material_not_ready", "due_risk"})
+        self.assertEqual(policy["restricted_override_codes"], {"custom_review"})
 
     def test_ready_order_has_machine_fit_and_computed_summary(self):
         result = screen_orders([_make_order("ORD-READY")], [_make_machine()])

@@ -311,6 +311,8 @@ def _normalize_screening_policy(policy: Optional[dict] = None) -> dict:
         "restricted_override_codes",
         DEFAULT_SCREENING_POLICY["restricted_override_codes"],
     )
+    prohibited_codes = _normalize_policy_values(prohibited_override_codes)
+    restricted_codes = _normalize_policy_values(restricted_override_codes) - prohibited_codes
     return {
         "due_risk_min_slack_mins": max(0, int(min_slack)),
         "due_risk_duration_multiplier": max(0.0, float(duration_multiplier)),
@@ -318,8 +320,8 @@ def _normalize_screening_policy(policy: Optional[dict] = None) -> dict:
             allowed_statuses,
             transform=str.upper,
         ) or set(DEFAULT_SCREENING_POLICY["allowed_order_statuses"]),
-        "prohibited_override_codes": _normalize_policy_values(prohibited_override_codes),
-        "restricted_override_codes": _normalize_policy_values(restricted_override_codes),
+        "prohibited_override_codes": prohibited_codes,
+        "restricted_override_codes": restricted_codes,
     }
 
 
