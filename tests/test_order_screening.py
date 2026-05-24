@@ -1,5 +1,8 @@
 import unittest
 
+from fastapi import HTTPException
+
+from api.routers import schedule as schedule_router
 from src.models import BlownFilmMachineModel, ProductionOrderModel
 from src.order_screening import screen_orders
 
@@ -168,6 +171,24 @@ class TestOrderScreening(unittest.TestCase):
                 self.assertTrue(primary["href"])
                 self.assertTrue(primary["label"])
                 self.assertTrue(primary["guidance"])
+
+    def test_blocked_screening_items_reject_preplan_creation(self):
+        screening = screen_orders(
+            [_make_order("ORD-WIDE-PREPLAN", target_width=9999)],
+            [_make_machine()],
+            scope="preplan",
+        )
+
+        with self.assertRaises(HTTPException) as raised:
+            schedule_router._raise_for_blocked_preplan_orders(screening)
+
+        self.assertEqual(raised.exception.status_code, 400)
+        detail = raised.exception.detail
+        self.assertEqual(detail["code"], "preplan_blocked_orders")
+        self.assertEqual(detail["summary"]["blocked_count"], 1)
+        self.assertEqual(detail["blocked_orders"][0]["order_id"], "ORD-WIDE-PREPLAN")
+        self.assertEqual(detail["blocked_orders"][0]["code"], "no_eligible_machine")
+        self.assertIn("不能进入预排", detail["message"])
 
 
 if __name__ == "__main__":

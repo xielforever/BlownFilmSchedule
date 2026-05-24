@@ -25,6 +25,7 @@ from src.diagnostics import (
     DiagnosticRecommendation,
     parse_infeasible_log_diagnostics,
 )
+from src.order_screening import screen_orders
 from src.scheduler import AdvancedMedicalAPS, SetupCalculator
 from src.snapshotting import (
     build_input_snapshot,
@@ -475,6 +476,26 @@ def _input_snapshot_validation_item(saved: dict | None, current: dict | None) ->
     if not message:
         return None
     return _validation_item("error", "input_snapshot_stale", message)
+
+
+def _raise_for_blocked_preplan_orders(screening: dict[str, Any]) -> None:
+    blocked_orders = [
+        item
+        for item in screening.get("items", [])
+        if item.get("screening_status") == "blocked"
+    ]
+    if not blocked_orders:
+        return
+    preview = ", ".join(str(item.get("order_id")) for item in blocked_orders[:5])
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "code": "preplan_blocked_orders",
+            "message": f"存在不能进入预排的异常订单: {preview}",
+            "summary": screening.get("summary", {}),
+            "blocked_orders": blocked_orders,
+        },
+    )
 
 
 CONFIG_SCOPE_LABELS = {
@@ -2785,6 +2806,13 @@ def create_preplan(
         not_loaded = [order_id for order_id in order_ids if order_id not in loaded_ids]
         if not_loaded:
             raise HTTPException(status_code=400, detail=f"订单未进入排程输入: {', '.join(not_loaded[:5])}")
+        screening = screen_orders(
+            orders,
+            machines,
+            status_by_order_id={order_id: "PENDING" for order_id in order_ids},
+            scope="preplan",
+        )
+        _raise_for_blocked_preplan_orders(screening)
         aps = AdvancedMedicalAPS(setup_mgr)
         result = aps.run(orders, machines)
         run_id = manager.save_schedule_result(
