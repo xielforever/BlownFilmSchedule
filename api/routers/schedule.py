@@ -31,7 +31,8 @@ from src.diagnostics import (
     parse_infeasible_log_diagnostics,
 )
 from src.order_screening import build_screening_snapshot, screen_orders
-from src.scheduler import AdvancedMedicalAPS, SetupCalculator
+from src.models import ProductionOrderModel
+from src.scheduler import AdvancedMedicalAPS, ScheduledTask, SetupCalculator
 from src.snapshotting import (
     build_input_snapshot,
     build_machine_capability_snapshot,
@@ -794,6 +795,67 @@ def _task_row_to_dict(row):
         "order_class": row.get("order_class"),
         "due_date": _iso(row.get("due_date")),
     }
+
+
+def _locked_external_order_from_row(row: dict[str, Any]) -> ProductionOrderModel:
+    return ProductionOrderModel(
+        order_id=str(row.get("order_id")),
+        product_type=str(row.get("product_type") or "LOCKED_EXTERNAL"),
+        target_width=int(row.get("target_width") or 0),
+        target_thickness=int(row.get("target_thickness") or 0),
+        total_quantity_kg=int(row.get("total_quantity_kg") or 0),
+        cleanroom_req=str(row.get("cleanroom_req") or "Class_100K"),
+        customer_class=str(row.get("customer_class") or "STANDARD"),
+        order_class=str(row.get("order_class") or "NORMAL"),
+        corona_req=bool(row.get("corona_req") or False),
+        core_size_inch=int(row.get("core_size_inch") or 3),
+        due_date_mins=int(row.get("due_date_mins") or 0),
+    )
+
+
+def _locked_task_rows_to_solver_inputs(rows, orders, machines) -> list[ScheduledTask]:
+    orders_by_id = {order.order_id: order for order in orders}
+    machines_by_id = {machine.machine_id: machine for machine in machines}
+    locked_tasks: list[ScheduledTask] = []
+    for row in rows or []:
+        machine = machines_by_id.get(row.get("machine_id"))
+        if machine is None:
+            continue
+        order = orders_by_id.get(row.get("order_id")) or _locked_external_order_from_row(row)
+        locked_tasks.append(ScheduledTask(
+            order,
+            machine,
+            int(row.get("start_mins") or 0),
+            int(row.get("end_mins") or 0),
+            int(row.get("setup_time_mins") or 0),
+            float(row.get("scrap_kg") or 0),
+            int(row.get("sequence_index") or 0),
+            manual_lock_machine=bool(row.get("manual_lock_machine")),
+            manual_lock_time=bool(row.get("manual_lock_time")),
+        ))
+    return locked_tasks
+
+
+def _load_preplan_locked_tasks(cur, orders, machines) -> list[ScheduledTask]:
+    cur.execute("""
+        SELECT DISTINCT ON (t.order_id)
+            t.order_id, t.machine_id, t.start_mins, t.end_mins,
+            t.setup_time_mins, t.scrap_kg, t.sequence_index,
+            t.manual_lock_machine, t.manual_lock_time,
+            o.product_type, o.target_width, o.target_thickness,
+            o.total_quantity_kg, o.cleanroom_req, o.order_class,
+            o.corona_req, o.core_size_inch,
+            COALESCE(c.customer_class, 'STANDARD') AS customer_class
+        FROM scheduled_tasks t
+        JOIN schedule_runs r ON r.run_id=t.run_id
+        LEFT JOIN production_orders o ON o.order_id=t.order_id
+        LEFT JOIN customers c ON c.customer_id=o.customer_id
+        WHERE COALESCE(r.lifecycle_status, 'CONFIRMED') IN ('VALIDATED', 'CONFIRMED')
+          AND (COALESCE(t.manual_lock_machine, FALSE)=TRUE
+               OR COALESCE(t.manual_lock_time, FALSE)=TRUE)
+        ORDER BY t.order_id, r.run_id DESC, t.id DESC
+    """)
+    return _locked_task_rows_to_solver_inputs(cur.fetchall(), orders, machines)
 
 
 def _queue_row_to_dict(row):
@@ -3259,7 +3321,8 @@ def create_preplan(
         override_audits = _load_latest_formal_screening_overrides(cur, order_ids)
         _raise_for_blocked_preplan_orders(screening, override_audits)
         aps = _build_scheduler(setup_mgr, settings)
-        result = aps.run(orders, machines)
+        locked_tasks = _load_preplan_locked_tasks(cur, orders, machines)
+        result = aps.run(orders, machines, locked_tasks=locked_tasks)
         run_id = manager.save_schedule_result(
             result,
             triggered_by=user.username,
