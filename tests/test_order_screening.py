@@ -5,7 +5,12 @@ from fastapi import HTTPException
 from api.routers import orders as orders_router
 from api.routers import schedule as schedule_router
 from src.models import BlownFilmMachineModel, ProductionOrderModel
-from src.order_screening import build_screening_snapshot, override_decision_for_screening_item, screen_orders
+from src.order_screening import (
+    DEFAULT_SCREENING_POLICY,
+    build_screening_snapshot,
+    override_decision_for_screening_item,
+    screen_orders,
+)
 
 
 def _make_order(order_id: str, **overrides) -> ProductionOrderModel:
@@ -49,6 +54,16 @@ def _make_machine(machine_id: str = "LINE-A", **overrides) -> BlownFilmMachineMo
 
 
 class TestOrderScreening(unittest.TestCase):
+    def test_default_screening_policy_declares_override_code_classes(self):
+        self.assertEqual(
+            set(DEFAULT_SCREENING_POLICY["prohibited_override_codes"]),
+            {"missing_product", "missing_recipe", "no_eligible_machine", "status_not_pending"},
+        )
+        self.assertEqual(
+            set(DEFAULT_SCREENING_POLICY["restricted_override_codes"]),
+            {"material_not_ready", "due_risk"},
+        )
+
     def test_ready_order_has_machine_fit_and_computed_summary(self):
         result = screen_orders([_make_order("ORD-READY")], [_make_machine()])
 

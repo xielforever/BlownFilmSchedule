@@ -489,19 +489,6 @@ def _summary(items: list[dict]) -> dict:
     }
 
 
-PROHIBITED_OVERRIDE_CODES = {
-    "missing_product",
-    "missing_recipe",
-    "no_eligible_machine",
-    "status_not_pending",
-}
-
-RESTRICTED_OVERRIDE_CODES = {
-    "material_not_ready",
-    "due_risk",
-}
-
-
 def override_decision_for_screening_item(item: dict, screening_policy: Optional[dict] = None) -> dict:
     policy = _normalize_screening_policy(screening_policy)
     prohibited_codes = policy["prohibited_override_codes"]
