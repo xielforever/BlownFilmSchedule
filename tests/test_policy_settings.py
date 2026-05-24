@@ -58,6 +58,16 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(policy["cleaning_mins"], 45)
         self.assertEqual(policy["enforcement_mode"], "hard")
 
+    def test_order_screening_policy_uses_settings_for_preplan_admission(self):
+        policy = schedule_router._order_screening_policy({
+            **schedule_router.POLICY_DEFAULTS,
+            "screening_due_risk_min_slack_mins": 360,
+            "screening_due_risk_duration_multiplier": 2.5,
+        })
+
+        self.assertEqual(policy["due_risk_min_slack_mins"], 360)
+        self.assertEqual(policy["due_risk_duration_multiplier"], 2.5)
+
     def test_build_scheduler_passes_continuous_run_policy_to_solver(self):
         setup_mgr = SimpleNamespace(continuous_run_cleaning_time=55)
 
@@ -253,6 +263,25 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertIsNone(schedule_router._policy_snapshot_mismatch(base, same))
         message = schedule_router._policy_snapshot_mismatch(base, changed)
         self.assertIn("全局策略", message)
+        self.assertIn("重新预排", message)
+
+    def test_policy_snapshot_mismatch_detects_order_screening_policy_change(self):
+        saved = schedule_router._policy_snapshot(
+            {**schedule_router.POLICY_DEFAULTS, "policy_version": 3},
+            {},
+        )
+        current = schedule_router._policy_snapshot(
+            {
+                **schedule_router.POLICY_DEFAULTS,
+                "policy_version": 3,
+                "screening_due_risk_min_slack_mins": 360,
+            },
+            {},
+        )
+
+        message = schedule_router._policy_snapshot_mismatch(saved, current)
+
+        self.assertIn("订单初筛策略", message)
         self.assertIn("重新预排", message)
 
     def test_stale_policy_snapshot_becomes_blocking_validation_item(self):

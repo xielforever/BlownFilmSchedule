@@ -625,6 +625,13 @@ def _continuous_run_policy(settings: dict, setup_mgr) -> dict[str, Any]:
     }
 
 
+def _order_screening_policy(settings: dict) -> dict[str, Any]:
+    return {
+        "due_risk_min_slack_mins": int(settings.get("screening_due_risk_min_slack_mins") or 240),
+        "due_risk_duration_multiplier": float(settings.get("screening_due_risk_duration_multiplier") or 1.5),
+    }
+
+
 def _build_scheduler(setup_mgr, settings: dict) -> AdvancedMedicalAPS:
     return AdvancedMedicalAPS(
         setup_mgr,
@@ -3638,6 +3645,7 @@ def create_preplan(
             machines,
             status_by_order_id={order_id: "PENDING" for order_id in order_ids},
             scope="preplan",
+            screening_policy=_order_screening_policy(settings),
         )
         override_audits = _load_latest_formal_screening_overrides(cur, order_ids)
         _raise_for_blocked_preplan_orders(screening, override_audits)
