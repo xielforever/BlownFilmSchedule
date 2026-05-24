@@ -1637,8 +1637,12 @@ def get_order_screening_actions(
             where += " AND LOWER(TRIM(assignee))=%s"
             params.append(normalized_assignee)
     if actor:
-        where += " AND LOWER(TRIM(actor))=%s"
-        params.append(actor.strip().lower())
+        normalized_actor = actor.strip().lower()
+        if normalized_actor == "unassigned":
+            where += " AND (actor IS NULL OR TRIM(actor)='')"
+        else:
+            where += " AND LOWER(TRIM(actor))=%s"
+            params.append(normalized_actor)
     cur.execute("""
         SELECT id, order_id, screening_status, business_bucket, screening_code,
             action_type, handling_status, reason_text, assignee, actor, details,
