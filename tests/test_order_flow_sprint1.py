@@ -404,7 +404,7 @@ class _FakeCursor:
             if "lower(latest_action.action_type)=%s" in normalized:
                 screening_action_type_filter = params[param_index]
                 param_index += 1
-            if "lower(latest_action.assignee)=%s" in normalized:
+            if "lower(trim(latest_action.assignee))=%s" in normalized:
                 screening_action_assignee_filter = params[param_index]
                 param_index += 1
             screening_action_unhandled_filter = "latest_action.handling_status is null" in normalized
@@ -449,7 +449,7 @@ class _FakeCursor:
                     continue
                 if (
                     screening_action_assignee_filter
-                    and (latest_action.get("assignee") or "").lower() != screening_action_assignee_filter
+                    and (latest_action.get("assignee") or "").strip().lower() != screening_action_assignee_filter
                 ):
                     continue
                 if screening_action_unassigned_filter and latest_action.get("assignee"):
@@ -523,7 +523,7 @@ class _FakeCursor:
             if "lower(latest_action.action_type)=%s" in normalized:
                 screening_action_type_filter = params[param_index]
                 param_index += 1
-            if "lower(latest_action.assignee)=%s" in normalized:
+            if "lower(trim(latest_action.assignee))=%s" in normalized:
                 screening_action_assignee_filter = params[param_index]
                 param_index += 1
             screening_action_unhandled_filter = "latest_action.handling_status is null" in normalized
@@ -561,7 +561,7 @@ class _FakeCursor:
                     continue
                 if (
                     screening_action_assignee_filter
-                    and (latest_action.get("assignee") or "").lower() != screening_action_assignee_filter
+                    and (latest_action.get("assignee") or "").strip().lower() != screening_action_assignee_filter
                 ):
                     continue
                 if screening_action_unassigned_filter and latest_action.get("assignee"):
@@ -596,7 +596,7 @@ class _FakeCursor:
             if "lower(latest_action.action_type)=%s" in normalized:
                 screening_action_type_filter = params[param_index]
                 param_index += 1
-            if "lower(latest_action.assignee)=%s" in normalized:
+            if "lower(trim(latest_action.assignee))=%s" in normalized:
                 screening_action_assignee_filter = params[param_index]
                 param_index += 1
             screening_action_unhandled_filter = "latest_action.handling_status is null" in normalized
@@ -634,7 +634,7 @@ class _FakeCursor:
                     continue
                 if (
                     screening_action_assignee_filter
-                    and (latest_action.get("assignee") or "").lower() != screening_action_assignee_filter
+                    and (latest_action.get("assignee") or "").strip().lower() != screening_action_assignee_filter
                 ):
                     continue
                 if screening_action_unassigned_filter and latest_action.get("assignee"):
@@ -673,7 +673,7 @@ class _FakeCursor:
             if "lower(latest_action.action_type)=%s" in normalized:
                 screening_action_type_filter = params[param_index]
                 param_index += 1
-            if "lower(latest_action.assignee)=%s" in normalized:
+            if "lower(trim(latest_action.assignee))=%s" in normalized:
                 screening_action_assignee_filter = params[param_index]
                 param_index += 1
             screening_action_unhandled_filter = "latest_action.handling_status is null" in normalized
@@ -711,7 +711,7 @@ class _FakeCursor:
                     continue
                 if (
                     screening_action_assignee_filter
-                    and (latest_action.get("assignee") or "").lower() != screening_action_assignee_filter
+                    and (latest_action.get("assignee") or "").strip().lower() != screening_action_assignee_filter
                 ):
                     continue
                 if screening_action_unassigned_filter and latest_action.get("assignee"):
@@ -750,7 +750,7 @@ class _FakeCursor:
             if "lower(latest_action.action_type)=%s" in normalized:
                 screening_action_type_filter = params[param_index]
                 param_index += 1
-            if "lower(latest_action.assignee)=%s" in normalized:
+            if "lower(trim(latest_action.assignee))=%s" in normalized:
                 screening_action_assignee_filter = params[param_index]
                 param_index += 1
             screening_action_unhandled_filter = "latest_action.handling_status is null" in normalized
@@ -788,7 +788,7 @@ class _FakeCursor:
                     continue
                 if (
                     screening_action_assignee_filter
-                    and (latest_action.get("assignee") or "").lower() != screening_action_assignee_filter
+                    and (latest_action.get("assignee") or "").strip().lower() != screening_action_assignee_filter
                 ):
                     continue
                 if screening_action_unassigned_filter and latest_action.get("assignee"):
@@ -2021,7 +2021,7 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
                 "action_type": "request_data_fix",
                 "handling_status": "in_progress",
                 "reason_text": "退回订单数据修正",
-                "assignee": "order-admin",
+                "assignee": " order-admin ",
                 "actor": "planner",
                 "details": {},
                 "created_at": datetime(2026, 5, 24, 8, 0, tzinfo=timezone.utc),
@@ -2053,7 +2053,7 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
 
         self.assertEqual(result["total"], 1)
         self.assertEqual([item["order_id"] for item in result["items"]], ["ORD-ORDER-ADMIN"])
-        self.assertEqual(result["items"][0]["screening"]["latest_action"]["assignee"], "order-admin")
+        self.assertEqual(result["items"][0]["screening"]["latest_action"]["assignee"], " order-admin ")
 
     def test_list_orders_filters_unassigned_screening_action_assignee(self):
         db = _FakeDb()
