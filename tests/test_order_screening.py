@@ -402,6 +402,17 @@ class TestOrderScreening(unittest.TestCase):
 
         self.assertEqual(snapshot["items"][0]["root_cause"], screening["items"][0]["root_cause"])
 
+    def test_screening_snapshot_preserves_evidence(self):
+        screening = screen_orders(
+            [_make_order("ORD-EVIDENCE-SNAPSHOT", target_width=9999)],
+            [_make_machine()],
+            scope="preplan",
+        )
+
+        snapshot = build_screening_snapshot(screening)
+
+        self.assertEqual(snapshot["items"][0]["evidence"], screening["items"][0]["evidence"])
+
     def test_screening_snapshot_preserves_recommendations(self):
         screening = screen_orders(
             [_make_order("ORD-RECOMMENDATION-SNAPSHOT", target_width=9999)],

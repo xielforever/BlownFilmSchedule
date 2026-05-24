@@ -574,6 +574,7 @@ def build_screening_snapshot(screening: dict) -> dict:
             "root_cause": item.get("root_cause"),
             "diagnostic_code": item.get("diagnostic_code"),
             "eligible_machine_count": item.get("eligible_machine_count"),
+            "evidence": item.get("evidence") or [],
             "override_decision": snapshot_override_decision(item),
             "recommendations": snapshot_recommendations(item),
         }
