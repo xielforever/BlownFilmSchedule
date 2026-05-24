@@ -5,6 +5,18 @@ from src.snapshotting import (
     build_machine_capability_snapshot,
     build_order_snapshot,
 )
+from src import database
+
+
+class _EmptySnapshotCursor:
+    def __init__(self):
+        self._rows = []
+
+    def execute(self, *_args, **_kwargs):
+        self._rows = []
+
+    def fetchall(self):
+        return self._rows
 
 
 def test_machine_capability_snapshot_hash_changes_for_capacity_fields():
@@ -85,3 +97,19 @@ def test_input_snapshot_combines_order_machine_rule_process_and_screening_hashes
     assert snapshot["process"]["hash"] == "process-v1"
     assert snapshot["screening"]["hash"] == "screening-v1"
     assert snapshot["hash"]
+
+
+def test_database_input_snapshot_uses_preplan_screening_snapshot():
+    screening_snapshot = {
+        "hash": "screening-real-v1",
+        "summary": {"ready_count": 1, "risk_count": 0, "blocked_count": 0},
+        "items": [{"order_id": "ORD-READY", "screening_status": "ready"}],
+    }
+
+    snapshot = database._fetch_input_snapshot(
+        _EmptySnapshotCursor(),
+        order_snapshots=[],
+        screening_snapshot=screening_snapshot,
+    )
+
+    assert snapshot["screening"] == screening_snapshot

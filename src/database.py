@@ -60,7 +60,11 @@ def _build_order_snapshot(row) -> dict:
     return build_order_snapshot(row)
 
 
-def _fetch_input_snapshot(cur, order_snapshots: list[dict]) -> dict:
+def _fetch_input_snapshot(
+    cur,
+    order_snapshots: list[dict],
+    screening_snapshot: Optional[dict] = None,
+) -> dict:
     cur.execute("""
         SELECT machine_id, status, cleanroom_level, layer_structure,
             die_diameter_mm, min_width, max_width, min_thickness,
@@ -139,13 +143,14 @@ def _fetch_input_snapshot(cur, order_snapshots: list[dict]) -> dict:
     """)
     process_snapshot = build_process_snapshot(cur.fetchall())
 
-    screening_snapshot = {
-        "count": len(order_snapshots or []),
-        "hash": stable_hash([
-            {"order_id": item.get("order_id"), "hash": item.get("hash")}
-            for item in order_snapshots or []
-        ]),
-    }
+    if screening_snapshot is None:
+        screening_snapshot = {
+            "count": len(order_snapshots or []),
+            "hash": stable_hash([
+                {"order_id": item.get("order_id"), "hash": item.get("hash")}
+                for item in order_snapshots or []
+            ]),
+        }
     return build_input_snapshot(
         order_snapshots=order_snapshots,
         machine_capability_snapshot=machine_snapshot,
@@ -974,7 +979,11 @@ class DatabaseManager:
                     if row:
                         order_snapshots.append(_build_order_snapshot(row))
             with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as snapshot_cur:
-                input_snapshot = _fetch_input_snapshot(snapshot_cur, order_snapshots)
+                input_snapshot = _fetch_input_snapshot(
+                    snapshot_cur,
+                    order_snapshots,
+                    screening_snapshot=screening_snapshot,
+                )
 
             diagnostics_payload = diagnostics_to_dicts(
                 getattr(result, "diagnostics", []),
