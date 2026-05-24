@@ -325,7 +325,13 @@ class DatabaseManager:
                     arc_pruning_top_k_per_order         INTEGER NOT NULL DEFAULT 0,
                     screening_due_risk_min_slack_mins   INTEGER NOT NULL DEFAULT 240,
                     screening_due_risk_duration_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.5,
+                    screening_allowed_order_statuses    TEXT[] NOT NULL DEFAULT ARRAY['PENDING']::TEXT[],
+                    screening_prohibited_override_codes TEXT[] NOT NULL DEFAULT ARRAY['missing_product','missing_recipe','invalid_order_data','no_eligible_machine','status_not_pending']::TEXT[],
+                    screening_restricted_override_codes TEXT[] NOT NULL DEFAULT ARRAY['material_not_ready','due_risk']::TEXT[],
                     screening_required_positive_order_fields TEXT[] NOT NULL DEFAULT ARRAY['due_date_mins','target_thickness','target_width','total_quantity_kg']::TEXT[],
+                    manual_adjust_review_delay_threshold_mins INTEGER NOT NULL DEFAULT 0,
+                    manual_adjust_review_setup_threshold_mins INTEGER NOT NULL DEFAULT 0,
+                    manual_adjust_review_tardiness_threshold_mins INTEGER NOT NULL DEFAULT 0,
                     updated_at                          TIMESTAMPTZ DEFAULT NOW()
                 )
             """)
@@ -542,6 +548,13 @@ class DatabaseManager:
                 ADD COLUMN IF NOT EXISTS arc_pruning_top_k_per_order INTEGER NOT NULL DEFAULT 0,
                 ADD COLUMN IF NOT EXISTS screening_due_risk_min_slack_mins INTEGER NOT NULL DEFAULT 240,
                 ADD COLUMN IF NOT EXISTS screening_due_risk_duration_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.5,
+                ADD COLUMN IF NOT EXISTS screening_allowed_order_statuses TEXT[] NOT NULL DEFAULT ARRAY['PENDING']::TEXT[],
+                ADD COLUMN IF NOT EXISTS screening_prohibited_override_codes TEXT[] NOT NULL DEFAULT ARRAY['missing_product','missing_recipe','invalid_order_data','no_eligible_machine','status_not_pending']::TEXT[],
+                ADD COLUMN IF NOT EXISTS screening_restricted_override_codes TEXT[] NOT NULL DEFAULT ARRAY['material_not_ready','due_risk']::TEXT[],
+                ADD COLUMN IF NOT EXISTS screening_required_positive_order_fields TEXT[] NOT NULL DEFAULT ARRAY['due_date_mins','target_thickness','target_width','total_quantity_kg']::TEXT[],
+                ADD COLUMN IF NOT EXISTS manual_adjust_review_delay_threshold_mins INTEGER NOT NULL DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS manual_adjust_review_setup_threshold_mins INTEGER NOT NULL DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS manual_adjust_review_tardiness_threshold_mins INTEGER NOT NULL DEFAULT 0,
                 ADD COLUMN IF NOT EXISTS policy_version INTEGER NOT NULL DEFAULT 1,
                 ADD COLUMN IF NOT EXISTS updated_by VARCHAR(50),
                 ADD COLUMN IF NOT EXISTS change_reason TEXT
@@ -562,7 +575,14 @@ class DatabaseManager:
                     candidate_min_acceptance_ratio,
                     arc_pruning_enabled, arc_pruning_max_setup_mins,
                     arc_pruning_top_k_per_order,
-                    screening_due_risk_min_slack_mins, screening_due_risk_duration_multiplier
+                    screening_due_risk_min_slack_mins, screening_due_risk_duration_multiplier,
+                    screening_allowed_order_statuses,
+                    screening_prohibited_override_codes,
+                    screening_restricted_override_codes,
+                    screening_required_positive_order_fields,
+                    manual_adjust_review_delay_threshold_mins,
+                    manual_adjust_review_setup_threshold_mins,
+                    manual_adjust_review_tardiness_threshold_mins
                 FROM schedule_settings
                 WHERE id=TRUE
             """)
@@ -595,6 +615,24 @@ class DatabaseManager:
             "arc_pruning_top_k_per_order": 0,
             "screening_due_risk_min_slack_mins": 240,
             "screening_due_risk_duration_multiplier": 1.5,
+            "screening_allowed_order_statuses": ["PENDING"],
+            "screening_prohibited_override_codes": [
+                "missing_product",
+                "missing_recipe",
+                "invalid_order_data",
+                "no_eligible_machine",
+                "status_not_pending",
+            ],
+            "screening_restricted_override_codes": ["material_not_ready", "due_risk"],
+            "screening_required_positive_order_fields": [
+                "due_date_mins",
+                "target_thickness",
+                "target_width",
+                "total_quantity_kg",
+            ],
+            "manual_adjust_review_delay_threshold_mins": 0,
+            "manual_adjust_review_setup_threshold_mins": 0,
+            "manual_adjust_review_tardiness_threshold_mins": 0,
         }
         return {**defaults, **dict(row or {})}
 

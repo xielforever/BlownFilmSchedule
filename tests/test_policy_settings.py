@@ -40,6 +40,45 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertIn("candidate_max_deferred_count", ddl)
         self.assertIn("candidate_min_acceptance_ratio", ddl)
 
+    def test_database_policy_loader_exposes_screening_and_review_strategy(self):
+        class Cursor:
+            def __init__(self):
+                self.sql = ""
+
+            def execute(self, sql):
+                self.sql = sql
+
+            def fetchone(self):
+                return {
+                    "screening_allowed_order_statuses": ["PENDING", "RELEASED"],
+                    "screening_prohibited_override_codes": ["no_eligible_machine"],
+                    "screening_restricted_override_codes": ["material_not_ready"],
+                    "screening_required_positive_order_fields": ["target_width"],
+                    "manual_adjust_review_delay_threshold_mins": 45,
+                    "manual_adjust_review_setup_threshold_mins": 30,
+                    "manual_adjust_review_tardiness_threshold_mins": 20,
+                }
+
+        cur = Cursor()
+        manager = object.__new__(database.DatabaseManager)
+
+        policy = manager._load_schedule_policy(cur)
+
+        for key in [
+            "screening_allowed_order_statuses",
+            "screening_prohibited_override_codes",
+            "screening_restricted_override_codes",
+            "screening_required_positive_order_fields",
+            "manual_adjust_review_delay_threshold_mins",
+            "manual_adjust_review_setup_threshold_mins",
+            "manual_adjust_review_tardiness_threshold_mins",
+        ]:
+            self.assertIn(key, cur.sql)
+            self.assertIn(key, policy)
+
+        self.assertEqual(policy["screening_allowed_order_statuses"], ["PENDING", "RELEASED"])
+        self.assertEqual(policy["manual_adjust_review_delay_threshold_mins"], 45)
+
     def test_policy_payload_exposes_global_constraint_switches(self):
         fields = schedule_router.ScheduleSettingsPayload.model_fields
 
