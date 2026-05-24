@@ -73,6 +73,8 @@ ORDER_SNAPSHOT_FIELDS = (
     "priority_override",
 )
 VALIDATION_SUMMARY_VERSION = "preplan-validation-v1"
+VALIDATION_LEVELS = {"info", "warning", "publish_blocker", "invalid"}
+VALIDATION_BLOCKING_LEVELS = {"publish_blocker", "invalid"}
 
 
 def _utc_now_iso():
@@ -916,14 +918,59 @@ def _load_preplan_order_context(cur, run, tasks, diagnostics):
     )
 
 
-def _validation_item(severity, code, message, order_id=None, machine_id=None):
+def _validation_item(severity, code, message, order_id=None, machine_id=None, level=None):
+    normalized_level = level
+    if normalized_level is None:
+        normalized_level = "publish_blocker" if severity == "error" else severity
+    if normalized_level not in VALIDATION_LEVELS:
+        normalized_level = "publish_blocker" if severity == "error" else "warning"
+    normalized_severity = "error" if normalized_level in VALIDATION_BLOCKING_LEVELS else normalized_level
     return {
-        "severity": severity,
+        "severity": normalized_severity,
+        "level": normalized_level,
         "code": code,
         "message": message,
         "order_id": order_id,
         "machine_id": machine_id,
     }
+
+
+def _validation_result_payload(run_id: int, items: list[dict[str, Any]]) -> dict[str, Any]:
+    hard_errors = [
+        item for item in items
+        if item.get("level") in VALIDATION_BLOCKING_LEVELS or item.get("severity") == "error"
+    ]
+    warnings = [
+        item for item in items
+        if item.get("level", item.get("severity")) == "warning"
+    ]
+    info_items = [
+        item for item in items
+        if item.get("level", item.get("severity")) == "info"
+    ]
+    return {
+        "run_id": run_id,
+        "status": "FAILED" if hard_errors else ("WARNING" if warnings else "PASSED"),
+        "publishable": not hard_errors,
+        "hard_error_count": len(hard_errors),
+        "publish_blocker_count": len(hard_errors),
+        "warning_count": len(warnings),
+        "info_count": len(info_items),
+        "items": items,
+    }
+
+
+def _validation_is_publishable(validation: dict[str, Any]) -> bool:
+    return bool(validation.get("publishable", int(validation.get("hard_error_count") or 0) == 0))
+
+
+def _raise_if_unpublishable(validation: dict[str, Any]) -> None:
+    if _validation_is_publishable(validation):
+        return
+    raise HTTPException(
+        status_code=400,
+        detail={"message": "草案存在发布阻断，不能发布。", "validation": validation},
+    )
 
 
 def _publish_audit_payload(
@@ -966,11 +1013,16 @@ def _insert_publish_audit(cur, payload: dict[str, Any]) -> None:
 
 def _validation_summary_payload(validation: dict[str, Any], task_signature: str) -> dict[str, Any]:
     hard_error_count = int(validation.get("hard_error_count") or 0)
+    publish_blocker_count = int(validation.get("publish_blocker_count") or hard_error_count)
+    publishable = bool(validation.get("publishable", hard_error_count == 0))
     return {
-        "valid": hard_error_count == 0,
+        "valid": publishable,
+        "publishable": publishable,
         "status": validation.get("status") or ("FAILED" if hard_error_count else "PASSED"),
         "hard_error_count": hard_error_count,
+        "publish_blocker_count": publish_blocker_count,
         "warning_count": int(validation.get("warning_count") or 0),
+        "info_count": int(validation.get("info_count") or 0),
         "validator_version": VALIDATION_SUMMARY_VERSION,
         "task_signature": task_signature,
         "validated_at": _utc_now_iso(),
@@ -1605,15 +1657,7 @@ def _load_preplan_validation(db, run_id: int):
         if cur.fetchone()["cnt"]:
             items.append(_validation_item("error", "downtime_overlap", f"订单 {task['order_id']} 的生产或换产时间与机台 {task['machine_id']} 停机事件冲突。", task["order_id"], task["machine_id"]))
 
-    hard_errors = [item for item in items if item["severity"] == "error"]
-    warnings = [item for item in items if item["severity"] == "warning"]
-    return {
-        "run_id": run_id,
-        "status": "FAILED" if hard_errors else ("WARNING" if warnings else "PASSED"),
-        "hard_error_count": len(hard_errors),
-        "warning_count": len(warnings),
-        "items": items,
-    }
+    return _validation_result_payload(run_id, items)
 
 
 def _duration_mins(start, end):
@@ -3260,8 +3304,7 @@ def confirm_preplan(run_id: int, db=Depends(get_db), user=Depends(require_role("
     if settings["review_required"] and run["lifecycle_status"] != "VALIDATED":
         raise HTTPException(status_code=400, detail="需要先校验方案，再确认进入制造队列。")
     validation = _load_preplan_validation(db, run_id)
-    if validation["hard_error_count"]:
-        raise HTTPException(status_code=400, detail={"message": "草案存在阻断错误，不能发布。", "validation": validation})
+    _raise_if_unpublishable(validation)
     if settings["review_required"]:
         task_signature = _schedule_task_signature(cur, run_id)
         mismatch = _validation_summary_mismatch(

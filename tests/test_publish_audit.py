@@ -41,6 +41,75 @@ class TestPublishAuditPayload(unittest.TestCase):
         self.assertEqual(payload["task_signature"], "task-sig-001")
         self.assertIn("validated_at", payload)
 
+    def test_validation_summary_payload_captures_publishable_contract(self):
+        payload = schedule_router._validation_summary_payload(
+            {
+                "status": "FAILED",
+                "publishable": False,
+                "hard_error_count": 1,
+                "publish_blocker_count": 1,
+                "warning_count": 0,
+                "info_count": 1,
+            },
+            task_signature="task-sig-002",
+        )
+
+        self.assertFalse(payload["valid"])
+        self.assertFalse(payload["publishable"])
+        self.assertEqual(payload["publish_blocker_count"], 1)
+        self.assertEqual(payload["info_count"], 1)
+
+    def test_validation_contract_counts_publish_blockers_warnings_and_info(self):
+        items = [
+            schedule_router._validation_item(
+                "warning",
+                "late_order",
+                "订单晚于交期。",
+                level="warning",
+            ),
+            schedule_router._validation_item(
+                "warning",
+                "solver_gap",
+                "求解器未证明最优。",
+                level="info",
+            ),
+            schedule_router._validation_item(
+                "error",
+                "maintenance_overlap",
+                "维护窗口冲突。",
+                level="publish_blocker",
+            ),
+        ]
+
+        summary = schedule_router._validation_result_payload(run_id=42, items=items)
+
+        self.assertEqual(summary["status"], "FAILED")
+        self.assertFalse(summary["publishable"])
+        self.assertEqual(summary["hard_error_count"], 1)
+        self.assertEqual(summary["publish_blocker_count"], 1)
+        self.assertEqual(summary["warning_count"], 1)
+        self.assertEqual(summary["info_count"], 1)
+        self.assertEqual(items[0]["severity"], "warning")
+        self.assertEqual(items[1]["severity"], "info")
+        self.assertEqual(items[2]["severity"], "error")
+
+    def test_unpublishable_validation_gate_uses_publishable_flag(self):
+        validation = {
+            "status": "FAILED",
+            "publishable": False,
+            "hard_error_count": 0,
+            "publish_blocker_count": 1,
+            "warning_count": 0,
+            "items": [],
+        }
+
+        with self.assertRaises(schedule_router.HTTPException) as ctx:
+            schedule_router._raise_if_unpublishable(validation)
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("不能发布", ctx.exception.detail["message"])
+        self.assertIs(ctx.exception.detail["validation"], validation)
+
     def test_validation_summary_rejects_missing_invalid_or_mismatched_summary(self):
         validation = {
             "status": "PASSED",
