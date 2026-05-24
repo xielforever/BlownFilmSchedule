@@ -586,6 +586,19 @@ class _FakeCursor:
             rows.sort(key=lambda item: (item.get("created_at"), item["id"]), reverse=True)
             self._rows = rows[:50]
             return
+        if normalized.startswith("select distinct on (order_id)"):
+            order_ids = set(params[0])
+            rows = [
+                dict(row)
+                for row in self.db.order_screening_override_audit
+                if row["order_id"] in order_ids and row.get("mode") == "formal"
+            ]
+            rows.sort(key=lambda item: (item["order_id"], item.get("created_at"), item["id"]), reverse=True)
+            latest = {}
+            for row in rows:
+                latest.setdefault(row["order_id"], row)
+            self._rows = list(latest.values())
+            return
         if normalized.startswith("update order_screening_cache"):
             reason = params[0]
             order_ids = params[1] if len(params) > 1 else list(self.db.order_screening_cache)
@@ -948,6 +961,62 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         self.assertEqual(item["reason_text"], "排程主管确认插单")
         self.assertEqual(item["policy_version"], 3)
         self.assertEqual(item["created_at"], "2026-05-24T08:30:00+00:00")
+
+    def test_latest_formal_screening_overrides_are_loaded_for_preplan(self):
+        db = _FakeDb()
+        db.order_screening_override_audit.extend([
+            {
+                "id": 10,
+                "order_id": "ORD-PREPLAN-OVERRIDE",
+                "screening_status": "blocked",
+                "screening_code": "material_not_ready",
+                "override_policy": "restricted",
+                "reason_code": "SCREENING_OVERRIDE",
+                "reason_text": "旧原因",
+                "mode": "formal",
+                "policy_version": 1,
+                "actor": "planner",
+                "details": {},
+                "created_at": datetime(2026, 5, 24, 8, 0, tzinfo=timezone.utc),
+            },
+            {
+                "id": 11,
+                "order_id": "ORD-PREPLAN-OVERRIDE",
+                "screening_status": "blocked",
+                "screening_code": "material_not_ready",
+                "override_policy": "restricted",
+                "reason_code": "SCREENING_OVERRIDE",
+                "reason_text": "最新正式原因",
+                "mode": "formal",
+                "policy_version": 2,
+                "actor": "planner",
+                "details": {},
+                "created_at": datetime(2026, 5, 24, 9, 0, tzinfo=timezone.utc),
+            },
+            {
+                "id": 12,
+                "order_id": "ORD-PREPLAN-OVERRIDE",
+                "screening_status": "blocked",
+                "screening_code": "material_not_ready",
+                "override_policy": "restricted",
+                "reason_code": "SCREENING_OVERRIDE",
+                "reason_text": "实验原因",
+                "mode": "experimental",
+                "policy_version": 3,
+                "actor": "planner",
+                "details": {},
+                "created_at": datetime(2026, 5, 24, 10, 0, tzinfo=timezone.utc),
+            },
+        ])
+
+        result = schedule_router._load_latest_formal_screening_overrides(
+            db.cursor(),
+            ["ORD-PREPLAN-OVERRIDE"],
+        )
+
+        self.assertEqual(set(result), {"ORD-PREPLAN-OVERRIDE"})
+        self.assertEqual(result["ORD-PREPLAN-OVERRIDE"]["id"], 11)
+        self.assertEqual(result["ORD-PREPLAN-OVERRIDE"]["reason_text"], "最新正式原因")
 
     def test_list_orders_exposes_cached_screening_status(self):
         db = _FakeDb()

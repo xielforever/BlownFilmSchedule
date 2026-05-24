@@ -191,6 +191,58 @@ class TestOrderScreening(unittest.TestCase):
         self.assertEqual(detail["blocked_orders"][0]["code"], "no_eligible_machine")
         self.assertIn("不能进入预排", detail["message"])
 
+    def test_restricted_screening_override_allows_preplan_but_marks_item(self):
+        screening = screen_orders(
+            [_make_order("ORD-MATERIAL-OVERRIDE-PREPLAN", material_available_mins=6000, due_date_mins=5000)],
+            [_make_machine()],
+            scope="preplan",
+        )
+        item = screening["items"][0]
+
+        schedule_router._raise_for_blocked_preplan_orders(
+            screening,
+            override_audits_by_order_id={
+                "ORD-MATERIAL-OVERRIDE-PREPLAN": {
+                    "id": 7,
+                    "screening_status": item["screening_status"],
+                    "screening_code": item["code"],
+                    "override_policy": item["override_decision"]["policy"],
+                    "mode": "formal",
+                    "reason_text": "物料替代方案已确认",
+                },
+            },
+        )
+
+        self.assertEqual(item["screening_status"], "blocked")
+        self.assertEqual(item["applied_override"]["audit_id"], 7)
+        self.assertEqual(item["applied_override"]["reason_text"], "物料替代方案已确认")
+
+    def test_prohibited_screening_override_cannot_allow_preplan(self):
+        screening = screen_orders(
+            [_make_order("ORD-WIDE-FAKE-OVERRIDE", target_width=9999)],
+            [_make_machine()],
+            scope="preplan",
+        )
+        item = screening["items"][0]
+
+        with self.assertRaises(HTTPException) as raised:
+            schedule_router._raise_for_blocked_preplan_orders(
+                screening,
+                override_audits_by_order_id={
+                    "ORD-WIDE-FAKE-OVERRIDE": {
+                        "id": 8,
+                        "screening_status": item["screening_status"],
+                        "screening_code": item["code"],
+                        "override_policy": "restricted",
+                        "mode": "formal",
+                        "reason_text": "业务要求强制排入",
+                    },
+                },
+            )
+
+        self.assertEqual(raised.exception.status_code, 400)
+        self.assertEqual(raised.exception.detail["blocked_orders"][0]["order_id"], "ORD-WIDE-FAKE-OVERRIDE")
+
     def test_screening_snapshot_hash_ignores_generated_at(self):
         first = screen_orders(
             [_make_order("ORD-SNAPSHOT")],

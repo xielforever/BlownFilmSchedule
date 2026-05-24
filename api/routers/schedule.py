@@ -18,7 +18,11 @@ from psycopg2.extras import Json
 
 from api.auth import get_current_user, require_role
 from api.deps import get_db
-from api.routers.orders import _ensure_order_screening_schema, _mark_order_screening_cache_stale
+from api.routers.orders import (
+    _ensure_order_screening_override_schema,
+    _ensure_order_screening_schema,
+    _mark_order_screening_cache_stale,
+)
 from src.config import BASELINE_TIME
 from src.diagnostics import (
     Diagnostic,
@@ -479,11 +483,60 @@ def _input_snapshot_validation_item(saved: dict | None, current: dict | None) ->
     return _validation_item("error", "input_snapshot_stale", message)
 
 
-def _raise_for_blocked_preplan_orders(screening: dict[str, Any]) -> None:
+def _screening_item_has_preplan_override(item: dict[str, Any], audit: dict[str, Any] | None) -> bool:
+    if not audit:
+        return False
+    decision = item.get("override_decision") or {}
+    if not decision.get("allowed"):
+        return False
+    if (audit.get("mode") or "formal") != "formal":
+        return False
+    if audit.get("screening_status") != item.get("screening_status"):
+        return False
+    if audit.get("screening_code") != item.get("code"):
+        return False
+    if audit.get("override_policy") != decision.get("policy"):
+        return False
+    item["applied_override"] = {
+        "audit_id": audit.get("id"),
+        "override_policy": audit.get("override_policy"),
+        "reason_text": audit.get("reason_text"),
+    }
+    return True
+
+
+def _load_latest_formal_screening_overrides(cur, order_ids: list[str]) -> dict[str, dict[str, Any]]:
+    if not order_ids:
+        return {}
+    cur.execute("""
+        SELECT DISTINCT ON (order_id)
+            id, order_id, screening_status, screening_code, override_policy,
+            reason_code, reason_text, mode, policy_version, actor, details,
+            created_at
+        FROM order_screening_override_audit
+        WHERE order_id = ANY(%s)
+          AND mode='formal'
+        ORDER BY order_id, created_at DESC, id DESC
+    """, (order_ids,))
+    return {
+        row["order_id"]: dict(row)
+        for row in cur.fetchall()
+    }
+
+
+def _raise_for_blocked_preplan_orders(
+    screening: dict[str, Any],
+    override_audits_by_order_id: dict[str, dict[str, Any]] | None = None,
+) -> None:
+    override_audits_by_order_id = override_audits_by_order_id or {}
     blocked_orders = [
         item
         for item in screening.get("items", [])
         if item.get("screening_status") == "blocked"
+        and not _screening_item_has_preplan_override(
+            item,
+            override_audits_by_order_id.get(item.get("order_id")),
+        )
     ]
     if not blocked_orders:
         return
@@ -2793,6 +2846,7 @@ def create_preplan(
         raise HTTPException(status_code=400, detail="Invalid preplan mode.")
 
     _ensure_planning_schema(db)
+    _ensure_order_screening_override_schema(db)
     cur = db.cursor()
     cur.execute(
         """
@@ -2830,7 +2884,8 @@ def create_preplan(
             status_by_order_id={order_id: "PENDING" for order_id in order_ids},
             scope="preplan",
         )
-        _raise_for_blocked_preplan_orders(screening)
+        override_audits = _load_latest_formal_screening_overrides(cur, order_ids)
+        _raise_for_blocked_preplan_orders(screening, override_audits)
         aps = AdvancedMedicalAPS(setup_mgr)
         result = aps.run(orders, machines)
         run_id = manager.save_schedule_result(
