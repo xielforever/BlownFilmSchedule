@@ -853,7 +853,7 @@ class _FakeCursor:
                 for key, value in counts.items()
             ]
             return
-        if normalized.startswith("select coalesce(latest_action.actor, 'unassigned')"):
+        if normalized.startswith("select coalesce(trim(latest_action.actor), 'unassigned')"):
             param_index = 0
             status_filter = None
             screening_status_filter = None
@@ -932,7 +932,7 @@ class _FakeCursor:
                     and (latest_action.get("actor") or "").strip().lower() != screening_action_actor_filter
                 ):
                     continue
-                key = latest_action.get("actor") or "unassigned"
+                key = (latest_action.get("actor") or "").strip() or "unassigned"
                 counts[key] = counts.get(key, 0) + 1
             self._rows = [
                 {"actor": key, "cnt": value}
@@ -2903,7 +2903,7 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
 
         self.assertEqual(result["screening_action_actor_counts"], {
             "unassigned": 1,
-            " planner-a ": 1,
+            "planner-a": 1,
             "planner-b": 1,
         })
 

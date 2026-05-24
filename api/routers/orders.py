@@ -1209,7 +1209,7 @@ def list_orders(
         action_assignee_counts[assignee_key] = int(row.get("cnt") or 0)
     action_actor_counts = {}
     cur.execute(f"""
-        SELECT COALESCE(latest_action.actor, 'unassigned') AS actor,
+        SELECT COALESCE(TRIM(latest_action.actor), 'unassigned') AS actor,
                count(DISTINCT o.order_id) AS cnt
         FROM production_orders o
         LEFT JOIN customers c ON o.customer_id = c.customer_id
@@ -1224,7 +1224,7 @@ def list_orders(
             LIMIT 1
         ) latest_action ON TRUE
         {where}
-        GROUP BY COALESCE(latest_action.actor, 'unassigned')
+        GROUP BY COALESCE(TRIM(latest_action.actor), 'unassigned')
     """, params)
     for row in cur.fetchall():
         actor_key = row.get("actor") or "unassigned"
