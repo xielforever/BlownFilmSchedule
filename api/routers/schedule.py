@@ -1449,12 +1449,18 @@ def _build_preplan_order_buckets(
     screening_items_by_order_id=None,
     planning_bucket_policy=None,
     deferred_order_items=None,
+    unplaced_solver_failed_order_items=None,
 ):
     orders_by_id = {row["order_id"]: dict(row) for row in order_rows or []}
     screening_items_by_order_id = screening_items_by_order_id or {}
     deferred_items_by_order_id = {
         item.get("order_id"): item
         for item in deferred_order_items or []
+        if item.get("order_id")
+    }
+    unplaced_items_by_order_id = {
+        item.get("order_id"): item
+        for item in unplaced_solver_failed_order_items or []
         if item.get("order_id")
     }
     task_by_order = {}
@@ -1479,6 +1485,7 @@ def _build_preplan_order_buckets(
     must_schedule_orders = []
     candidate_orders = []
     deferred_orders = []
+    unplaced_solver_failed_orders = []
     candidate_machine_count = len(machines or [])
 
     for order_id in ordered_ids:
@@ -1491,6 +1498,7 @@ def _build_preplan_order_buckets(
         task = task_by_order.get(order_id)
         diagnostic = diagnostics_by_order.get(order_id)
         deferred_item = deferred_items_by_order_id.get(order_id)
+        unplaced_item = unplaced_items_by_order_id.get(order_id)
         diagnostic_blocks = diagnostic and diagnostic.get("category") == "eligibility"
         planning_bucket = "blocked" if diagnostic_blocks or order["eligible_machine_count"] == 0 else _planning_bucket(order, planning_bucket_policy)
         order["planning_bucket"] = planning_bucket
@@ -1507,6 +1515,9 @@ def _build_preplan_order_buckets(
         elif deferred_item:
             bucket = "deferred"
             reason = deferred_item.get("message") or deferred_item.get("reason") or "candidate_optional_rejected"
+        elif unplaced_item:
+            bucket = "unplaced_solver_failed"
+            reason = unplaced_item.get("message") or unplaced_item.get("reason") or "required_order_unplaced"
         elif planning_bucket in {"candidate", "deferred"}:
             bucket = "deferred"
             reason = "订单未进入当前计划窗口，按策略推迟到候选或后续周期。"
@@ -1518,6 +1529,9 @@ def _build_preplan_order_buckets(
         if deferred_item:
             input_row["deferred_reason_code"] = deferred_item.get("reason")
             input_row["deferred_reason"] = deferred_item
+        if unplaced_item:
+            input_row["unplaced_reason_code"] = unplaced_item.get("reason")
+            input_row["unplaced_reason"] = unplaced_item
         input_orders.append(input_row)
 
         if bucket == "blocked":
@@ -1540,6 +1554,8 @@ def _build_preplan_order_buckets(
         else:
             if bucket == "deferred":
                 deferred_orders.append(input_row)
+            elif bucket == "unplaced_solver_failed":
+                unplaced_solver_failed_orders.append(input_row)
             else:
                 unplaced_schedulable_orders.append(input_row)
 
@@ -1553,6 +1569,7 @@ def _build_preplan_order_buckets(
         "must_schedule_orders": must_schedule_orders,
         "candidate_orders": candidate_orders,
         "deferred_orders": deferred_orders,
+        "unplaced_solver_failed_orders": unplaced_solver_failed_orders,
     }
 
 
@@ -1614,6 +1631,7 @@ def _load_preplan_order_context(cur, run, tasks, diagnostics):
         screening_items_by_order_id=screening_items_by_order_id,
         planning_bucket_policy=planning_bucket_policy,
         deferred_order_items=params.get("deferred_orders") or [],
+        unplaced_solver_failed_order_items=params.get("unplaced_solver_failed_orders") or [],
     )
 
 

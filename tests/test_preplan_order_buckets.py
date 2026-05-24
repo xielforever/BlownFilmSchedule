@@ -220,6 +220,34 @@ class TestPreplanOrderBuckets(unittest.TestCase):
         self.assertEqual(buckets["deferred_orders"][0]["bucket_reason"], "候选订单按本轮接受策略延后。")
         self.assertEqual(buckets["deferred_orders"][0]["deferred_reason_code"], "candidate_optional_rejected")
 
+    def test_solver_unplaced_orders_use_structured_bucket(self):
+        buckets = _build_preplan_order_buckets(
+            order_rows=[_order_due("ORD-MUST", 25)],
+            machines=[_machine()],
+            tasks=[],
+            diagnostics=[],
+            selected_order_ids=["ORD-MUST"],
+            planning_bucket_policy={
+                "plan_start": datetime(2026, 5, 24, tzinfo=timezone.utc),
+                "must_schedule_horizon_days": 3,
+                "candidate_horizon_days": 14,
+            },
+            unplaced_solver_failed_order_items=[{
+                "order_id": "ORD-MUST",
+                "reason": "required_order_unplaced",
+                "message": "Required order was not placed by the solver.",
+            }],
+        )
+
+        self.assertEqual([row["order_id"] for row in buckets["unplaced_solver_failed_orders"]], ["ORD-MUST"])
+        self.assertEqual(buckets["unplaced_solver_failed_orders"][0]["bucket"], "unplaced_solver_failed")
+        self.assertEqual(
+            buckets["unplaced_solver_failed_orders"][0]["bucket_reason"],
+            "Required order was not placed by the solver.",
+        )
+        self.assertEqual(buckets["unplaced_solver_failed_orders"][0]["unplaced_reason_code"], "required_order_unplaced")
+        self.assertEqual(buckets["unplaced_schedulable_orders"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
