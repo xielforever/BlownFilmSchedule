@@ -784,6 +784,25 @@ def _screening_override_audit_row_to_dict(row) -> dict[str, Any]:
     }
 
 
+def _latest_screening_override_from_order_row(row) -> dict[str, Any] | None:
+    if not row.get("screening_override_id"):
+        return None
+    return {
+        "id": row["screening_override_id"],
+        "order_id": row["order_id"],
+        "screening_status": row.get("screening_override_status"),
+        "screening_code": row.get("screening_override_code"),
+        "override_policy": row.get("screening_override_policy"),
+        "reason_code": row.get("screening_override_reason_code"),
+        "reason_text": row.get("screening_override_reason_text"),
+        "mode": row.get("screening_override_mode"),
+        "policy_version": row.get("screening_override_policy_version"),
+        "actor": row.get("screening_override_actor"),
+        "details": row.get("screening_override_details") or {},
+        "created_at": _iso(row.get("screening_override_created_at")),
+    }
+
+
 def _screening_summary(items: list[dict]) -> dict:
     return {
         "total_orders": len(items),
@@ -851,6 +870,7 @@ def list_orders(
     db=Depends(get_db),
     _=Depends(get_current_user),
 ):
+    _ensure_order_screening_override_schema(db)
     cur = db.cursor()
     where_clauses = ["1=1"]
     params = []
@@ -898,12 +918,31 @@ def list_orders(
             osc.root_cause AS screening_root_cause, osc.is_stale AS screening_is_stale,
             osc.stale_reason AS screening_stale_reason,
             osc.business_bucket AS screening_business_bucket,
-            osc.result AS screening_result
+            osc.result AS screening_result,
+            latest_override.id AS screening_override_id,
+            latest_override.screening_status AS screening_override_status,
+            latest_override.screening_code AS screening_override_code,
+            latest_override.override_policy AS screening_override_policy,
+            latest_override.reason_code AS screening_override_reason_code,
+            latest_override.reason_text AS screening_override_reason_text,
+            latest_override.mode AS screening_override_mode,
+            latest_override.policy_version AS screening_override_policy_version,
+            latest_override.actor AS screening_override_actor,
+            latest_override.details AS screening_override_details,
+            latest_override.created_at AS screening_override_created_at
         FROM production_orders o
         LEFT JOIN customers c ON o.customer_id = c.customer_id
         LEFT JOIN scheduled_tasks t ON o.order_id = t.order_id
             AND t.run_id = (SELECT run_id FROM schedule_runs WHERE is_active=TRUE ORDER BY run_id DESC LIMIT 1)
         LEFT JOIN order_screening_cache osc ON osc.order_id = o.order_id
+        LEFT JOIN LATERAL (
+            SELECT id, screening_status, screening_code, override_policy,
+                   reason_code, reason_text, mode, policy_version, actor, details, created_at
+            FROM order_screening_override_audit soa
+            WHERE soa.order_id = o.order_id
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+        ) latest_override ON TRUE
         {where}
         ORDER BY o.due_date
         LIMIT %s OFFSET %s
@@ -937,6 +976,7 @@ def list_orders(
                 "recommendations": screening_result.get("recommendations") or [],
                 "evidence": screening_result.get("evidence") or [],
                 "override_decision": screening_result.get("override_decision"),
+                "latest_override": _latest_screening_override_from_order_row(r),
             } if r.get("screening_status") else None,
             "sched_start": r["sched_start"].isoformat() if r["sched_start"] else None,
             "sched_end": r["sched_end"].isoformat() if r["sched_end"] else None,
@@ -951,6 +991,7 @@ def list_orders(
         LEFT JOIN customers c ON o.customer_id = c.customer_id
         LEFT JOIN scheduled_tasks t ON o.order_id = t.order_id
             AND t.run_id = (SELECT run_id FROM schedule_runs WHERE is_active=TRUE ORDER BY run_id DESC LIMIT 1)
+        LEFT JOIN order_screening_cache osc ON osc.order_id = o.order_id
         {where}
     """, params)
     total = cur.fetchone()["cnt"]

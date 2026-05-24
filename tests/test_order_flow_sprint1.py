@@ -384,6 +384,13 @@ class _FakeCursor:
             rows = []
             for row in self.db.production_orders.values():
                 cache = self.db.order_screening_cache.get(row["order_id"], {})
+                overrides = [
+                    dict(item)
+                    for item in self.db.order_screening_override_audit
+                    if item["order_id"] == row["order_id"]
+                ]
+                overrides.sort(key=lambda item: (item.get("created_at"), item["id"]), reverse=True)
+                latest_override = overrides[0] if overrides else {}
                 if status_filter and row["status"] != status_filter:
                     continue
                 if screening_status_filter and (cache.get("screening_status") or "").lower() != screening_status_filter:
@@ -410,6 +417,17 @@ class _FakeCursor:
                     "screening_stale_reason": cache.get("stale_reason"),
                     "screening_business_bucket": cache.get("business_bucket"),
                     "screening_result": cache.get("result"),
+                    "screening_override_id": latest_override.get("id"),
+                    "screening_override_status": latest_override.get("screening_status"),
+                    "screening_override_code": latest_override.get("screening_code"),
+                    "screening_override_policy": latest_override.get("override_policy"),
+                    "screening_override_reason_code": latest_override.get("reason_code"),
+                    "screening_override_reason_text": latest_override.get("reason_text"),
+                    "screening_override_mode": latest_override.get("mode"),
+                    "screening_override_policy_version": latest_override.get("policy_version"),
+                    "screening_override_actor": latest_override.get("actor"),
+                    "screening_override_details": latest_override.get("details"),
+                    "screening_override_created_at": latest_override.get("created_at"),
                 })
             self._rows = sorted(rows, key=lambda item: item["due_date"])
             return
@@ -1116,6 +1134,77 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
             result["items"][0]["screening"]["evidence"][0]["metric"],
             "target_width",
         )
+
+    def test_list_orders_includes_latest_screening_override_summary(self):
+        db = _FakeDb()
+        db.products.add("Film-A")
+        db.production_orders["ORD-LIST-OVERRIDE"] = {
+            "order_id": "ORD-LIST-OVERRIDE",
+            "customer_id": "STANDARD",
+            "product_type": "Film-A",
+            "target_width": 520,
+            "target_thickness": 35,
+            "total_quantity_kg": 1200,
+            "cleanroom_req": "Class_10K",
+            "order_class": "NORMAL",
+            "corona_req": False,
+            "core_size_inch": 3,
+            "order_date": None,
+            "due_date": datetime(2026, 5, 28, 8, 30, tzinfo=timezone.utc),
+            "material_available_time": None,
+            "status": "PENDING",
+            "priority_override": None,
+            "created_at": datetime(2026, 5, 22, 8, 0, tzinfo=timezone.utc),
+            "updated_at": datetime(2026, 5, 22, 8, 0, tzinfo=timezone.utc),
+        }
+        db.order_screening_cache["ORD-LIST-OVERRIDE"] = {
+            "screening_status": "risk",
+            "code": "due_risk",
+            "root_cause": "交期风险较高",
+            "business_bucket": "risk",
+            "result": {"business_bucket": "risk"},
+            "is_stale": False,
+        }
+        db.order_screening_override_audit.extend([
+            {
+                "id": 20,
+                "order_id": "ORD-LIST-OVERRIDE",
+                "screening_status": "risk",
+                "screening_code": "due_risk",
+                "override_policy": "restricted",
+                "reason_code": "SCREENING_OVERRIDE",
+                "reason_text": "旧豁免原因",
+                "mode": "formal",
+                "policy_version": 1,
+                "actor": "planner-a",
+                "details": {"override_decision": {"policy": "restricted"}},
+                "created_at": datetime(2026, 5, 24, 8, 30, tzinfo=timezone.utc),
+            },
+            {
+                "id": 21,
+                "order_id": "ORD-LIST-OVERRIDE",
+                "screening_status": "risk",
+                "screening_code": "due_risk",
+                "override_policy": "restricted",
+                "reason_code": "SCREENING_OVERRIDE",
+                "reason_text": "主管确认插入本轮",
+                "mode": "formal",
+                "policy_version": 2,
+                "actor": "planner-b",
+                "details": {"override_decision": {"policy": "restricted"}},
+                "created_at": datetime(2026, 5, 24, 9, 0, tzinfo=timezone.utc),
+            },
+        ])
+
+        result = orders_router.list_orders(status="PENDING", q=None, page=1, size=50, db=db)
+
+        override = result["items"][0]["screening"]["latest_override"]
+        self.assertEqual(override["id"], 21)
+        self.assertEqual(override["reason_text"], "主管确认插入本轮")
+        self.assertEqual(override["mode"], "formal")
+        self.assertEqual(override["policy_version"], 2)
+        self.assertEqual(override["actor"], "planner-b")
+        self.assertEqual(override["created_at"], "2026-05-24T09:00:00+00:00")
 
     def test_list_orders_filters_by_screening_status_bucket_and_stale_flag(self):
         db = _FakeDb()
