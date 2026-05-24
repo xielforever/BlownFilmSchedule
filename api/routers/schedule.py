@@ -882,6 +882,22 @@ def _manual_adjustment_impact_summary(adjustments: list[dict[str, Any]]) -> dict
     }
 
 
+def _locked_task_summary(tasks: list[dict[str, Any]]) -> dict[str, Any]:
+    locked_rows = [
+        task for task in tasks or []
+        if task.get("manual_lock_machine") or task.get("manual_lock_time")
+    ]
+    return {
+        "locked_task_count": len(locked_rows),
+        "machine_locked_count": sum(1 for task in locked_rows if task.get("manual_lock_machine")),
+        "time_locked_count": sum(1 for task in locked_rows if task.get("manual_lock_time")),
+        "protected_order_ids": [task.get("order_id") for task in locked_rows if task.get("order_id")],
+        "protected_machine_ids": list(dict.fromkeys(
+            task.get("machine_id") for task in locked_rows if task.get("machine_id")
+        )),
+    }
+
+
 def _locked_external_order_from_row(row: dict[str, Any]) -> ProductionOrderModel:
     return ProductionOrderModel(
         order_id=str(row.get("order_id")),
@@ -3529,6 +3545,7 @@ def get_preplan(run_id: int, db=Depends(get_db), _=Depends(get_current_user)):
         "validation": validation,
         "adjustments": adjustments,
         "adjustment_impact_summary": _manual_adjustment_impact_summary(adjustments),
+        "locked_task_summary": _locked_task_summary(tasks),
         "latest_publish_audit": latest_publish_audit,
         "diagnostics": diagnostics,
         **order_buckets,

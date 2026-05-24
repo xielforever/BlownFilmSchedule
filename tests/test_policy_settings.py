@@ -634,6 +634,34 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(summary["max_delay_delta_mins"], 120)
         self.assertEqual(summary["affected_order_ids"], ["ORD-A", "ORD-B"])
 
+    def test_locked_task_summary_lists_protected_orders(self):
+        summary = schedule_router._locked_task_summary([
+            {
+                "order_id": "ORD-MACHINE-LOCK",
+                "machine_id": "LINE-A",
+                "manual_lock_machine": True,
+                "manual_lock_time": False,
+            },
+            {
+                "order_id": "ORD-TIME-LOCK",
+                "machine_id": "LINE-B",
+                "manual_lock_machine": False,
+                "manual_lock_time": True,
+            },
+            {
+                "order_id": "ORD-FREE",
+                "machine_id": "LINE-C",
+                "manual_lock_machine": False,
+                "manual_lock_time": False,
+            },
+        ])
+
+        self.assertEqual(summary["locked_task_count"], 2)
+        self.assertEqual(summary["machine_locked_count"], 1)
+        self.assertEqual(summary["time_locked_count"], 1)
+        self.assertEqual(summary["protected_order_ids"], ["ORD-MACHINE-LOCK", "ORD-TIME-LOCK"])
+        self.assertEqual(summary["protected_machine_ids"], ["LINE-A", "LINE-B"])
+
 
 if __name__ == "__main__":
     unittest.main()
