@@ -173,6 +173,24 @@ def _evidence(**values) -> list[dict]:
     ]
 
 
+def _business_bucket(screening_status: str, code: str, diagnostic_code: Optional[str] = None) -> str:
+    if screening_status == "ready":
+        return "ready"
+    if screening_status == "risk":
+        return "risk"
+    if code in {"missing_product", "missing_recipe", "status_not_pending"}:
+        return "blocked_data_error"
+    if code == "material_not_ready":
+        return "blocked_material"
+    if code == "no_eligible_machine" and diagnostic_code == "eligibility.cleanroom_mismatch":
+        return "blocked_cleanroom"
+    if code == "no_eligible_machine":
+        return "blocked_machine_capability"
+    if screening_status == "blocked":
+        return "blocked_policy"
+    return screening_status or "unknown"
+
+
 def _item(
     order: ProductionOrderModel,
     *,
@@ -191,6 +209,7 @@ def _item(
     item = {
         "order_id": order.order_id,
         "screening_status": screening_status,
+        "business_bucket": _business_bucket(screening_status, code, diagnostic_code),
         "code": code,
         "severity": severity,
         "root_cause": root_cause,
@@ -470,6 +489,7 @@ def build_screening_snapshot(screening: dict) -> dict:
         {
             "order_id": item.get("order_id"),
             "screening_status": item.get("screening_status"),
+            "business_bucket": item.get("business_bucket"),
             "code": item.get("code"),
             "diagnostic_code": item.get("diagnostic_code"),
             "eligible_machine_count": item.get("eligible_machine_count"),

@@ -85,9 +85,20 @@ class TestOrderScreening(unittest.TestCase):
         item = result["items"][0]
         self.assertEqual(item["screening_status"], "blocked")
         self.assertEqual(item["code"], "no_eligible_machine")
+        self.assertEqual(item["business_bucket"], "blocked_machine_capability")
         self.assertEqual(item["eligible_machine_count"], 0)
         self.assertIn("幅宽", item["root_cause"])
         self.assertEqual(item["diagnostic_code"], "eligibility.width_out_of_range")
+
+    def test_no_cleanroom_machine_uses_cleanroom_business_bucket(self):
+        order = _make_order("ORD-CLEANROOM", cleanroom_req="Class_10K")
+        result = screen_orders([order], [_make_machine(cleanroom_level="Class_100K")])
+
+        item = result["items"][0]
+        self.assertEqual(item["screening_status"], "blocked")
+        self.assertEqual(item["code"], "no_eligible_machine")
+        self.assertEqual(item["business_bucket"], "blocked_cleanroom")
+        self.assertEqual(item["diagnostic_code"], "eligibility.cleanroom_mismatch")
 
     def test_material_after_due_date_blocks_order(self):
         order = _make_order("ORD-MATERIAL", material_available_mins=6000, due_date_mins=5000)
@@ -96,7 +107,22 @@ class TestOrderScreening(unittest.TestCase):
         item = result["items"][0]
         self.assertEqual(item["screening_status"], "blocked")
         self.assertEqual(item["code"], "material_not_ready")
+        self.assertEqual(item["business_bucket"], "blocked_material")
         self.assertIn("晚于交期", item["root_cause"])
+
+    def test_missing_master_data_uses_data_error_business_bucket(self):
+        missing_product = screen_orders(
+            [_make_order("ORD-MISSING-PRODUCT")],
+            [_make_machine()],
+            product_exists_by_order_id={"ORD-MISSING-PRODUCT": False},
+        )["items"][0]
+        missing_recipe = screen_orders(
+            [_make_order("ORD-MISSING-RECIPE", recipe_materials=[])],
+            [_make_machine()],
+        )["items"][0]
+
+        self.assertEqual(missing_product["business_bucket"], "blocked_data_error")
+        self.assertEqual(missing_recipe["business_bucket"], "blocked_data_error")
 
     def test_due_risk_flags_tight_but_feasible_order(self):
         order = _make_order("ORD-TIGHT", due_date_mins=150)
@@ -280,6 +306,17 @@ class TestOrderScreening(unittest.TestCase):
         self.assertEqual(first_snapshot["hash"], second_snapshot["hash"])
         self.assertEqual(first_snapshot["summary"], first["summary"])
         self.assertNotIn("generated_at", first_snapshot)
+
+    def test_screening_snapshot_preserves_business_bucket(self):
+        screening = screen_orders(
+            [_make_order("ORD-BUCKET-SNAPSHOT", target_width=9999)],
+            [_make_machine()],
+            scope="preplan",
+        )
+
+        snapshot = build_screening_snapshot(screening)
+
+        self.assertEqual(snapshot["items"][0]["business_bucket"], "blocked_machine_capability")
 
     def test_filter_screening_result_keeps_only_requested_status(self):
         screening = screen_orders(
