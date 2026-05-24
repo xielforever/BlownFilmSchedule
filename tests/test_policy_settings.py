@@ -640,6 +640,12 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(summary["max_delay_delta_mins"], 120)
         self.assertTrue(summary["has_negative_impact"])
         self.assertEqual(summary["negative_impact_order_ids"], ["ORD-A"])
+        self.assertEqual(summary["review_reasons"], [
+            {
+                "order_id": "ORD-A",
+                "reasons": ["end_delayed", "setup_increased", "tardiness_increased"],
+            }
+        ])
         self.assertEqual(summary["affected_order_ids"], ["ORD-A", "ORD-B"])
 
     def test_locked_task_summary_lists_protected_orders(self):
