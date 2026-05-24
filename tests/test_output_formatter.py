@@ -75,6 +75,36 @@ class TestOutputFormatter(unittest.TestCase):
 
         self.assertEqual(data["solver_metrics"], result.solver_metrics)
 
+    def test_schedule_json_exports_impact_summaries_as_top_level_contract(self):
+        result = ScheduleResult()
+        result.status = "FEASIBLE"
+        result.solver_metrics = {
+            "locked_task_protection": {
+                "locked_input_order_count": 1,
+                "external_locked_interval_count": 1,
+                "items": [{"order_id": "ORD-LOCKED"}],
+            },
+            "adjustment_impact_summary": {
+                "adjustment_count": 1,
+                "review_required_order_ids": ["ORD-LOCKED"],
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "schedule.json")
+            export_schedule_json(result, path)
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+
+        self.assertEqual(
+            data["locked_task_protection"],
+            result.solver_metrics["locked_task_protection"],
+        )
+        self.assertEqual(
+            data["adjustment_impact_summary"],
+            result.solver_metrics["adjustment_impact_summary"],
+        )
+
     def test_schedule_json_exports_deferred_orders(self):
         result = ScheduleResult()
         result.status = "FEASIBLE"

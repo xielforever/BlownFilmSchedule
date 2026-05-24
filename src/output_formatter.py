@@ -43,6 +43,7 @@ def export_schedule_json(result: ScheduleResult, path: str):
     """输出结构化 JSON 排程结果"""
     ensure_output_dir()
     deferred_orders = getattr(result, "deferred_orders", [])
+    solver_metrics = getattr(result, "solver_metrics", {}) or {}
     data = {
         "status": result.status,
         "input_order_count": getattr(result, "input_order_count", len(result.tasks)),
@@ -55,7 +56,9 @@ def export_schedule_json(result: ScheduleResult, path: str):
         "unplaced_solver_failed_orders": getattr(result, "unplaced_solver_failed_orders", []),
         "phase1_tardiness_score": result.phase1_score,
         "phase2_setup_score": result.phase2_score,
-        "solver_metrics": getattr(result, "solver_metrics", {}),
+        "solver_metrics": solver_metrics,
+        "locked_task_protection": solver_metrics.get("locked_task_protection", {}),
+        "adjustment_impact_summary": solver_metrics.get("adjustment_impact_summary", {}),
         "machines": {},
         "diagnostics": diagnostics_to_dicts(getattr(result, "diagnostics", [])),
     }
