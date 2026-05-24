@@ -691,6 +691,8 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "reasons": ["end_delayed", "setup_increased", "tardiness_increased"],
             }
         ])
+        self.assertEqual(summary["review_required_count"], 1)
+        self.assertEqual(summary["review_required_order_ids"], ["ORD-REVIEW"])
 
     def test_locked_task_summary_lists_protected_orders(self):
         summary = schedule_router._locked_task_summary([

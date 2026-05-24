@@ -951,6 +951,8 @@ def _manual_adjustment_impact_summary(
         "max_delay_delta_mins": max(delay_deltas) if delay_deltas else 0,
         "has_negative_impact": bool(negative_impact_order_ids),
         "negative_impact_order_ids": negative_impact_order_ids,
+        "review_required_count": len(negative_impact_order_ids),
+        "review_required_order_ids": negative_impact_order_ids,
         "review_reasons": review_reasons,
         "review_policy": review_policy,
         "affected_order_ids": affected_order_ids,
