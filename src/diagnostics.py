@@ -57,10 +57,11 @@ class Diagnostic:
     run_id: Optional[int] = None
     id: Optional[str] = None
     display_title: Optional[str] = None
+    level: Optional[str] = None
 
     def to_dict(self, run_id: Optional[int] = None) -> Dict[str, Any]:
         effective_run_id = self.run_id if run_id is None else run_id
-        return {
+        data = {
             "id": self.id or diagnostic_id(
                 effective_run_id,
                 self.entity_type,
@@ -80,6 +81,9 @@ class Diagnostic:
             "recommendations": [item.to_dict() for item in self.recommendations],
             "related_event": self.related_event,
         }
+        if self.level:
+            data["level"] = self.level
+        return data
 
 
 @dataclass

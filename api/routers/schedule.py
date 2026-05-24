@@ -23,7 +23,7 @@ from api.routers.orders import (
     _ensure_order_screening_schema,
     _mark_order_screening_cache_stale,
 )
-from src.config import BASELINE_TIME
+from src.config import BASELINE_TIME, CONTINUOUS_RUN_LIMIT_MINUTES
 from src.diagnostics import (
     Diagnostic,
     DiagnosticEvidence,
@@ -161,6 +161,8 @@ class ScheduleSettingsPayload(BaseModel):
     cleanroom_constraint_enabled: Optional[bool] = None
     machine_capability_constraint_enabled: Optional[bool] = None
     due_date_optimization_enabled: Optional[bool] = None
+    continuous_run_limit_mins: Optional[int] = None
+    continuous_run_enforcement_mode: Optional[str] = None
     change_reason: Optional[str] = None
 
 
@@ -179,6 +181,12 @@ POLICY_SETTING_KEYS = (
 )
 
 
+POLICY_VALUE_KEYS = (
+    "continuous_run_limit_mins",
+    "continuous_run_enforcement_mode",
+)
+
+
 POLICY_DEFAULTS = {
     "policy_version": 1,
     "review_required": True,
@@ -192,6 +200,8 @@ POLICY_DEFAULTS = {
     "cleanroom_constraint_enabled": True,
     "machine_capability_constraint_enabled": True,
     "due_date_optimization_enabled": True,
+    "continuous_run_limit_mins": CONTINUOUS_RUN_LIMIT_MINUTES,
+    "continuous_run_enforcement_mode": "publish_blocker",
 }
 
 
@@ -266,6 +276,8 @@ def _ensure_planning_schema_locked(db):
             cleanroom_constraint_enabled        BOOLEAN NOT NULL DEFAULT TRUE,
             machine_capability_constraint_enabled BOOLEAN NOT NULL DEFAULT TRUE,
             due_date_optimization_enabled       BOOLEAN NOT NULL DEFAULT TRUE,
+            continuous_run_limit_mins           INTEGER NOT NULL DEFAULT 4320,
+            continuous_run_enforcement_mode     VARCHAR(30) NOT NULL DEFAULT 'publish_blocker',
             policy_version                      INTEGER NOT NULL DEFAULT 1,
             updated_by                          VARCHAR(50),
             change_reason                       TEXT,
@@ -280,6 +292,8 @@ def _ensure_planning_schema_locked(db):
             ADD COLUMN IF NOT EXISTS cleanroom_constraint_enabled BOOLEAN NOT NULL DEFAULT TRUE,
             ADD COLUMN IF NOT EXISTS machine_capability_constraint_enabled BOOLEAN NOT NULL DEFAULT TRUE,
             ADD COLUMN IF NOT EXISTS due_date_optimization_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+            ADD COLUMN IF NOT EXISTS continuous_run_limit_mins INTEGER NOT NULL DEFAULT 4320,
+            ADD COLUMN IF NOT EXISTS continuous_run_enforcement_mode VARCHAR(30) NOT NULL DEFAULT 'publish_blocker',
             ADD COLUMN IF NOT EXISTS policy_version INTEGER NOT NULL DEFAULT 1,
             ADD COLUMN IF NOT EXISTS updated_by VARCHAR(50),
             ADD COLUMN IF NOT EXISTS change_reason TEXT
@@ -407,7 +421,8 @@ def _get_schedule_settings(db):
             auto_release_enabled, material_constraint_enabled,
             maintenance_constraint_enabled, setup_rules_enabled,
             cleanroom_constraint_enabled, machine_capability_constraint_enabled,
-            due_date_optimization_enabled, policy_version, updated_by,
+            due_date_optimization_enabled, continuous_run_limit_mins,
+            continuous_run_enforcement_mode, policy_version, updated_by,
             change_reason, updated_at
         FROM schedule_settings WHERE id=TRUE
     """)
@@ -424,6 +439,10 @@ def _policy_snapshot(settings: dict, enabled_rule_counts: dict | None = None) ->
     return {
         "policy_version": int(settings.get("policy_version") or 1),
         "settings": normalized,
+        "continuous_run": {
+            "limit_mins": int(settings.get("continuous_run_limit_mins") or CONTINUOUS_RUN_LIMIT_MINUTES),
+            "enforcement_mode": str(settings.get("continuous_run_enforcement_mode") or "publish_blocker"),
+        },
         "enabled_rule_counts": enabled_rule_counts or {},
         "runtime_rule_source": "db_only",
         "fallback_setup_used": False,
@@ -439,6 +458,8 @@ def _policy_snapshot_mismatch(saved: dict | None, current: dict | None) -> str |
         return "全局策略版本已变化，请重新预排后再发布。"
     if (saved.get("settings") or {}) != (current.get("settings") or {}):
         return "全局策略开关已变化，请重新预排后再发布。"
+    if (saved.get("continuous_run") or {}) != (current.get("continuous_run") or {}):
+        return "连续运行清场策略已变化，请重新预排后再发布。"
     if (saved.get("enabled_rule_counts") or {}) != (current.get("enabled_rule_counts") or {}):
         return "启用规则数量已变化，请重新预排后再发布。"
     return None
@@ -449,6 +470,21 @@ def _policy_snapshot_validation_item(saved: dict | None, current: dict | None) -
     if not message:
         return None
     return _validation_item("error", "policy_snapshot_stale", message)
+
+
+def _continuous_run_policy(settings: dict, setup_mgr) -> dict[str, Any]:
+    return {
+        "limit_mins": int(settings.get("continuous_run_limit_mins") or CONTINUOUS_RUN_LIMIT_MINUTES),
+        "cleaning_mins": int(getattr(setup_mgr, "continuous_run_cleaning_time", 0) or 0),
+        "enforcement_mode": str(settings.get("continuous_run_enforcement_mode") or "publish_blocker"),
+    }
+
+
+def _build_scheduler(setup_mgr, settings: dict) -> AdvancedMedicalAPS:
+    return AdvancedMedicalAPS(
+        setup_mgr,
+        continuous_run_policy=_continuous_run_policy(settings, setup_mgr),
+    )
 
 
 INPUT_SNAPSHOT_LABELS = {
@@ -971,6 +1007,26 @@ def _raise_if_unpublishable(validation: dict[str, Any]) -> None:
         status_code=400,
         detail={"message": "草案存在发布阻断，不能发布。", "validation": validation},
     )
+
+
+def _diagnostic_validation_items(diagnostics: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items = []
+    for diagnostic in diagnostics or []:
+        if diagnostic.get("code") != "maintenance.continuous_run_cleaning_required":
+            continue
+        level = diagnostic.get("level") or (
+            "publish_blocker" if diagnostic.get("severity") == "critical" else "warning"
+        )
+        if level not in VALIDATION_LEVELS:
+            level = "publish_blocker"
+        items.append(_validation_item(
+            "error" if level in VALIDATION_BLOCKING_LEVELS else level,
+            diagnostic.get("code"),
+            diagnostic.get("root_cause") or "连续运行清场规则未满足。",
+            machine_id=diagnostic.get("entity_id"),
+            level=level,
+        ))
+    return items
 
 
 def _publish_audit_payload(
@@ -1541,6 +1597,7 @@ def _load_preplan_validation(db, run_id: int):
     items = []
 
     params = _normalize_json(run_row.get("solver_params") if run_row else None, {}) or {}
+    items.extend(_diagnostic_validation_items(params.get("diagnostics") or []))
     summary = params.get("summary") or {}
     selected_ids = params.get("selected_order_ids") or []
     saved_snapshots = params.get("order_snapshots") or []
@@ -2848,13 +2905,22 @@ def update_schedule_settings(
     if not fields:
         raise HTTPException(status_code=400, detail="No settings to update.")
     change_reason = _require_policy_change_reason(fields.pop("change_reason", None))
-    allowed = set(POLICY_SETTING_KEYS)
+    allowed = set(POLICY_SETTING_KEYS) | set(POLICY_VALUE_KEYS)
     assignments = []
     params = []
     for key, value in fields.items():
-        if key in allowed:
+        if key in POLICY_SETTING_KEYS:
             assignments.append(f"{key}=%s")
             params.append(bool(value))
+        elif key == "continuous_run_limit_mins":
+            assignments.append(f"{key}=%s")
+            params.append(max(1, int(value)))
+        elif key == "continuous_run_enforcement_mode":
+            mode = str(value or "publish_blocker")
+            if mode not in {"hard", "publish_blocker", "experimental_disabled"}:
+                raise HTTPException(status_code=400, detail="Invalid continuous run enforcement mode.")
+            assignments.append(f"{key}=%s")
+            params.append(mode)
     if not assignments:
         raise HTTPException(status_code=400, detail="No valid settings to update.")
     _ensure_planning_schema(db)
@@ -2956,7 +3022,7 @@ def create_preplan(
         )
         override_audits = _load_latest_formal_screening_overrides(cur, order_ids)
         _raise_for_blocked_preplan_orders(screening, override_audits)
-        aps = AdvancedMedicalAPS(setup_mgr)
+        aps = _build_scheduler(setup_mgr, settings)
         result = aps.run(orders, machines)
         run_id = manager.save_schedule_result(
             result,

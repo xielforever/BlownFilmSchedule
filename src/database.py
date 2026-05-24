@@ -293,6 +293,8 @@ class DatabaseManager:
                     manual_adjust_reason_required       BOOLEAN NOT NULL DEFAULT TRUE,
                     publish_with_warnings_allowed       BOOLEAN NOT NULL DEFAULT TRUE,
                     auto_release_enabled                BOOLEAN NOT NULL DEFAULT FALSE,
+                    continuous_run_limit_mins           INTEGER NOT NULL DEFAULT 4320,
+                    continuous_run_enforcement_mode     VARCHAR(30) NOT NULL DEFAULT 'publish_blocker',
                     updated_at                          TIMESTAMPTZ DEFAULT NOW()
                 )
             """)
@@ -490,6 +492,8 @@ class DatabaseManager:
                 ADD COLUMN IF NOT EXISTS cleanroom_constraint_enabled BOOLEAN NOT NULL DEFAULT TRUE,
                 ADD COLUMN IF NOT EXISTS machine_capability_constraint_enabled BOOLEAN NOT NULL DEFAULT TRUE,
                 ADD COLUMN IF NOT EXISTS due_date_optimization_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                ADD COLUMN IF NOT EXISTS continuous_run_limit_mins INTEGER NOT NULL DEFAULT 4320,
+                ADD COLUMN IF NOT EXISTS continuous_run_enforcement_mode VARCHAR(30) NOT NULL DEFAULT 'publish_blocker',
                 ADD COLUMN IF NOT EXISTS policy_version INTEGER NOT NULL DEFAULT 1,
                 ADD COLUMN IF NOT EXISTS updated_by VARCHAR(50),
                 ADD COLUMN IF NOT EXISTS change_reason TEXT
@@ -500,7 +504,8 @@ class DatabaseManager:
             cur.execute("""
                 SELECT material_constraint_enabled, maintenance_constraint_enabled,
                     setup_rules_enabled, cleanroom_constraint_enabled,
-                    machine_capability_constraint_enabled, due_date_optimization_enabled
+                    machine_capability_constraint_enabled, due_date_optimization_enabled,
+                    continuous_run_limit_mins, continuous_run_enforcement_mode
                 FROM schedule_settings
                 WHERE id=TRUE
             """)
@@ -514,6 +519,8 @@ class DatabaseManager:
             "cleanroom_constraint_enabled": True,
             "machine_capability_constraint_enabled": True,
             "due_date_optimization_enabled": True,
+            "continuous_run_limit_mins": 4320,
+            "continuous_run_enforcement_mode": "publish_blocker",
         }
         return {**defaults, **dict(row or {})}
 

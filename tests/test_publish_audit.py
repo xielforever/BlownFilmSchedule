@@ -110,6 +110,25 @@ class TestPublishAuditPayload(unittest.TestCase):
         self.assertIn("不能发布", ctx.exception.detail["message"])
         self.assertIs(ctx.exception.detail["validation"], validation)
 
+    def test_continuous_run_diagnostic_maps_to_publish_blocker_validation_item(self):
+        items = schedule_router._diagnostic_validation_items([
+            {
+                "entity_type": "machine",
+                "entity_id": "LINE-01",
+                "severity": "critical",
+                "level": "publish_blocker",
+                "category": "maintenance",
+                "code": "maintenance.continuous_run_cleaning_required",
+                "root_cause": "LINE-01 连续运行超过上限。",
+            }
+        ])
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["level"], "publish_blocker")
+        self.assertEqual(items[0]["severity"], "error")
+        self.assertEqual(items[0]["code"], "maintenance.continuous_run_cleaning_required")
+        self.assertIn("LINE-01", items[0]["message"])
+
     def test_validation_summary_rejects_missing_invalid_or_mismatched_summary(self):
         validation = {
             "status": "PASSED",

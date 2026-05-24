@@ -201,6 +201,29 @@ class TestSchedulerSequencing(unittest.TestCase):
             for item in diagnostic.evidence
         ))
 
+    def test_continuous_run_policy_controls_limit_duration_and_level(self):
+        result = ScheduleResult()
+        machine = _make_machine(initialContinuousRunMins=0)
+        order = _make_order("ORD-CLEAN-POLICY")
+        result.add_task(ScheduledTask(order, machine, 0, 70, 0, 0, 0))
+        aps = AdvancedMedicalAPS(
+            _make_setup_mgr(),
+            continuous_run_policy={
+                "limit_mins": 60,
+                "cleaning_mins": 15,
+                "enforcement_mode": "publish_blocker",
+            },
+        )
+
+        aps._append_continuous_run_diagnostics(result)
+
+        self.assertEqual(len(result.diagnostics), 1)
+        diagnostic = result.diagnostics[0]
+        self.assertEqual(diagnostic.severity, "critical")
+        self.assertEqual(diagnostic.level, "publish_blocker")
+        self.assertTrue(any(item.metric == "limit_mins" and item.actual == 60 for item in diagnostic.evidence))
+        self.assertTrue(any(item.metric == "required_cleaning_mins" and item.actual == 15 for item in diagnostic.evidence))
+
     def test_decode_child_output_handles_gbk_logs(self):
         text = "订单 ORD-062 无可用机台: width=1718, thickness=80"
         self.assertEqual(_decode_child_output(text.encode("gbk")), text)

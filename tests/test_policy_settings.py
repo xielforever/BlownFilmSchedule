@@ -1,6 +1,7 @@
 import unittest
 from datetime import datetime
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from api.routers import schedule as schedule_router
 from src import database
@@ -18,9 +19,63 @@ class TestSchedulePolicySettings(unittest.TestCase):
             "cleanroom_constraint_enabled",
             "machine_capability_constraint_enabled",
             "due_date_optimization_enabled",
+            "continuous_run_limit_mins",
+            "continuous_run_enforcement_mode",
             "change_reason",
         ]:
             self.assertIn(key, fields)
+
+    def test_continuous_run_policy_uses_settings_and_setup_matrix(self):
+        setup_mgr = SimpleNamespace(continuous_run_cleaning_time=45)
+
+        policy = schedule_router._continuous_run_policy(
+            {
+                **schedule_router.POLICY_DEFAULTS,
+                "continuous_run_limit_mins": 240,
+                "continuous_run_enforcement_mode": "hard",
+            },
+            setup_mgr,
+        )
+
+        self.assertEqual(policy["limit_mins"], 240)
+        self.assertEqual(policy["cleaning_mins"], 45)
+        self.assertEqual(policy["enforcement_mode"], "hard")
+
+    def test_build_scheduler_passes_continuous_run_policy_to_solver(self):
+        setup_mgr = SimpleNamespace(continuous_run_cleaning_time=55)
+
+        with patch.object(schedule_router, "AdvancedMedicalAPS") as aps_cls:
+            schedule_router._build_scheduler(
+                setup_mgr,
+                {
+                    **schedule_router.POLICY_DEFAULTS,
+                    "continuous_run_limit_mins": 180,
+                    "continuous_run_enforcement_mode": "publish_blocker",
+                },
+            )
+
+        aps_cls.assert_called_once_with(
+            setup_mgr,
+            continuous_run_policy={
+                "limit_mins": 180,
+                "cleaning_mins": 55,
+                "enforcement_mode": "publish_blocker",
+            },
+        )
+
+    def test_policy_snapshot_captures_continuous_run_strategy(self):
+        snapshot = schedule_router._policy_snapshot(
+            {
+                **schedule_router.POLICY_DEFAULTS,
+                "policy_version": 6,
+                "continuous_run_limit_mins": 360,
+                "continuous_run_enforcement_mode": "publish_blocker",
+            },
+            {},
+        )
+
+        self.assertEqual(snapshot["continuous_run"]["limit_mins"], 360)
+        self.assertEqual(snapshot["continuous_run"]["enforcement_mode"], "publish_blocker")
 
     def test_policy_snapshot_captures_version_settings_and_rule_counts(self):
         snapshot = schedule_router._policy_snapshot(

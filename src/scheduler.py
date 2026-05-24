@@ -315,9 +315,22 @@ class SetupCalculator:
 class AdvancedMedicalAPS:
     """基于 OR-Tools CP-SAT 的两阶段分层求解引擎"""
 
-    def __init__(self, setup_mgr: SetupMatricesManager):
+    def __init__(self, setup_mgr: SetupMatricesManager, continuous_run_policy: Optional[Dict] = None):
         self.setup_calc = SetupCalculator(setup_mgr)
         self.setup_mgr = setup_mgr
+        self.continuous_run_policy = self._normalize_continuous_run_policy(continuous_run_policy)
+
+    @staticmethod
+    def _normalize_continuous_run_policy(policy: Optional[Dict]) -> Dict:
+        policy = policy or {}
+        mode = str(policy.get("enforcement_mode") or "publish_blocker")
+        if mode not in {"hard", "publish_blocker", "experimental_disabled"}:
+            mode = "publish_blocker"
+        return {
+            "limit_mins": max(1, int(policy.get("limit_mins") or CONTINUOUS_RUN_LIMIT_MINUTES)),
+            "cleaning_mins": max(0, int(policy.get("cleaning_mins") or MANDATORY_CLEANING_DURATION_MINUTES)),
+            "enforcement_mode": mode,
+        }
 
     @staticmethod
     def _tardiness_weight(order: ProductionOrderModel) -> int:
@@ -585,6 +598,12 @@ class AdvancedMedicalAPS:
 
     def _append_continuous_run_diagnostics(self, result: ScheduleResult) -> None:
         """Post-solve visibility for the 72h cleaning rule."""
+        policy = self.continuous_run_policy
+        limit_mins = policy["limit_mins"]
+        cleaning_mins = policy["cleaning_mins"]
+        enforcement_mode = policy["enforcement_mode"]
+        validation_level = "publish_blocker" if enforcement_mode in {"hard", "publish_blocker"} else "warning"
+        severity = "critical" if validation_level == "publish_blocker" else "warning"
         for machine_id, tasks in result.machine_sequences.items():
             ordered = sorted(tasks, key=lambda item: (item.start_mins, item.end_mins))
             if not ordered:
@@ -605,29 +624,30 @@ class AdvancedMedicalAPS:
                     segment_first_order = task.order.order_id
                 elif last_end is not None:
                     gap = setup_start - last_end
-                    if gap >= MANDATORY_CLEANING_DURATION_MINUTES:
+                    if gap >= cleaning_mins:
                         segment_anchor = setup_start
                         segment_initial = 0
                         segment_first_order = task.order.order_id
 
                 elapsed = segment_initial + task.end_mins - (segment_anchor or 0)
-                if elapsed > CONTINUOUS_RUN_LIMIT_MINUTES and not reported:
+                if elapsed > limit_mins and not reported:
                     result.diagnostics.append(Diagnostic(
                         entity_type="machine",
                         entity_id=machine_id,
-                        severity="warning",
+                        severity=severity,
                         category="maintenance",
                         code="maintenance.continuous_run_cleaning_required",
                         confidence="inferred",
                         root_cause=(
                             f"{machine_id} 当前计划段连续运行约 {elapsed} 分钟，"
-                            f"超过 {CONTINUOUS_RUN_LIMIT_MINUTES} 分钟上限；需要在该段前后插入"
-                            f"不少于 {MANDATORY_CLEANING_DURATION_MINUTES} 分钟的清场/维护窗口后重新排程。"
+                            f"超过 {limit_mins} 分钟上限；需要在该段前后插入"
+                            f"不少于 {cleaning_mins} 分钟的清场/维护窗口后重新排程。"
                         ),
                         evidence=[
                             DiagnosticEvidence("continuous_run_mins", elapsed, "min"),
-                            DiagnosticEvidence("limit_mins", CONTINUOUS_RUN_LIMIT_MINUTES, "min"),
-                            DiagnosticEvidence("required_cleaning_mins", MANDATORY_CLEANING_DURATION_MINUTES, "min"),
+                            DiagnosticEvidence("limit_mins", limit_mins, "min"),
+                            DiagnosticEvidence("required_cleaning_mins", cleaning_mins, "min"),
+                            DiagnosticEvidence("enforcement_mode", enforcement_mode),
                             DiagnosticEvidence("first_order_id", segment_first_order),
                             DiagnosticEvidence("last_order_id", task.order.order_id),
                         ],
@@ -644,6 +664,7 @@ class AdvancedMedicalAPS:
                             ),
                         ],
                         display_title=f"{machine_id} 连续运行超过 72h",
+                        level=validation_level,
                     ))
                     reported = True
 
