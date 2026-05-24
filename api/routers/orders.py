@@ -1406,10 +1406,11 @@ def get_order_screening_action_options(
         WHERE actor IS NOT NULL AND TRIM(actor) <> ''
         ORDER BY actor
     """)
-    actor_filters = [
+    actor_filters = [{"value": "unassigned", "label": "未分配"}]
+    actor_filters.extend(
         {"value": row["actor"], "label": row["actor"]}
         for row in cur.fetchall()
-    ]
+    )
     return {
         "action_types": [
             {"value": value, "label": label}

@@ -2189,7 +2189,7 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         self.assertIn("in_progress", status_values)
         self.assertIn("resolved", status_values)
         self.assertEqual(assignee_values, ["unassigned", "material-admin", "order-admin"])
-        self.assertEqual(actor_values, ["planner", "planner-a", "planner-b"])
+        self.assertEqual(actor_values, ["unassigned", "planner", "planner-a", "planner-b"])
         self.assertEqual(
             next(item for item in result["handling_statuses"] if item["value"] == "unhandled")["label"],
             "未处理",
