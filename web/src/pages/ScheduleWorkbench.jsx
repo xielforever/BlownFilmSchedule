@@ -5,6 +5,7 @@ import {
   clearActiveSchedule,
   confirmPreplan,
   createPreplan,
+  createOrderScreeningOverride,
   getManufacturingQueue,
   getMachines,
   getOrders,
@@ -29,6 +30,7 @@ import {
   isDraftStale,
   isSelectableScreening,
   matchesScreeningFilter,
+  screeningOverrideAction,
   screeningOverrideBadge,
   screeningPoolCounts,
   selectableOrderIds,
@@ -1157,6 +1159,29 @@ export default function ScheduleWorkbench() {
     }
   };
 
+  const applyScreeningOverride = async (screening) => {
+    const action = screeningOverrideAction(screening, { canOverride: true });
+    if (!action || action.disabled) return;
+    const reason = window.prompt('\u8bf7\u8f93\u5165\u7b5b\u9009\u8c41\u514d\u539f\u56e0');
+    if (!reason || !reason.trim()) {
+      setStatus({ tone: 'error', message: '\u7b5b\u9009\u8c41\u514d\u5fc5\u987b\u586b\u5199\u539f\u56e0\u3002' });
+      return;
+    }
+    setBusy(true);
+    try {
+      await createOrderScreeningOverride(action.orderId, {
+        reason_code: action.reasonCode,
+        reason_text: reason.trim(),
+      });
+      await loadAll(Boolean(activePlan));
+      setStatus({ tone: 'ok', message: `\u5df2\u8bb0\u5f55\u7b5b\u9009\u8c41\u514d\uff1a${action.orderId}` });
+    } catch (err) {
+      setStatus({ tone: 'error', message: formatError(err, '\u8bb0\u5f55\u7b5b\u9009\u8c41\u514d\u5931\u8d25\u3002') });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleResetOrders = async () => {
     if (!resetConfirming) {
       setResetConfirming(true);
@@ -1579,6 +1604,7 @@ export default function ScheduleWorkbench() {
           const screening = screeningByOrderId.get(order.order_id);
           const selectable = isSelectableScreening(screening);
           const overrideBadge = screeningOverrideBadge(screening);
+          const overrideAction = screeningOverrideAction(screening, { canOverride: true });
           return (
             <div
               key={order.order_id}
@@ -1627,6 +1653,21 @@ export default function ScheduleWorkbench() {
                     ))}
                   </div>
                 </div>
+              )}
+              {overrideAction && (
+                <button
+                  className="btn btn-ghost btn-small"
+                  type="button"
+                  data-testid={`workbench-screening-override-action-${testIdPart(order.order_id)}`}
+                  disabled={overrideAction.disabled || workbenchBusy}
+                  title={overrideAction.disabledReason || ''}
+                  onClick={event => {
+                    event.stopPropagation();
+                    applyScreeningOverride(screening);
+                  }}
+                >
+                  {overrideAction.label}
+                </button>
               )}
             </div>
           );
