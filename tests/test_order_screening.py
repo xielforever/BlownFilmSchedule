@@ -58,12 +58,19 @@ class TestOrderScreening(unittest.TestCase):
     def test_default_screening_policy_declares_override_code_classes(self):
         self.assertEqual(
             set(DEFAULT_SCREENING_POLICY["prohibited_override_codes"]),
-            {"missing_product", "missing_recipe", "no_eligible_machine", "status_not_pending"},
+            {
+                "invalid_order_data",
+                "missing_product",
+                "missing_recipe",
+                "no_eligible_machine",
+                "status_not_pending",
+            },
         )
         self.assertEqual(
             set(DEFAULT_SCREENING_POLICY["restricted_override_codes"]),
             {"material_not_ready", "due_risk"},
         )
+        self.assertIn("total_quantity_kg", DEFAULT_SCREENING_POLICY["required_positive_order_fields"])
 
     def test_screening_policy_normalization_removes_override_code_conflicts(self):
         policy = _normalize_screening_policy({
@@ -196,6 +203,51 @@ class TestOrderScreening(unittest.TestCase):
 
         self.assertEqual(missing_product["business_bucket"], "blocked_data_error")
         self.assertEqual(missing_recipe["business_bucket"], "blocked_data_error")
+
+    def test_invalid_required_order_values_block_as_data_error_before_machine_fit(self):
+        result = screen_orders(
+            [
+                _make_order(
+                    "ORD-INVALID-DATA",
+                    target_width=0,
+                    target_thickness=0,
+                    total_quantity_kg=0,
+                    due_date_mins=0,
+                )
+            ],
+            [_make_machine(min_width=100, min_thickness=20)],
+        )
+
+        item = result["items"][0]
+        self.assertEqual(item["screening_status"], "blocked")
+        self.assertEqual(item["code"], "invalid_order_data")
+        self.assertEqual(item["business_bucket"], "blocked_data_error")
+        self.assertEqual(item["eligible_machine_count"], 0)
+        self.assertIn(
+            {"metric": "invalid_required_fields", "actual": [
+                "due_date_mins",
+                "target_thickness",
+                "target_width",
+                "total_quantity_kg",
+            ]},
+            item["evidence"],
+        )
+        self.assertFalse(item["override_decision"]["allowed"])
+
+    def test_required_positive_order_fields_are_configurable(self):
+        result = screen_orders(
+            [_make_order("ORD-ZERO-QUANTITY", total_quantity_kg=0)],
+            [_make_machine()],
+            screening_policy={
+                "required_positive_order_fields": [
+                    "target_width",
+                    "target_thickness",
+                    "due_date_mins",
+                ],
+            },
+        )
+
+        self.assertEqual(result["items"][0]["screening_status"], "ready")
 
     def test_due_risk_flags_tight_but_feasible_order(self):
         order = _make_order("ORD-TIGHT", due_date_mins=150)

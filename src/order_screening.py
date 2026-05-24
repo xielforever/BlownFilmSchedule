@@ -22,12 +22,19 @@ DEFAULT_SCREENING_POLICY = {
     "prohibited_override_codes": [
         "missing_product",
         "missing_recipe",
+        "invalid_order_data",
         "no_eligible_machine",
         "status_not_pending",
     ],
     "restricted_override_codes": [
         "material_not_ready",
         "due_risk",
+    ],
+    "required_positive_order_fields": [
+        "due_date_mins",
+        "target_thickness",
+        "target_width",
+        "total_quantity_kg",
     ],
 }
 
@@ -191,6 +198,8 @@ def _business_bucket(screening_status: str, code: str, diagnostic_code: Optional
         return "risk"
     if code in {"missing_product", "missing_recipe", "status_not_pending"}:
         return "blocked_data_error"
+    if code == "invalid_order_data":
+        return "blocked_data_error"
     if code == "material_not_ready":
         return "blocked_material"
     if code == "no_eligible_machine" and diagnostic_code == "eligibility.cleanroom_mismatch":
@@ -311,6 +320,10 @@ def _normalize_screening_policy(policy: Optional[dict] = None) -> dict:
         "restricted_override_codes",
         DEFAULT_SCREENING_POLICY["restricted_override_codes"],
     )
+    required_positive_order_fields = policy.get(
+        "required_positive_order_fields",
+        DEFAULT_SCREENING_POLICY["required_positive_order_fields"],
+    )
     prohibited_codes = _normalize_policy_values(prohibited_override_codes)
     restricted_codes = _normalize_policy_values(restricted_override_codes) - prohibited_codes
     return {
@@ -322,6 +335,7 @@ def _normalize_screening_policy(policy: Optional[dict] = None) -> dict:
         ) or set(DEFAULT_SCREENING_POLICY["allowed_order_statuses"]),
         "prohibited_override_codes": prohibited_codes,
         "restricted_override_codes": restricted_codes,
+        "required_positive_order_fields": _normalize_policy_values(required_positive_order_fields, transform=str),
     }
 
 
@@ -337,6 +351,21 @@ def _normalize_policy_values(values, *, transform=str.lower) -> set[str]:
     }
 
 
+def _invalid_required_order_fields(order: ProductionOrderModel, policy: dict) -> list[str]:
+    invalid_fields = []
+    for field in policy.get("required_positive_order_fields") or []:
+        value = getattr(order, field, None)
+        if value is None:
+            invalid_fields.append(field)
+            continue
+        try:
+            if float(value) <= 0:
+                invalid_fields.append(field)
+        except (TypeError, ValueError):
+            invalid_fields.append(field)
+    return sorted(invalid_fields)
+
+
 def screen_order(
     order: ProductionOrderModel,
     machines: Iterable[BlownFilmMachineModel],
@@ -348,13 +377,6 @@ def screen_order(
     machine_list = list(machines)
     policy = _normalize_screening_policy(screening_policy)
     candidate_machine_count = len(machine_list)
-    fit_results = [evaluate_machine_fit(order, machine) for machine in machine_list]
-    eligible_machines = [
-        machine
-        for machine, fit in zip(machine_list, fit_results)
-        if fit.eligible
-    ]
-    eligible_machine_count = len(eligible_machines)
 
     normalized_status = (status or "").strip().upper()
     if normalized_status not in policy["allowed_order_statuses"]:
@@ -365,11 +387,26 @@ def screen_order(
             severity="critical",
             root_cause=f"订单 {order.order_id} 当前状态为 {status}，只有待排订单可以进入预排。",
             candidate_machine_count=candidate_machine_count,
-            eligible_machine_count=eligible_machine_count,
+            eligible_machine_count=0,
             evidence=_evidence(
                 order_status=status,
                 allowed_order_statuses=sorted(policy["allowed_order_statuses"]),
             ),
+            override_policy=policy,
+        )
+
+    invalid_fields = _invalid_required_order_fields(order, policy)
+    if invalid_fields:
+        return _item(
+            order,
+            screening_status="blocked",
+            code="invalid_order_data",
+            severity="critical",
+            root_cause=f"订单 {order.order_id} 存在关键排程字段缺失或非法，不能进入预排。",
+            candidate_machine_count=candidate_machine_count,
+            eligible_machine_count=0,
+            evidence=_evidence(invalid_required_fields=invalid_fields),
+            recommendations=_screening_recommendations(order.order_id, "invalid_order_data"),
             override_policy=policy,
         )
 
@@ -386,6 +423,14 @@ def screen_order(
             recommendations=_screening_recommendations(order.order_id, "missing_product"),
             override_policy=policy,
         )
+
+    fit_results = [evaluate_machine_fit(order, machine) for machine in machine_list]
+    eligible_machines = [
+        machine
+        for machine, fit in zip(machine_list, fit_results)
+        if fit.eligible
+    ]
+    eligible_machine_count = len(eligible_machines)
 
     if not order.recipe_materials:
         return _item(
