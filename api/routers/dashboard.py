@@ -28,11 +28,19 @@ def _schedule_summary_counts(run):
     schedulable_count = summary.get("schedulable_order_count", scheduled_count)
     input_count = summary.get("input_order_count", schedulable_count)
     blocked_count = summary.get("blocked_order_count", max(0, input_count - schedulable_count))
+    deferred_count = summary.get("deferred_order_count", 0)
+    unplaced_solver_failed_count = summary.get("unplaced_solver_failed_order_count", 0)
+    deferred_reason_counts = summary.get("deferred_reason_counts")
+    if not isinstance(deferred_reason_counts, dict):
+        deferred_reason_counts = {}
     return {
         "input_order_count": input_count,
         "scheduled_order_count": scheduled_count,
         "schedulable_order_count": schedulable_count,
         "blocked_order_count": blocked_count,
+        "deferred_order_count": deferred_count,
+        "unplaced_solver_failed_order_count": unplaced_solver_failed_count,
+        "deferred_reason_counts": deferred_reason_counts,
     }
 
 
