@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scripts.solver_benchmark import (
     BenchmarkCase,
+    PROFILE_ACCEPTANCE_DEFAULTS,
     build_sprint5_baseline_cases,
     main,
     run_benchmark_suite,
@@ -66,6 +67,15 @@ class TestSolverBenchmark(unittest.TestCase):
             "max_pruning_late_order_delta": None,
             "max_pruning_weighted_tardiness_delta": None,
             "max_pruning_setup_time_delta_mins": None,
+            "profile_acceptance_policy": {
+                "profile": "fast",
+                "max_wall_time_seconds": 10.0,
+                "max_gap": PROFILE_ACCEPTANCE_DEFAULTS["fast"]["max_gap"],
+                "min_scheduled_ratio": 0.0,
+                "max_late_order_count": None,
+                "max_weighted_tardiness": None,
+                "max_total_setup_time_mins": None,
+            },
             "arc_pruning_enabled": False,
             "arc_pruning_max_setup_mins": 0,
             "arc_pruning_top_k_per_order": 0,
@@ -88,6 +98,7 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertIn("deferred_reason_counts", case)
         self.assertIn("machine_load", case)
         self.assertIn("phase_metrics", case)
+        self.assertEqual(case["profile_acceptance_policy"], summary["case_configs"][0]["profile_acceptance_policy"])
         self.assertEqual(case["baseline_metrics"], {
             "solver_status": case["solver_status"],
             "wall_time_seconds": case["wall_time_seconds"],
@@ -179,9 +190,53 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertEqual([case["name"] for case in summary["cases"]], ["fast-3", "standard-3"])
         self.assertEqual(summary["profile_acceptance"]["fast"]["case_count"], 1)
         self.assertEqual(summary["profile_acceptance"]["standard"]["case_count"], 1)
+        self.assertIn("acceptance_policy", summary["profile_acceptance"]["standard"])
         self.assertIn("max_wall_time_seconds", summary["profile_acceptance"]["standard"])
         self.assertIn("min_scheduled_ratio", summary["profile_acceptance"]["standard"])
         self.assertIn("deferred_reason_counts", summary["profile_acceptance"]["standard"])
+
+    def test_sprint5_baseline_uses_profile_default_thresholds_when_not_overridden(self):
+        cases = build_sprint5_baseline_cases(
+            order_counts=[50],
+            profiles=["fast", "standard", "deep"],
+            machine_count=4,
+        )
+
+        by_profile = {case.profile: case for case in cases}
+        for profile, defaults in PROFILE_ACCEPTANCE_DEFAULTS.items():
+            self.assertEqual(by_profile[profile].max_wall_time_seconds, defaults["max_wall_time_seconds"])
+            self.assertEqual(by_profile[profile].max_gap, defaults["max_gap"])
+            self.assertEqual(by_profile[profile].min_scheduled_ratio, defaults["min_scheduled_ratio"])
+
+    def test_benchmark_summary_records_profile_acceptance_policy_snapshot(self):
+        summary = run_benchmark_suite([
+            BenchmarkCase(
+                name="fast-policy",
+                order_count=3,
+                machine_count=1,
+                profile="fast",
+                max_wall_time_seconds=10,
+                max_gap=0.5,
+                min_scheduled_ratio=0.75,
+            ),
+            BenchmarkCase(
+                name="standard-policy",
+                order_count=3,
+                machine_count=1,
+                profile="standard",
+                max_wall_time_seconds=20,
+                max_gap=0.2,
+                min_scheduled_ratio=0.9,
+            ),
+        ])
+
+        fast_policy = summary["cases"][0]["profile_acceptance_policy"]
+        self.assertEqual(fast_policy["profile"], "fast")
+        self.assertEqual(fast_policy["max_wall_time_seconds"], 10)
+        self.assertEqual(fast_policy["max_gap"], 0.5)
+        self.assertEqual(fast_policy["min_scheduled_ratio"], 0.75)
+        self.assertEqual(summary["profile_acceptance"]["fast"]["acceptance_policy"], fast_policy)
+        self.assertEqual(summary["profile_acceptance"]["standard"]["acceptance_policy"]["max_wall_time_seconds"], 20)
 
     def test_benchmark_command_uses_sprint5_baseline_case_contract(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -402,6 +457,7 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertIn("# Solver Benchmark Report", report)
         self.assertIn("## Cases", report)
         self.assertIn("## Profile Acceptance", report)
+        self.assertIn("Acceptance Policy", report)
         self.assertIn("## Scale Acceptance", report)
         self.assertIn("## Baseline Metrics", report)
         self.assertIn("## Machine Model Sizes", report)
@@ -410,7 +466,7 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertIn("same_material_family_top_k", report)
         self.assertIn("Eligible Orders | Assignments | Optional Candidates | Arcs | Pruned Arcs | Setup Cache", report)
         self.assertIn("## Deferred Reasons", report)
-        self.assertIn("Min Scheduled Ratio | Deferred Reasons | Failed Checks", report)
+        self.assertIn("Min Scheduled Ratio | Acceptance Policy | Deferred Reasons | Failed Checks", report)
         self.assertIn("fast-3-pruning-off", report)
         self.assertIn("fast-3-pruning-on", report)
         self.assertIn("## Arc Pruning Comparisons", report)

@@ -19,6 +19,32 @@ from src.setup_matrices import SetupMatricesManager
 
 PASS_STATUSES = {"OPTIMAL", "FEASIBLE", "PARTIAL", "UNPUBLISHABLE"}
 SUMMARY_SCHEMA_VERSION = "solver-benchmark-v1"
+PROFILE_ACCEPTANCE_DEFAULTS = {
+    "fast": {
+        "max_wall_time_seconds": 60.0,
+        "max_gap": None,
+        "min_scheduled_ratio": 1.0,
+        "max_late_order_count": None,
+        "max_weighted_tardiness": None,
+        "max_total_setup_time_mins": None,
+    },
+    "standard": {
+        "max_wall_time_seconds": 120.0,
+        "max_gap": None,
+        "min_scheduled_ratio": 1.0,
+        "max_late_order_count": None,
+        "max_weighted_tardiness": None,
+        "max_total_setup_time_mins": None,
+    },
+    "deep": {
+        "max_wall_time_seconds": 300.0,
+        "max_gap": None,
+        "min_scheduled_ratio": 1.0,
+        "max_late_order_count": None,
+        "max_weighted_tardiness": None,
+        "max_total_setup_time_mins": None,
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -74,6 +100,7 @@ def _case_config(case: BenchmarkCase) -> dict:
         "max_pruning_late_order_delta": case.max_pruning_late_order_delta,
         "max_pruning_weighted_tardiness_delta": case.max_pruning_weighted_tardiness_delta,
         "max_pruning_setup_time_delta_mins": case.max_pruning_setup_time_delta_mins,
+        "profile_acceptance_policy": _profile_acceptance_policy(case),
         "arc_pruning_enabled": case.arc_pruning_enabled,
         "arc_pruning_max_setup_mins": case.arc_pruning_max_setup_mins,
         "arc_pruning_top_k_per_order": case.arc_pruning_top_k_per_order,
@@ -87,6 +114,23 @@ def _case_config(case: BenchmarkCase) -> dict:
     if case.comparison_variant:
         config["comparison_variant"] = case.comparison_variant
     return config
+
+
+def _profile_defaults(profile: str) -> dict:
+    return dict(PROFILE_ACCEPTANCE_DEFAULTS.get(profile) or PROFILE_ACCEPTANCE_DEFAULTS["standard"])
+
+
+def _profile_acceptance_policy(case: BenchmarkCase) -> dict:
+    defaults = _profile_defaults(case.profile)
+    return {
+        "profile": case.profile,
+        "max_wall_time_seconds": case.max_wall_time_seconds,
+        "max_gap": case.max_gap if case.max_gap is not None else defaults["max_gap"],
+        "min_scheduled_ratio": case.min_scheduled_ratio,
+        "max_late_order_count": case.max_late_order_count,
+        "max_weighted_tardiness": case.max_weighted_tardiness,
+        "max_total_setup_time_mins": case.max_total_setup_time_mins,
+    }
 
 
 def _make_machine(index: int) -> BlownFilmMachineModel:
@@ -139,21 +183,30 @@ def build_sprint5_baseline_cases(
     order_counts: Iterable[int] = (50, 100, 200, 300),
     profiles: Iterable[str] = ("fast", "standard"),
     machine_count: int = 4,
-    max_wall_time_seconds: float = 120.0,
+    max_wall_time_seconds: float | None = None,
     max_gap: float | None = None,
-    min_scheduled_ratio: float = 0.0,
+    min_scheduled_ratio: float | None = None,
 ) -> list[BenchmarkCase]:
     cases: list[BenchmarkCase] = []
     for profile in profiles:
+        defaults = _profile_defaults(str(profile))
         for count in order_counts:
             cases.append(BenchmarkCase(
                 name=f"sprint5-{profile}-{int(count)}-baseline",
                 order_count=int(count),
                 machine_count=max(1, int(machine_count)),
                 profile=str(profile),
-                max_wall_time_seconds=max_wall_time_seconds,
-                max_gap=max_gap,
-                min_scheduled_ratio=min_scheduled_ratio,
+                max_wall_time_seconds=(
+                    defaults["max_wall_time_seconds"]
+                    if max_wall_time_seconds is None
+                    else max_wall_time_seconds
+                ),
+                max_gap=defaults["max_gap"] if max_gap is None else max_gap,
+                min_scheduled_ratio=(
+                    defaults["min_scheduled_ratio"]
+                    if min_scheduled_ratio is None
+                    else min_scheduled_ratio
+                ),
                 arc_pruning_enabled=False,
             ))
     return cases
@@ -184,12 +237,13 @@ def _deferred_reason_counts(deferred_orders) -> dict[str, int]:
 
 def run_benchmark_case(case: BenchmarkCase) -> dict:
     orders, machines, setup_mgr = build_benchmark_dataset(case)
+    profile_acceptance_policy = _profile_acceptance_policy(case)
     aps = AdvancedMedicalAPS(
         setup_mgr,
         solver_profile_policy={
             "profile": case.profile,
             "time_limit_seconds": case.max_wall_time_seconds,
-            "relative_gap_limit": case.max_gap or 0.0,
+            "relative_gap_limit": profile_acceptance_policy["max_gap"] or 0.0,
             "random_seed": 0,
             "num_workers": 8,
             "log_search_progress": False,
@@ -238,7 +292,11 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
         failed_checks.append("wall_time_seconds")
     if scheduled_ratio < case.min_scheduled_ratio:
         failed_checks.append("scheduled_ratio")
-    if case.max_gap is not None and gap is not None and float(gap) > case.max_gap:
+    if (
+        profile_acceptance_policy["max_gap"] is not None
+        and gap is not None
+        and float(gap) > profile_acceptance_policy["max_gap"]
+    ):
         failed_checks.append("gap")
     if case.max_late_order_count is not None and late_order_count > case.max_late_order_count:
         failed_checks.append("late_order_count")
@@ -282,6 +340,7 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
             "max_pruning_weighted_tardiness_delta": case.max_pruning_weighted_tardiness_delta,
             "max_pruning_setup_time_delta_mins": case.max_pruning_setup_time_delta_mins,
         },
+        "profile_acceptance_policy": profile_acceptance_policy,
         "arc_pruning_policy": {
             "enabled": case.arc_pruning_enabled,
             "max_setup_time_mins": case.arc_pruning_max_setup_mins,
@@ -399,6 +458,7 @@ def _profile_acceptance(case_results: list[dict]) -> dict[str, dict]:
             "case_count": len(cases),
             "passed_count": sum(1 for case in cases if case.get("passed")),
             "failed_count": sum(1 for case in cases if not case.get("passed")),
+            "acceptance_policy": cases[0].get("profile_acceptance_policy") or {},
             "max_wall_time_seconds": max((float(case.get("wall_time_seconds") or 0.0) for case in cases), default=0.0),
             "max_gap": max(gaps) if gaps else None,
             "min_scheduled_ratio": min((float(case.get("scheduled_ratio") or 0.0) for case in cases), default=0.0),
@@ -596,8 +656,8 @@ def render_markdown_report(summary: dict) -> str:
             "",
             "## Profile Acceptance",
             "",
-            "| Profile | Cases | Passed | Failed | Max Wall Time | Max Gap | Min Scheduled Ratio | Deferred Reasons | Failed Checks |",
-            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
+            "| Profile | Cases | Passed | Failed | Max Wall Time | Max Gap | Min Scheduled Ratio | Acceptance Policy | Deferred Reasons | Failed Checks |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |",
         ])
         for profile, item in sorted(profile_acceptance.items()):
             deferred_reasons = ", ".join(
@@ -605,7 +665,7 @@ def render_markdown_report(summary: dict) -> str:
                 for reason, count in (item.get("deferred_reason_counts") or {}).items()
             ) or "-"
             lines.append(
-                "| {profile} | {cases} | {passed} | {failed} | {wall} | {gap} | {ratio} | {deferred} | {checks} |".format(
+                "| {profile} | {cases} | {passed} | {failed} | {wall} | {gap} | {ratio} | {policy} | {deferred} | {checks} |".format(
                     profile=profile,
                     cases=item.get("case_count"),
                     passed=item.get("passed_count"),
@@ -613,6 +673,7 @@ def render_markdown_report(summary: dict) -> str:
                     wall=_fmt(item.get("max_wall_time_seconds")),
                     gap=_fmt(item.get("max_gap")),
                     ratio=_fmt(item.get("min_scheduled_ratio")),
+                    policy=_fmt_arc_pruning_policy(item.get("acceptance_policy")),
                     deferred=deferred_reasons,
                     checks=", ".join(item.get("failed_checks") or []) or "-",
                 )
@@ -690,13 +751,22 @@ def _parse_profiles(value: str) -> List[str]:
 
 
 def _common_case_options(args, profile: str, count: int) -> dict:
+    defaults = _profile_defaults(profile)
     return {
         "order_count": count,
         "machine_count": max(1, args.machine_count),
         "profile": profile,
-        "max_wall_time_seconds": args.max_wall_time_seconds,
-        "max_gap": args.max_gap,
-        "min_scheduled_ratio": max(0.0, float(args.min_scheduled_ratio)),
+        "max_wall_time_seconds": (
+            defaults["max_wall_time_seconds"]
+            if args.max_wall_time_seconds is None
+            else args.max_wall_time_seconds
+        ),
+        "max_gap": defaults["max_gap"] if args.max_gap is None else args.max_gap,
+        "min_scheduled_ratio": (
+            defaults["min_scheduled_ratio"]
+            if args.min_scheduled_ratio is None
+            else max(0.0, float(args.min_scheduled_ratio))
+        ),
         "max_late_order_count": (
             None if args.max_late_order_count is None else max(0, int(args.max_late_order_count))
         ),
@@ -756,9 +826,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--machine-count", type=int, default=2)
     parser.add_argument("--profile", default="fast", choices=["fast", "standard", "deep"])
     parser.add_argument("--profiles", type=_parse_profiles, default=None)
-    parser.add_argument("--max-wall-time-seconds", type=float, default=120.0)
+    parser.add_argument("--max-wall-time-seconds", type=float, default=None)
     parser.add_argument("--max-gap", type=float, default=None)
-    parser.add_argument("--min-scheduled-ratio", type=float, default=0.0)
+    parser.add_argument("--min-scheduled-ratio", type=float, default=None)
     parser.add_argument("--max-late-order-count", type=int, default=None)
     parser.add_argument("--max-weighted-tardiness", type=int, default=None)
     parser.add_argument("--max-total-setup-time-mins", type=int, default=None)
@@ -786,7 +856,9 @@ def main(argv: list[str] | None = None) -> int:
             machine_count=max(1, args.machine_count),
             max_wall_time_seconds=args.max_wall_time_seconds,
             max_gap=args.max_gap,
-            min_scheduled_ratio=max(0.0, float(args.min_scheduled_ratio)),
+            min_scheduled_ratio=(
+                None if args.min_scheduled_ratio is None else max(0.0, float(args.min_scheduled_ratio))
+            ),
         )
     else:
         cases = []
