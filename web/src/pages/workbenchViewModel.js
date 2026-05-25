@@ -304,6 +304,7 @@ export function solverQualitySummary(activePlan) {
   const phase1Status = phase1.status || runStatus;
   const phase2Status = phase2.status || '-';
   const deferredCount = Number(summary.deferred_order_count || 0);
+  const planningBucketCounts = summary.planning_bucket_counts || {};
   const totalWallTime = Number(phase1.wall_time || 0) + Number(phase2.wall_time || 0);
   const provenOptimal = runStatus === 'OPTIMAL' && phase1Status === 'OPTIMAL' && (!phase2.status || phase2.status === 'OPTIMAL');
   const blocked = ['INFEASIBLE', 'INVALID', 'MODEL_INVALID'].includes(runStatus);
@@ -326,6 +327,9 @@ export function solverQualitySummary(activePlan) {
     detail: detailParts.join(' · '),
     metrics: [
       { key: 'orders', label: '输入', value: Number(modelSize.order_count || summary.input_order_count || 0) },
+      { key: 'must_schedule', label: '必排', value: Number(planningBucketCounts.must_schedule || 0) },
+      { key: 'candidate', label: '候选', value: Number(planningBucketCounts.candidate || 0) },
+      { key: 'deferred', label: '延后', value: Number(planningBucketCounts.deferred || 0) },
       { key: 'arcs', label: '弧', value: Number(modelSize.arc_count || 0) },
       { key: 'pruned_arcs', label: '裁剪', value: Number(modelSize.pruned_arc_count || 0) },
       { key: 'wall_time', label: '耗时', value: formatSeconds(totalWallTime) },

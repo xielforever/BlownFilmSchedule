@@ -527,6 +527,7 @@ test('solverQualitySummary explains solver proof and candidate deferrals for wor
         summary: {
           deferred_order_count: 2,
           deferred_reason_counts: { candidate_optional_rejected: 2 },
+          planning_bucket_counts: { must_schedule: 6, candidate: 4, deferred: 2 },
         },
         solver_metrics: {
           phase_1: { status: 'FEASIBLE', gap: 0.125, wall_time: 1.4 },
@@ -541,6 +542,9 @@ test('solverQualitySummary explains solver proof and candidate deferrals for wor
       detail: 'Phase 1 FEASIBLE · gap 12.5% · Phase 2 UNKNOWN · 候选延后 2 单',
       metrics: [
         { key: 'orders', label: '输入', value: 12 },
+        { key: 'must_schedule', label: '必排', value: 6 },
+        { key: 'candidate', label: '候选', value: 4 },
+        { key: 'deferred', label: '延后', value: 2 },
         { key: 'arcs', label: '弧', value: 40 },
         { key: 'pruned_arcs', label: '裁剪', value: 5 },
         { key: 'wall_time', label: '耗时', value: '2.2s' },

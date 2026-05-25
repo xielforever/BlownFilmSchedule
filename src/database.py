@@ -219,6 +219,15 @@ def _build_schedule_run_solver_params(
     screening_snapshot: Optional[dict] = None,
 ) -> dict:
     deferred_orders = getattr(result, "deferred_orders", [])
+    planning_bucket_counts = {}
+    for task in getattr(result, "tasks", []) or []:
+        bucket = getattr(getattr(task, "order", None), "planning_bucket", None)
+        if bucket:
+            planning_bucket_counts[bucket] = planning_bucket_counts.get(bucket, 0) + 1
+    for order in list(deferred_orders) + list(getattr(result, "unplaced_solver_failed_orders", []) or []):
+        bucket = order.get("planning_bucket")
+        if bucket:
+            planning_bucket_counts[bucket] = planning_bucket_counts.get(bucket, 0) + 1
     deferred_reason_counts = {}
     for order in deferred_orders:
         reason = order.get("deferred_reason_code") or order.get("reason") or "unknown"
@@ -234,6 +243,7 @@ def _build_schedule_run_solver_params(
             "deferred_order_count": len(deferred_orders),
             "deferred_reason_counts": deferred_reason_counts,
             "unplaced_solver_failed_order_count": len(getattr(result, "unplaced_solver_failed_orders", [])),
+            "planning_bucket_counts": planning_bucket_counts,
         },
         "deferred_orders": deferred_orders,
         "unplaced_solver_failed_orders": getattr(result, "unplaced_solver_failed_orders", []),

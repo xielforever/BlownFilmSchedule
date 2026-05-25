@@ -789,6 +789,35 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(params["summary"]["unplaced_solver_failed_order_count"], 1)
         self.assertEqual(params["unplaced_solver_failed_orders"], result.unplaced_solver_failed_orders)
 
+    def test_solver_params_summary_counts_planning_buckets(self):
+        task = SimpleNamespace(order=SimpleNamespace(planning_bucket="must_schedule"))
+        result = type("Result", (), {
+            "input_order_count": 3,
+            "schedulable_order_count": 2,
+            "blocked_order_count": 0,
+            "tasks": [task],
+            "deferred_orders": [
+                {"order_id": "ORD-CANDIDATE", "planning_bucket": "candidate", "reason": "candidate_optional_rejected"},
+                {"order_id": "ORD-DEFERRED", "planning_bucket": "deferred", "reason": "planning_window_deferred"},
+            ],
+            "unplaced_solver_failed_orders": [],
+            "solver_metrics": {},
+        })()
+
+        params = database._build_schedule_run_solver_params(
+            result=result,
+            diagnostics_payload=[],
+            normalized_order_ids=["ORD-MUST", "ORD-CANDIDATE", "ORD-DEFERRED"],
+            order_snapshots=[],
+            mode="AUTO",
+        )
+
+        self.assertEqual(params["summary"]["planning_bucket_counts"], {
+            "must_schedule": 1,
+            "candidate": 1,
+            "deferred": 1,
+        })
+
     def test_run_row_to_dict_exposes_preplan_screening_snapshot(self):
         screening_snapshot = {
             "summary": {"ready_count": 1, "risk_count": 0, "blocked_count": 0},
