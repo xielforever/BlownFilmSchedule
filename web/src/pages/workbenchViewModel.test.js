@@ -10,6 +10,7 @@ import {
   screeningOverrideDraftRisk,
   canCreateScreeningOverride,
   deferredReasonFilterOptions,
+  matchesDeferredReasonFilter,
   derivePublishChecklist,
   deriveReviewTabs,
   adjustmentImpactSummaryCards,
@@ -143,6 +144,23 @@ test('deferredReasonFilterOptions exposes backend reason counts for filtering', 
     ],
   );
   assert.deepEqual(deferredReasonFilterOptions({}), []);
+});
+
+test('matchesDeferredReasonFilter uses backend deferred reason codes', () => {
+  assert.equal(
+    matchesDeferredReasonFilter({ deferred_reason_code: 'candidate_optional_rejected' }, 'candidate_optional_rejected'),
+    true,
+  );
+  assert.equal(
+    matchesDeferredReasonFilter({ deferred_reason_code: 'planning_window_deferred' }, 'candidate_optional_rejected'),
+    false,
+  );
+  assert.equal(
+    matchesDeferredReasonFilter({ reason: 'candidate_optional_rejected' }, 'candidate_optional_rejected'),
+    true,
+  );
+  assert.equal(matchesDeferredReasonFilter({ deferred_reason_code: 'x' }, 'all'), true);
+  assert.equal(matchesDeferredReasonFilter({ deferred_reason_code: 'x' }, ''), true);
 });
 
 test('screeningOverrideBadge explains override boundaries and applied overrides', () => {

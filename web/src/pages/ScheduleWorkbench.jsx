@@ -32,8 +32,10 @@ import {
   draftVersionLabels,
   draftVersionTones,
   canCreateScreeningOverride,
+  deferredReasonFilterOptions,
   isDraftStale,
   isSelectableScreening,
+  matchesDeferredReasonFilter,
   matchesScreeningFilter,
   screeningOverrideAction,
   screeningOverrideBadge,
@@ -596,6 +598,7 @@ export default function ScheduleWorkbench() {
   const [adjustment, setAdjustment] = useState(null);
   const [selectedPlanOrderId, setSelectedPlanOrderId] = useState('');
   const [planOrderTab, setPlanOrderTab] = useState('input');
+  const [deferredReasonFilter, setDeferredReasonFilter] = useState('all');
   const [workspaceView, setWorkspaceView] = useState('orders');
   const [cancelConfirming, setCancelConfirming] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
@@ -968,9 +971,17 @@ export default function ScheduleWorkbench() {
     }),
     [hardValidationItems.length, needsActionCount, planOrderCounts],
   );
+  const deferredReasonOptions = useMemo(
+    () => deferredReasonFilterOptions(activePlan?.run?.summary?.deferred_reason_counts),
+    [activePlan],
+  );
   const visiblePlanOrderRows = useMemo(
-    () => planOrderRows[planOrderTab] || [],
-    [planOrderRows, planOrderTab],
+    () => {
+      const rows = planOrderRows[planOrderTab] || [];
+      if (planOrderTab !== 'deferred') return rows;
+      return rows.filter(row => matchesDeferredReasonFilter(row, deferredReasonFilter));
+    },
+    [deferredReasonFilter, planOrderRows, planOrderTab],
   );
   const draftOrderPageCount = pageCount(visiblePlanOrderRows.length);
   const pagedVisiblePlanOrderRows = useMemo(
@@ -1515,6 +1526,7 @@ export default function ScheduleWorkbench() {
   const selectPlanOrderTab = (tabKey) => {
     const nextRows = planOrderRows[tabKey] || [];
     setPlanOrderTab(tabKey);
+    if (tabKey !== 'deferred') setDeferredReasonFilter('all');
     setWorkspaceView('orders');
     setCancelConfirming(false);
     setAdjustment(null);
@@ -2025,6 +2037,24 @@ export default function ScheduleWorkbench() {
                       </button>
                     ))}
                   </div>
+                  {planOrderTab === 'deferred' && deferredReasonOptions.length > 0 && (
+                    <div className="workbench-plan-tabs compact" aria-label="延后原因筛选" data-testid="workbench-deferred-reason-filters">
+                      {deferredReasonOptions.map(option => (
+                        <button
+                          key={option.key}
+                          type="button"
+                          className={`${deferredReasonFilter === option.key ? 'active' : ''} warning`.trim()}
+                          onClick={() => {
+                            setDeferredReasonFilter(option.key);
+                            setDraftOrdersPage(1);
+                          }}
+                        >
+                          <span>{option.label}</span>
+                          <strong>{option.count}</strong>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {selectedPlanOrderId && !selectedOrderInCurrentTab && (
                     <div className="workbench-context-note">
                       当前选中订单不在“{activePlanOrderTab.label}”分类中，已保留右侧复核上下文。

@@ -508,3 +508,9 @@ export function deferredReasonFilterOptions(reasonCounts = {}) {
     })),
   ];
 }
+
+export function matchesDeferredReasonFilter(row, reasonFilter) {
+  if (!reasonFilter || reasonFilter === 'all') return true;
+  const reason = row?.deferred_reason_code || row?.reason || row?.reason_code;
+  return reason === reasonFilter;
+}
