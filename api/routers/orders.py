@@ -1080,6 +1080,7 @@ def list_orders(
             osc.root_cause AS screening_root_cause, osc.is_stale AS screening_is_stale,
             osc.stale_reason AS screening_stale_reason,
             osc.business_bucket AS screening_business_bucket,
+            osc.policy_version AS screening_policy_version,
             osc.result AS screening_result,
             latest_override.id AS screening_override_id,
             latest_override.screening_status AS screening_override_status,
@@ -1150,6 +1151,7 @@ def list_orders(
             "screening": {
                 "screening_status": r.get("screening_status"),
                 "business_bucket": r.get("screening_business_bucket") or screening_result.get("business_bucket"),
+                "policy_version": r.get("screening_policy_version"),
                 "code": r.get("screening_code"),
                 "root_cause": r.get("screening_root_cause"),
                 "is_stale": r.get("screening_is_stale"),

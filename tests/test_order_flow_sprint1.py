@@ -498,6 +498,7 @@ class _FakeCursor:
                     "screening_is_stale": cache.get("is_stale"),
                     "screening_stale_reason": cache.get("stale_reason"),
                     "screening_business_bucket": cache.get("business_bucket"),
+                    "screening_policy_version": cache.get("policy_version"),
                     "screening_result": cache.get("result"),
                     "screening_override_id": latest_override.get("id"),
                     "screening_override_status": latest_override.get("screening_status"),
@@ -1809,6 +1810,7 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
             },
             "is_stale": True,
             "stale_reason": "machine_capability_changed",
+            "policy_version": 4,
         }
 
         result = orders_router.list_orders(status="PENDING", q=None, page=1, size=50, db=db)
@@ -1816,6 +1818,7 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         self.assertEqual(result["items"][0]["screening"]["screening_status"], "blocked")
         self.assertEqual(result["items"][0]["screening"]["code"], "no_eligible_machine")
         self.assertEqual(result["items"][0]["screening"]["business_bucket"], "blocked_machine_capability")
+        self.assertEqual(result["items"][0]["screening"]["policy_version"], 4)
         self.assertIs(result["items"][0]["screening"]["is_stale"], True)
         self.assertEqual(
             result["items"][0]["screening"]["stale_reason"],
