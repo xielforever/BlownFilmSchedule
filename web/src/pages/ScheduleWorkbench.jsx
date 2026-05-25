@@ -5,6 +5,7 @@ import {
   clearActiveSchedule,
   confirmPreplan,
   createPreplan,
+  createOrderScreeningAction,
   createOrderScreeningOverride,
   getManufacturingQueue,
   getMachines,
@@ -37,6 +38,8 @@ import {
   isSelectableScreening,
   matchesDeferredReasonFilter,
   matchesScreeningFilter,
+  screeningHandlingAction,
+  screeningHandlingBadge,
   screeningOverrideAction,
   screeningOverrideBadge,
   screeningOverrideDraftRisk,
@@ -1278,6 +1281,38 @@ export default function ScheduleWorkbench() {
     }
   };
 
+  const recordScreeningHandling = async (screening) => {
+    const action = screeningHandlingAction(screening);
+    if (!action) return;
+    const reason = window.prompt('请输入异常订单处理说明');
+    if (!reason || !reason.trim()) {
+      setStatus({ tone: 'error', message: '异常处理说明不能为空。' });
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await createOrderScreeningAction(action.orderId, {
+        action_type: action.actionType,
+        handling_status: action.handlingStatus,
+        reason_text: reason.trim(),
+      });
+      const latestAction = res.data.latest_action;
+      setOrderScreening(prev => ({
+        ...prev,
+        items: (prev.items || []).map(item =>
+          item.order_id === action.orderId
+            ? { ...item, latest_action: latestAction }
+            : item,
+        ),
+      }));
+      setStatus({ tone: 'ok', message: `已记录异常处理：${action.orderId}` });
+    } catch (err) {
+      setStatus({ tone: 'error', message: formatError(err, '记录异常处理失败。') });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleResetOrders = async () => {
     if (!resetConfirming) {
       setResetConfirming(true);
@@ -1707,6 +1742,8 @@ export default function ScheduleWorkbench() {
           const selectable = isSelectableScreening(screening);
           const overrideBadge = screeningOverrideBadge(screening);
           const overrideAction = screeningOverrideAction(screening, { canOverride: canOverrideScreening });
+          const handlingBadge = screeningHandlingBadge(screening);
+          const handlingAction = screeningHandlingAction(screening);
           return (
             <div
               key={order.order_id}
@@ -1735,9 +1772,15 @@ export default function ScheduleWorkbench() {
                     <Badge tone={overrideBadge.tone}>{overrideBadge.label}</Badge>
                   </span>
                 )}
+                {handlingBadge && (
+                  <span data-testid={`workbench-screening-handling-${testIdPart(order.order_id)}`}>
+                    <Badge tone={handlingBadge.tone}>{handlingBadge.label}</Badge>
+                  </span>
+                )}
                 <span>{formatTime(order.due_date)}</span>
               </div>
               {overrideBadge?.detail && screening?.screening_status !== 'ready' && <small>{overrideBadge.detail}</small>}
+              {handlingBadge?.detail && screening?.screening_status !== 'ready' && <small>{handlingBadge.detail}</small>}
               {screening && screening.screening_status !== 'ready' && <small>{screening.root_cause}</small>}
               {!!screening?.recommendations?.length && screening.screening_status !== 'ready' && (
                 <div className="workbench-screening-actions">
@@ -1769,6 +1812,20 @@ export default function ScheduleWorkbench() {
                   }}
                 >
                   {overrideAction.label}
+                </button>
+              )}
+              {handlingAction && (
+                <button
+                  className="btn btn-ghost btn-small"
+                  type="button"
+                  data-testid={`workbench-screening-action-record-${testIdPart(order.order_id)}`}
+                  disabled={workbenchBusy}
+                  onClick={event => {
+                    event.stopPropagation();
+                    recordScreeningHandling(screening);
+                  }}
+                >
+                  {handlingAction.label}
                 </button>
               )}
             </div>

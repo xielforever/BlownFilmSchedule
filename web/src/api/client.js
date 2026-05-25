@@ -47,6 +47,8 @@ export const screenOrders = (payload = {}) => api.post('/orders/screening', payl
 export const getOrderScreening = (id) => api.get(`/orders/${id}/screening`);
 export const createOrderScreeningOverride = (id, payload) => api.post(`/orders/${id}/screening-override`, payload);
 export const getOrderScreeningOverrides = (id) => api.get(`/orders/${id}/screening-overrides`);
+export const createOrderScreeningAction = (id, payload) => api.post(`/orders/${id}/screening-action`, payload);
+export const getOrderScreeningActions = (id) => api.get(`/orders/${id}/screening-actions`);
 export const previewOrderImport = (payload) => api.post('/orders/import-preview', payload);
 export const commitOrderImport = (payload) => api.post('/orders/import-commit', payload);
 export const createOrder = (payload) => api.post('/orders', payload);

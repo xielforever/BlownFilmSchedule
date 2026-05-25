@@ -8,6 +8,8 @@ import {
   screeningOverrideAction,
   screeningOverrideBadge,
   screeningOverrideDraftRisk,
+  screeningHandlingBadge,
+  screeningHandlingAction,
   canCreateScreeningOverride,
   deferredReasonFilterOptions,
   matchesDeferredReasonFilter,
@@ -231,6 +233,51 @@ test('screeningOverrideAction only enables restricted unapplied overrides with p
     }, { canOverride: true }),
     null,
   );
+});
+
+test('screeningHandlingAction maps screening recommendations to worker handling actions', () => {
+  assert.deepEqual(
+    screeningHandlingAction({
+      order_id: 'ORD-WIDE',
+      screening_status: 'blocked',
+      business_bucket: 'blocked_machine_capability',
+      recommendations: [{ category: 'machine' }],
+    }),
+    {
+      orderId: 'ORD-WIDE',
+      actionType: 'update_master_data',
+      handlingStatus: 'in_progress',
+      label: '记录处理',
+    },
+  );
+  assert.deepEqual(
+    screeningHandlingAction({
+      order_id: 'ORD-MATERIAL',
+      screening_status: 'blocked',
+      business_bucket: 'blocked_material',
+      recommendations: [{ category: 'material' }],
+    }).actionType,
+    'confirm_material',
+  );
+  assert.equal(screeningHandlingAction({ order_id: 'ORD-READY', screening_status: 'ready' }), null);
+});
+
+test('screeningHandlingBadge exposes latest exception handling state', () => {
+  assert.deepEqual(
+    screeningHandlingBadge({
+      latest_action: {
+        action_type: 'update_master_data',
+        handling_status: 'waiting_external',
+        assignee: '工艺主管',
+      },
+    }),
+    {
+      label: '等待外部确认',
+      tone: 'warning',
+      detail: '维护机台/工艺主数据 · 工艺主管',
+    },
+  );
+  assert.equal(screeningHandlingBadge({}), null);
 });
 
 test('canCreateScreeningOverride follows operator role permissions', () => {

@@ -452,6 +452,57 @@ export function canCreateScreeningOverride(user) {
   return user?.role === 'admin' || user?.role === 'planner';
 }
 
+const handlingStatusMeta = {
+  open: { label: '待处理', tone: 'danger' },
+  in_progress: { label: '处理中', tone: 'warning' },
+  waiting_external: { label: '等待外部确认', tone: 'warning' },
+  resolved: { label: '已处理', tone: 'success' },
+};
+
+const handlingActionTypeLabels = {
+  request_data_fix: '退回订单数据修正',
+  update_master_data: '维护机台/工艺主数据',
+  confirm_material: '确认物料方案',
+  reconfirm_due_date: '重新确认交期',
+  mark_reviewed: '标记已复核',
+  mark_resolved: '标记已处理',
+};
+
+export function screeningHandlingBadge(screening) {
+  const action = screening?.latest_action;
+  if (!action) return null;
+  const status = handlingStatusMeta[action.handling_status] || {
+    label: action.handling_status || '已记录',
+    tone: 'neutral',
+  };
+  const actionLabel = handlingActionTypeLabels[action.action_type] || action.action_type || '异常处理';
+  return {
+    label: status.label,
+    tone: status.tone,
+    detail: [actionLabel, action.assignee].filter(Boolean).join(' · '),
+  };
+}
+
+export function screeningHandlingAction(screening) {
+  if (!screening || screening.screening_status === 'ready') return null;
+  if (screening.is_stale) return null;
+  const category = screening.recommendations?.[0]?.category;
+  const bucket = screening.business_bucket;
+  let actionType = 'mark_reviewed';
+  if (category === 'order' || bucket === 'blocked_data_error') actionType = 'request_data_fix';
+  if (category === 'machine' || category === 'rules' || bucket === 'blocked_machine_capability' || bucket === 'blocked_cleanroom') {
+    actionType = 'update_master_data';
+  }
+  if (category === 'material' || bucket === 'blocked_material') actionType = 'confirm_material';
+  if (category === 'schedule' || screening.code === 'due_risk') actionType = 'reconfirm_due_date';
+  return {
+    orderId: screening.order_id,
+    actionType,
+    handlingStatus: 'in_progress',
+    label: '记录处理',
+  };
+}
+
 export function matchesScreeningFilter(screeningOrStatus, filter) {
   const screening = typeof screeningOrStatus === 'object' && screeningOrStatus !== null
     ? screeningOrStatus

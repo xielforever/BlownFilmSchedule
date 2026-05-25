@@ -408,6 +408,43 @@ test.describe.serial('schedule workbench closed loop', () => {
     await expect(page.getByTestId('workbench-status')).toContainText('\u5df2\u8bb0\u5f55\u7b5b\u9009\u8c41\u514d');
   });
 
+  test('records screening exception handling from the order pool', async ({ page, request }) => {
+    const sample = (await pendingReadyOrders(request, 1))[0];
+    test.skip(!sample, 'no sample product available for screening handling setup');
+    const orderId = `E2EHANDLE${Date.now().toString().slice(-7)}`;
+    const created = await apiJson(request, 'post', '/api/orders', {
+      data: {
+        order_id: orderId,
+        product_type: sample.product_type,
+        customer_class: 'STANDARD',
+        target_width: 9999,
+        target_thickness: 35,
+        total_quantity_kg: 1200,
+        cleanroom_req: 'Class_100K',
+        order_class: 'NORMAL',
+        due_date: '2026-06-01T08:00:00',
+        reason_code: 'E2E_SETUP',
+        reason_text: 'E2E setup for screening handling',
+      },
+    });
+    expect(created.ok()).toBeTruthy();
+    cleanupOrderIds.push(orderId);
+
+    await openWorkbench(page);
+    await openOrderPoolIfCollapsed(page);
+    await page.getByTestId('workbench-filter-screening').selectOption('blocked');
+    await page.getByTestId('workbench-search').fill(orderId);
+    await expect(page.getByTestId(`workbench-pending-order-${testIdPart(orderId)}`)).toBeVisible();
+
+    page.once('dialog', async dialog => {
+      expect(dialog.type()).toBe('prompt');
+      await dialog.accept('E2E machine capability returned to process owner');
+    });
+    await page.getByTestId(`workbench-screening-action-record-${testIdPart(orderId)}`).click();
+    await expect(page.getByTestId('workbench-status')).toContainText('已记录异常处理');
+    await expect(page.getByTestId(`workbench-screening-handling-${testIdPart(orderId)}`)).toContainText('处理中');
+  });
+
   test('paginates long order pools and draft order reviews', async ({ page, request }) => {
     const sample = (await pendingOrders(request, 1))[0];
     test.skip(!sample, 'no sample product available for pagination setup');
