@@ -1,6 +1,8 @@
 from datetime import datetime
+from decimal import Decimal
 
 from src.snapshotting import (
+    build_rule_matrix_snapshot,
     build_input_snapshot,
     build_machine_capability_snapshot,
     build_order_snapshot,
@@ -96,6 +98,23 @@ def test_input_snapshot_combines_order_machine_rule_process_and_screening_hashes
     assert snapshot["rule_matrix"]["hash"] == "rules-v1"
     assert snapshot["process"]["hash"] == "process-v1"
     assert snapshot["screening"]["hash"] == "screening-v1"
+    assert snapshot["hash"]
+
+
+def test_rule_matrix_snapshot_normalizes_nested_decimal_values():
+    snapshot = build_rule_matrix_snapshot([
+        {
+            "table": "material_switch_matrix",
+            "key": "A->B",
+            "values": {
+                "switch_time_mins": Decimal("12.5"),
+                "scrap_weight_kg": Decimal("1.25"),
+            },
+            "is_enabled": True,
+        }
+    ])
+
+    assert snapshot["count"] == 1
     assert snapshot["hash"]
 
 

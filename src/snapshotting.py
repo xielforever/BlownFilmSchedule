@@ -65,6 +65,12 @@ def snapshot_value(value: Any) -> Any:
         return value.isoformat()
     if isinstance(value, Decimal):
         return str(value)
+    if isinstance(value, dict):
+        return {str(key): snapshot_value(nested) for key, nested in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [snapshot_value(item) for item in value]
+    if isinstance(value, set):
+        return sorted(snapshot_value(item) for item in value)
     return value
 
 
