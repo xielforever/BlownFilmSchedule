@@ -293,6 +293,72 @@ function formatSeconds(value) {
   return `${number.toFixed(1)}s`;
 }
 
+function formatInt(value) {
+  return Number(value || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
+}
+
+function formatGap(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '-';
+  return formatPercent(value);
+}
+
+export function solverEvidenceCards(activePlan) {
+  const run = activePlan?.run || {};
+  const modelSize = run.solver_metrics?.model_size || {};
+  if (!Object.keys(modelSize).length) return [];
+  const policySnapshot = run.policy_snapshot || {};
+  const profile = policySnapshot.solver_profile || {};
+  const arcPolicy = modelSize.arc_pruning_policy || policySnapshot.arc_pruning || {};
+  const machineEntries = Object.entries(modelSize.machine_model_sizes || {})
+    .map(([machineId, metrics]) => ({ machineId, metrics: metrics || {} }))
+    .sort((a, b) => Number(b.metrics.arc_count || 0) - Number(a.metrics.arc_count || 0));
+  const largestMachine = machineEntries[0];
+  const arcCount = Number(modelSize.arc_count || 0);
+
+  const cards = [
+    {
+      key: 'model-size',
+      title: '模型规模',
+      value: `${formatInt(modelSize.order_count)}单 / ${formatInt(modelSize.machine_count)}台`,
+      detail: `分派 ${formatInt(modelSize.assignment_count)} · 弧 ${formatInt(modelSize.arc_count)} · setup cache ${formatInt(modelSize.setup_cache_size)}`,
+      tone: arcCount >= 10000 ? 'warning' : 'neutral',
+    },
+    {
+      key: 'arc-pruning',
+      title: '弧裁剪策略',
+      value: arcPolicy.enabled ? '已开启' : '已关闭',
+      detail: [
+        `裁剪 ${formatInt(modelSize.pruned_arc_count)}`,
+        `换产≤${formatInt(arcPolicy.max_setup_time_mins)}`,
+        `top-k ${formatInt(arcPolicy.top_k_per_order)}`,
+        `材料族 ${formatInt(arcPolicy.same_material_family_top_k)}`,
+        `洁净 ${formatInt(arcPolicy.same_cleanroom_top_k)}`,
+        `交期 ${formatInt(arcPolicy.due_window_mins)}/${formatInt(arcPolicy.due_window_top_k)}`,
+      ].join(' · '),
+      tone: arcPolicy.enabled ? 'success' : 'warning',
+    },
+    {
+      key: 'solver-profile',
+      title: '求解 profile',
+      value: profile.profile || 'standard',
+      detail: `time ${formatInt(profile.time_limit_seconds)}s · gap ${formatGap(profile.relative_gap_limit)} · workers ${formatInt(profile.num_workers)} · seed ${formatInt(profile.random_seed)}`,
+      tone: 'neutral',
+    },
+  ];
+
+  if (largestMachine) {
+    cards.push({
+      key: 'machine-bottleneck',
+      title: '最大机台模型',
+      value: largestMachine.machineId,
+      detail: `候选 ${formatInt(largestMachine.metrics.eligible_order_count)} · 弧 ${formatInt(largestMachine.metrics.arc_count)} · 裁剪 ${formatInt(largestMachine.metrics.pruned_arc_count)} · cache ${formatInt(largestMachine.metrics.setup_cache_size)}`,
+      tone: Number(largestMachine.metrics.arc_count || 0) >= 10000 ? 'warning' : 'neutral',
+    });
+  }
+
+  return cards;
+}
+
 export function solverQualitySummary(activePlan) {
   const run = activePlan?.run || {};
   const metrics = run.solver_metrics || {};

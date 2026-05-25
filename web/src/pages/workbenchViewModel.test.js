@@ -21,6 +21,7 @@ import {
   adjustmentReasonSummaryRows,
   adjustmentReviewReasonRows,
   lockedTaskSummaryCards,
+  solverEvidenceCards,
   solverQualitySummary,
   deriveWorkflowStep,
   isDraftStale,
@@ -551,6 +552,88 @@ test('solverQualitySummary explains solver proof and candidate deferrals for wor
       ],
     },
   );
+});
+
+test('solverEvidenceCards exposes model size pruning profile and machine bottleneck evidence', () => {
+  assert.deepEqual(
+    solverEvidenceCards({
+      run: {
+        policy_snapshot: {
+          solver_profile: {
+            profile: 'fast',
+            time_limit_seconds: 60,
+            relative_gap_limit: 0.1,
+            num_workers: 8,
+            random_seed: 7,
+          },
+        },
+        solver_metrics: {
+          model_size: {
+            order_count: 120,
+            machine_count: 4,
+            assignment_count: 360,
+            arc_count: 18000,
+            pruned_arc_count: 4200,
+            setup_cache_size: 14400,
+            arc_pruning_policy: {
+              enabled: true,
+              max_setup_time_mins: 240,
+              top_k_per_order: 8,
+              same_material_family_top_k: 4,
+              same_cleanroom_top_k: 3,
+              due_window_mins: 1440,
+              due_window_top_k: 5,
+            },
+            machine_model_sizes: {
+              'LINE-A': {
+                eligible_order_count: 40,
+                arc_count: 4000,
+                pruned_arc_count: 800,
+                setup_cache_size: 1600,
+              },
+              'LINE-B': {
+                eligible_order_count: 80,
+                arc_count: 12000,
+                pruned_arc_count: 3000,
+                setup_cache_size: 6400,
+              },
+            },
+          },
+        },
+      },
+    }),
+    [
+      {
+        key: 'model-size',
+        title: '模型规模',
+        value: '120单 / 4台',
+        detail: '分派 360 · 弧 18,000 · setup cache 14,400',
+        tone: 'warning',
+      },
+      {
+        key: 'arc-pruning',
+        title: '弧裁剪策略',
+        value: '已开启',
+        detail: '裁剪 4,200 · 换产≤240 · top-k 8 · 材料族 4 · 洁净 3 · 交期 1,440/5',
+        tone: 'success',
+      },
+      {
+        key: 'solver-profile',
+        title: '求解 profile',
+        value: 'fast',
+        detail: 'time 60s · gap 10.0% · workers 8 · seed 7',
+        tone: 'neutral',
+      },
+      {
+        key: 'machine-bottleneck',
+        title: '最大机台模型',
+        value: 'LINE-B',
+        detail: '候选 80 · 弧 12,000 · 裁剪 3,000 · cache 6,400',
+        tone: 'warning',
+      },
+    ],
+  );
+  assert.deepEqual(solverEvidenceCards(null), []);
 });
 
 test('screeningOverrideDraftRisk labels applied overrides for draft review', () => {

@@ -45,6 +45,7 @@ import {
   screeningOverrideDraftRisk,
   screeningPoolCounts,
   lockedTaskSummaryCards,
+  solverEvidenceCards,
   solverQualitySummary,
   validationDisplayCounts,
   validationDisplayMeta,
@@ -701,6 +702,10 @@ export default function ScheduleWorkbench() {
   );
   const solverQuality = useMemo(
     () => solverQualitySummary(activePlan),
+    [activePlan],
+  );
+  const solverEvidence = useMemo(
+    () => solverEvidenceCards(activePlan),
     [activePlan],
   );
   const lockedTaskCards = useMemo(
@@ -2013,6 +2018,18 @@ export default function ScheduleWorkbench() {
                 <strong>{solverQuality.metrics.find(item => item.key === 'wall_time')?.value || '-'}</strong>
                 <small>{solverQuality.detail}</small>
               </div>
+            </div>
+          )}
+
+          {activePlan && solverEvidence.length > 0 && (
+            <div className="workbench-solver-evidence" data-testid="workbench-solver-evidence">
+              {solverEvidence.map(card => (
+                <div key={card.key} className={`workbench-evidence-card ${card.tone || 'neutral'}`} data-testid={`workbench-solver-evidence-${card.key}`}>
+                  <span>{card.title}</span>
+                  <strong>{card.value}</strong>
+                  <small>{card.detail}</small>
+                </div>
+              ))}
             </div>
           )}
 
