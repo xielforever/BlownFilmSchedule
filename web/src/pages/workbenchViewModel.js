@@ -278,15 +278,20 @@ export function derivePublishChecklist({
 
   const hardErrors = Number(validation?.hard_error_count || 0);
   const warnings = Number(validation?.warning_count || 0);
+  const deferred = Number(counts.deferred || 0);
   const snapshotBlocked = publishBlockReason.includes('快照') || publishBlockReason.includes('变化');
-  return [
+  const checklist = [
     { key: 'draft', label: '草案生命周期', status: 'ready', detail: activePlan.run?.lifecycle_status || '-' },
     { key: 'snapshot', label: '快照状态', status: snapshotBlocked ? 'blocked' : 'ready', detail: draftVersionLabel },
     { key: 'validation', label: '校验状态', status: hardErrors ? 'blocked' : validation ? 'ready' : 'waiting', detail: validation ? `阻断 ${hardErrors} · 警告 ${warnings}` : '尚未校验' },
     { key: 'scheduled', label: '已排订单', status: counts.scheduled > 0 ? 'ready' : 'blocked', detail: `${counts.scheduled} 单` },
     { key: 'blocked', label: '未排订单', status: counts.blocked > 0 ? 'warning' : 'ready', detail: `${counts.blocked} 单` },
-    { key: 'queue', label: '发布后队列', status: canConfirm || queueCount > 0 ? 'ready' : 'waiting', detail: queueCount > 0 ? `${queueCount} 项` : `${counts.scheduled} 单将进入队列` },
   ];
+  if (deferred > 0) {
+    checklist.push({ key: 'deferred', label: '延后订单', status: 'warning', detail: `${deferred} 单` });
+  }
+  checklist.push({ key: 'queue', label: '发布后队列', status: canConfirm || queueCount > 0 ? 'ready' : 'waiting', detail: queueCount > 0 ? `${queueCount} 项` : `${counts.scheduled} 单将进入队列` });
+  return checklist;
 }
 
 export function isSelectableScreeningStatus(screeningStatus) {

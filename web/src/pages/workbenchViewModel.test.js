@@ -10,6 +10,7 @@ import {
   screeningOverrideDraftRisk,
   canCreateScreeningOverride,
   deferredReasonFilterOptions,
+  derivePublishChecklist,
   deriveReviewTabs,
   solverQualitySummary,
   deriveWorkflowStep,
@@ -236,6 +237,22 @@ test('deriveReviewTabs keeps draft review compact for workers', () => {
       { key: 'scheduled', label: '已排', count: 4 },
       { key: 'input', label: '全部输入', count: 9 },
     ],
+  );
+});
+
+test('derivePublishChecklist surfaces deferred orders before release', () => {
+  const checklist = derivePublishChecklist({
+    activePlan: { run: { lifecycle_status: 'DRAFT' } },
+    counts: { scheduled: 4, blocked: 0, deferred: 2 },
+    validation: { hard_error_count: 0, warning_count: 0 },
+    draftVersionLabel: '当前快照',
+    canConfirm: true,
+    queueCount: 0,
+  });
+
+  assert.deepEqual(
+    checklist.find(item => item.key === 'deferred'),
+    { key: 'deferred', label: '延后订单', status: 'warning', detail: '2 单' },
   );
 });
 
