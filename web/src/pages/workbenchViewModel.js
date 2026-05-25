@@ -249,6 +249,36 @@ export function adjustmentReviewReasonRows(summary) {
     }));
 }
 
+export function adjustmentReasonSummaryRows(summary) {
+  if (!summary || typeof summary !== 'object') return [];
+  const rows = (summary.reason_items || []).map(item => ({
+    key: `reason-${item.reason_code}`,
+    title: `${item.reason_code} · ${Number(item.count || 0)} 次`,
+    detail: item.sample_reason_text || '未填写原因说明',
+    tone: 'neutral',
+  }));
+  const failedCount = Number(summary.failed_adjustment_count || 0);
+  if (failedCount > 0) {
+    rows.push({
+      key: 'failed-adjustments',
+      title: `失败调整 · ${failedCount} 次`,
+      detail: '需要复核未生效的人工调整记录',
+      tone: 'danger',
+    });
+  }
+  const actorEntries = Object.entries(summary.actor_counts || {})
+    .sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0));
+  if (actorEntries.length) {
+    rows.push({
+      key: 'actors',
+      title: '执行人',
+      detail: actorEntries.map(([actor, count]) => `${actor} ${Number(count || 0)} 次`).join(', '),
+      tone: 'neutral',
+    });
+  }
+  return rows;
+}
+
 function formatPercent(value) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return '-';
   return `${(Number(value) * 100).toFixed(1)}%`;

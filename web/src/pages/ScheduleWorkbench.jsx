@@ -21,6 +21,7 @@ import {
 import { Link } from 'react-router-dom';
 import {
   adjustmentImpactSummaryCards,
+  adjustmentReasonSummaryRows,
   adjustmentReviewReasonRows,
   deriveDraftVersionState,
   derivePublishChecklist,
@@ -697,6 +698,10 @@ export default function ScheduleWorkbench() {
   );
   const adjustmentReviewRows = useMemo(
     () => adjustmentReviewReasonRows(activePlan?.adjustment_impact_summary?.review_reason_summary),
+    [activePlan],
+  );
+  const adjustmentReasonRows = useMemo(
+    () => adjustmentReasonSummaryRows(activePlan?.adjustment_reason_summary),
     [activePlan],
   );
   const sortedValidationItems = useMemo(() => {
@@ -2689,6 +2694,18 @@ export default function ScheduleWorkbench() {
                 <strong>{row.title}</strong>
                 <span>{row.detail}</span>
                 {row.orders && <small>{row.orders}</small>}
+              </div>
+            ))}
+          </div>
+          )}
+
+          {activeStage === 'draft_review' && adjustmentReasonRows.length > 0 && (
+          <div className="audit-list" data-testid="workbench-adjustment-reason-summary">
+            <h4>调整原因汇总</h4>
+            {adjustmentReasonRows.map(row => (
+              <div key={row.key} className={`audit-item ${row.tone === 'danger' ? 'danger' : ''}`}>
+                <strong>{row.title}</strong>
+                <span>{row.detail}</span>
               </div>
             ))}
           </div>

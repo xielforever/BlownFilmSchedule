@@ -2387,6 +2387,10 @@ h1, h2, h3, h4, h5, h6, .kpi-value, .machine-name {
   border-color: rgba(245, 158, 11, 0.28);
   background: rgba(245, 158, 11, 0.08);
 }
+.audit-item.danger {
+  border-color: rgba(239, 68, 68, 0.28);
+  background: rgba(239, 68, 68, 0.08);
+}
 .validation-item strong,
 .audit-item strong {
   color: #fff;

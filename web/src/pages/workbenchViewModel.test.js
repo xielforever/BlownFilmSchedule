@@ -13,6 +13,7 @@ import {
   derivePublishChecklist,
   deriveReviewTabs,
   adjustmentImpactSummaryCards,
+  adjustmentReasonSummaryRows,
   adjustmentReviewReasonRows,
   lockedTaskSummaryCards,
   solverQualitySummary,
@@ -346,6 +347,46 @@ test('adjustmentReviewReasonRows sorts review causes by affected count and exces
     ],
   );
   assert.deepEqual(adjustmentReviewReasonRows(null), []);
+});
+
+test('adjustmentReasonSummaryRows exposes audit causes and actors', () => {
+  assert.deepEqual(
+    adjustmentReasonSummaryRows({
+      failed_adjustment_count: 1,
+      reason_items: [
+        { reason_code: 'URGENT_INSERT', count: 2, sample_reason_text: '客户急单插入' },
+        { reason_code: 'MATERIAL_DELAY', count: 1, sample_reason_text: '原料延期' },
+      ],
+      actor_counts: { 'planner-a': 2, 'planner-b': 1 },
+    }),
+    [
+      {
+        key: 'reason-URGENT_INSERT',
+        title: 'URGENT_INSERT · 2 次',
+        detail: '客户急单插入',
+        tone: 'neutral',
+      },
+      {
+        key: 'reason-MATERIAL_DELAY',
+        title: 'MATERIAL_DELAY · 1 次',
+        detail: '原料延期',
+        tone: 'neutral',
+      },
+      {
+        key: 'failed-adjustments',
+        title: '失败调整 · 1 次',
+        detail: '需要复核未生效的人工调整记录',
+        tone: 'danger',
+      },
+      {
+        key: 'actors',
+        title: '执行人',
+        detail: 'planner-a 2 次, planner-b 1 次',
+        tone: 'neutral',
+      },
+    ],
+  );
+  assert.deepEqual(adjustmentReasonSummaryRows(null), []);
 });
 
 test('solverQualitySummary explains solver proof and candidate deferrals for workers', () => {
