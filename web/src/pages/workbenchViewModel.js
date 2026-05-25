@@ -232,6 +232,23 @@ export function adjustmentImpactSummaryCards(summary) {
   ];
 }
 
+export function adjustmentReviewReasonRows(summary) {
+  if (!summary || typeof summary !== 'object') return [];
+  return Object.values(summary)
+    .filter(item => item && item.code)
+    .sort((a, b) => {
+      const countDelta = Number(b.count || 0) - Number(a.count || 0);
+      if (countDelta) return countDelta;
+      return Number(b.max_excess_mins || 0) - Number(a.max_excess_mins || 0);
+    })
+    .map(item => ({
+      key: item.code,
+      title: `${item.label || item.code} · ${Number(item.count || 0)} 次`,
+      detail: `影响 ${Number(item.affected_order_count || 0)} 单 · 最大 ${Number(item.max_actual_delta_mins || 0)} 分钟 · 超阈值 ${Number(item.max_excess_mins || 0)} 分钟`,
+      orders: (item.order_ids || []).join(', '),
+    }));
+}
+
 function formatPercent(value) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return '-';
   return `${(Number(value) * 100).toFixed(1)}%`;

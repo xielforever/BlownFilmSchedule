@@ -21,6 +21,7 @@ import {
 import { Link } from 'react-router-dom';
 import {
   adjustmentImpactSummaryCards,
+  adjustmentReviewReasonRows,
   deriveDraftVersionState,
   derivePublishChecklist,
   derivePrimaryAction,
@@ -692,6 +693,10 @@ export default function ScheduleWorkbench() {
   );
   const adjustmentImpactCards = useMemo(
     () => adjustmentImpactSummaryCards(activePlan?.adjustment_impact_summary),
+    [activePlan],
+  );
+  const adjustmentReviewRows = useMemo(
+    () => adjustmentReviewReasonRows(activePlan?.adjustment_impact_summary?.review_reason_summary),
     [activePlan],
   );
   const sortedValidationItems = useMemo(() => {
@@ -2673,6 +2678,19 @@ export default function ScheduleWorkbench() {
                 <span key={card.key}>{card.label} {card.value}</span>
               ))}
             </div>
+          </div>
+          )}
+
+          {activeStage === 'draft_review' && adjustmentReviewRows.length > 0 && (
+          <div className="blocked-list" data-testid="workbench-adjustment-review-reasons">
+            <h4>调整复核原因</h4>
+            {adjustmentReviewRows.map(row => (
+              <div key={row.key} className="blocked-item">
+                <strong>{row.title}</strong>
+                <span>{row.detail}</span>
+                {row.orders && <small>{row.orders}</small>}
+              </div>
+            ))}
           </div>
           )}
 

@@ -13,6 +13,7 @@ import {
   derivePublishChecklist,
   deriveReviewTabs,
   adjustmentImpactSummaryCards,
+  adjustmentReviewReasonRows,
   lockedTaskSummaryCards,
   solverQualitySummary,
   deriveWorkflowStep,
@@ -301,6 +302,50 @@ test('adjustmentImpactSummaryCards exposes move cost and review risk', () => {
     ],
   );
   assert.deepEqual(adjustmentImpactSummaryCards(null), []);
+});
+
+test('adjustmentReviewReasonRows sorts review causes by affected count and excess', () => {
+  assert.deepEqual(
+    adjustmentReviewReasonRows({
+      tardiness_increased: {
+        code: 'tardiness_increased',
+        label: '逾期增加',
+        count: 1,
+        affected_order_count: 1,
+        max_actual_delta_mins: 45,
+        max_excess_mins: 30,
+        total_excess_mins: 30,
+        threshold_mins: 15,
+        order_ids: ['ORD-B'],
+      },
+      end_delayed: {
+        code: 'end_delayed',
+        label: '完工延后',
+        count: 2,
+        affected_order_count: 1,
+        max_actual_delta_mins: 120,
+        max_excess_mins: 90,
+        total_excess_mins: 110,
+        threshold_mins: 30,
+        order_ids: ['ORD-A'],
+      },
+    }),
+    [
+      {
+        key: 'end_delayed',
+        title: '完工延后 · 2 次',
+        detail: '影响 1 单 · 最大 120 分钟 · 超阈值 90 分钟',
+        orders: 'ORD-A',
+      },
+      {
+        key: 'tardiness_increased',
+        title: '逾期增加 · 1 次',
+        detail: '影响 1 单 · 最大 45 分钟 · 超阈值 30 分钟',
+        orders: 'ORD-B',
+      },
+    ],
+  );
+  assert.deepEqual(adjustmentReviewReasonRows(null), []);
 });
 
 test('solverQualitySummary explains solver proof and candidate deferrals for workers', () => {
