@@ -795,6 +795,30 @@ class AdvancedMedicalAPS:
         limit_mins = policy["limit_mins"]
         cleaning_mins = policy["cleaning_mins"]
         enforcement_mode = policy["enforcement_mode"]
+        if enforcement_mode == "experimental_disabled" and result.machine_sequences:
+            result.diagnostics.append(Diagnostic(
+                entity_type="schedule",
+                entity_id="continuous_run",
+                severity="critical",
+                category="maintenance",
+                code="maintenance.continuous_run_experimental_disabled",
+                confidence="explicit",
+                root_cause=(
+                    "连续运行清场规则处于实验禁用模式；该草案只能用于诊断或模拟，"
+                    "默认不得正式发布到制造队列。"
+                ),
+                evidence=[
+                    DiagnosticEvidence("enforcement_mode", enforcement_mode),
+                    DiagnosticEvidence("limit_mins", limit_mins, "min"),
+                    DiagnosticEvidence("required_cleaning_mins", cleaning_mins, "min"),
+                ],
+                recommendations=[
+                    DiagnosticRecommendation("enable_cleaning_rule", "恢复 hard 或 publish_blocker 模式后重新预排", "/config?tab=policy"),
+                    DiagnosticRecommendation("review_experiment", "保留实验草案用于算法对照，不进入制造队列", "/workbench"),
+                ],
+                display_title="清场规则处于实验禁用模式",
+                level="publish_blocker",
+            ))
         validation_level = "publish_blocker" if enforcement_mode in {"hard", "publish_blocker"} else "warning"
         severity = "critical" if validation_level == "publish_blocker" else "warning"
         for machine_id, tasks in result.machine_sequences.items():

@@ -616,6 +616,28 @@ class TestSchedulerSequencing(unittest.TestCase):
         self.assertEqual(result.status, "UNPUBLISHABLE")
         self.assertTrue(any("不可发布" in item for item in result.validation_errors))
 
+    def test_experimental_disabled_continuous_run_policy_blocks_publish(self):
+        result = ScheduleResult()
+        result.status = "FEASIBLE"
+        machine = _make_machine(initialContinuousRunMins=0)
+        order = _make_order("ORD-CLEAN-EXPERIMENT")
+        result.add_task(ScheduledTask(order, machine, 0, 30, 0, 0, 0))
+        aps = AdvancedMedicalAPS(
+            _make_setup_mgr(),
+            continuous_run_policy={
+                "limit_mins": 60,
+                "cleaning_mins": 15,
+                "enforcement_mode": "experimental_disabled",
+            },
+        )
+
+        aps._append_continuous_run_diagnostics(result)
+        aps._apply_post_solve_diagnostic_status(result)
+
+        self.assertEqual(result.status, "UNPUBLISHABLE")
+        self.assertEqual(result.diagnostics[0].code, "maintenance.continuous_run_experimental_disabled")
+        self.assertEqual(result.diagnostics[0].level, "publish_blocker")
+
     def test_decode_child_output_handles_gbk_logs(self):
         text = "订单 ORD-062 无可用机台: width=1718, thickness=80"
         self.assertEqual(_decode_child_output(text.encode("gbk")), text)
