@@ -2,6 +2,7 @@ export const draftVersionLabels = {
   current: '当前策略，订单快照有效',
   policy_stale: '策略已变化，需要重新预排',
   order_stale: '订单已修订，需要重新预排',
+  input_stale: '排程输入已变化，需要重新预排',
   mixed_stale: '策略和订单均已变化',
   cancelled: '草案已废弃',
   confirmed: '已发布为制造队列',
@@ -11,6 +12,7 @@ export const draftVersionTones = {
   current: 'success',
   policy_stale: 'danger',
   order_stale: 'danger',
+  input_stale: 'danger',
   mixed_stale: 'danger',
   cancelled: 'danger',
   confirmed: 'success',
@@ -57,14 +59,16 @@ export function deriveDraftVersionState(activePlan) {
   const items = activePlan?.validation?.items || [];
   const hasPolicyStale = items.some(item => item.code === 'policy_snapshot_stale');
   const hasOrderStale = items.some(item => item.code === 'order_snapshot_stale');
+  const hasInputStale = items.some(item => item.code === 'input_snapshot_stale');
   if (hasPolicyStale && hasOrderStale) return 'mixed_stale';
   if (hasPolicyStale) return 'policy_stale';
   if (hasOrderStale) return 'order_stale';
+  if (hasInputStale) return 'input_stale';
   return 'current';
 }
 
 export function isDraftStale(versionState) {
-  return ['policy_stale', 'order_stale', 'mixed_stale'].includes(versionState);
+  return ['policy_stale', 'order_stale', 'input_stale', 'mixed_stale'].includes(versionState);
 }
 
 export function deriveWorkflowStep({ activePlan, queue = [], draftVersionState = 'none', hasHardErrors = false }) {

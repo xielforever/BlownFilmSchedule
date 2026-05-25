@@ -12,6 +12,7 @@ import {
   deferredReasonFilterOptions,
   matchesDeferredReasonFilter,
   derivePublishChecklist,
+  deriveDraftVersionState,
   deriveReviewTabs,
   adjustmentImpactSummaryCards,
   adjustmentReasonSummaryRows,
@@ -19,6 +20,7 @@ import {
   lockedTaskSummaryCards,
   solverQualitySummary,
   deriveWorkflowStep,
+  isDraftStale,
   screeningPoolCounts,
   selectableOrderIds,
   staleOrderIds,
@@ -244,6 +246,27 @@ test('deriveWorkflowStep returns cancelled drafts to the order pool', () => {
       queue: [],
     }),
     'order_pool',
+  );
+});
+
+test('deriveWorkflowStep treats input snapshot stale drafts as needing replan', () => {
+  const activePlan = {
+    run: { lifecycle_status: 'VALIDATED' },
+    validation: {
+      items: [{ code: 'input_snapshot_stale', level: 'publish_blocker' }],
+    },
+  };
+
+  assert.equal(deriveDraftVersionState(activePlan), 'input_stale');
+  assert.equal(isDraftStale('input_stale'), true);
+  assert.equal(
+    deriveWorkflowStep({
+      activePlan,
+      queue: [],
+      draftVersionState: deriveDraftVersionState(activePlan),
+      hasHardErrors: false,
+    }),
+    'draft_review',
   );
 });
 
