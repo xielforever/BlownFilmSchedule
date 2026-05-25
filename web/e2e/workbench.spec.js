@@ -240,7 +240,7 @@ async function discardStaleDraftIfPresent(page) {
 }
 
 async function findDraft(request, predicate, chunkSize = 10) {
-  const orders = await pendingOrders(request, 80);
+  const orders = await pendingReadyOrders(request, 80);
   for (let index = 0; index < orders.length; index += chunkSize) {
     const chunk = orders.slice(index, index + chunkSize);
     if (!chunk.length) break;
@@ -446,7 +446,7 @@ test.describe.serial('schedule workbench closed loop', () => {
   });
 
   test('paginates long order pools and draft order reviews', async ({ page, request }) => {
-    const sample = (await pendingOrders(request, 1))[0];
+    const sample = (await pendingReadyOrders(request, 1))[0];
     test.skip(!sample, 'no sample product available for pagination setup');
     const prefix = `E2EPAGE${Date.now().toString().slice(-7)}`;
     const orderIds = Array.from({ length: 13 }, (_, index) => `${prefix}${String(index + 1).padStart(2, '0')}`);
