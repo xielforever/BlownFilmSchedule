@@ -171,6 +171,7 @@ const primaryActionTestIds = {
   blockers: 'workbench-view-blockers',
   version: 'workbench-view-versions',
   orders: 'workbench-view-orders',
+  cancel: 'workbench-cancel-stale-preplan',
 };
 
 const reasonOptions = [
@@ -1637,6 +1638,10 @@ export default function ScheduleWorkbench() {
     }
     if (primaryAction.target === 'version') {
       setVersionDrawerOpen(true);
+      return null;
+    }
+    if (primaryAction.target === 'cancel') {
+      openCancelConfirm();
       return null;
     }
     if (primaryAction.target === 'orders') {

@@ -167,7 +167,7 @@ export function derivePrimaryAction({
 
   const lifecycle = activePlan.run?.lifecycle_status;
   if (isDraftStale(draftVersionState)) {
-    return { key: 'replan', label: '重新预排', disabled: false, target: 'version' };
+    return { key: 'discard_stale', label: '废弃后重排', disabled: false, target: 'cancel' };
   }
   if (lifecycle === 'CONFIRMED') {
     return { key: 'queue', label: '查看制造队列', disabled: false, target: 'queue' };

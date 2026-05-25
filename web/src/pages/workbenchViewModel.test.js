@@ -13,6 +13,7 @@ import {
   matchesDeferredReasonFilter,
   derivePublishChecklist,
   deriveDraftVersionState,
+  derivePrimaryAction,
   deriveReviewTabs,
   adjustmentImpactSummaryCards,
   adjustmentReasonSummaryRows,
@@ -267,6 +268,23 @@ test('deriveWorkflowStep treats input snapshot stale drafts as needing replan', 
       hasHardErrors: false,
     }),
     'draft_review',
+  );
+});
+
+test('derivePrimaryAction directs stale drafts to discard before replan', () => {
+  assert.deepEqual(
+    derivePrimaryAction({
+      activePlan: { run: { lifecycle_status: 'VALIDATED' } },
+      selectedCount: 1,
+      canEditDraft: true,
+      draftVersionState: 'input_stale',
+    }),
+    {
+      key: 'discard_stale',
+      label: '废弃后重排',
+      disabled: false,
+      target: 'cancel',
+    },
   );
 });
 
