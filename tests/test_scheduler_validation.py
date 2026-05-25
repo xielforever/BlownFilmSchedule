@@ -428,6 +428,27 @@ class TestSchedulerSequencing(unittest.TestCase):
         self.assertEqual(result.deferred_orders[0]["planning_bucket"], "candidate")
         self.assertIn("message", result.deferred_orders[0])
 
+    def test_deferred_planning_bucket_is_excluded_before_solver(self):
+        must = _make_order("ORD-MUST-WINDOW")
+        deferred = _make_order("ORD-DEFERRED-WINDOW", planningBucket="deferred")
+        machine = _make_machine()
+        aps = AdvancedMedicalAPS(_make_setup_mgr())
+
+        result = aps.run([must, deferred], [machine])
+
+        self.assertIn(result.status, {"OPTIMAL", "FEASIBLE", "PARTIAL"})
+        self.assertEqual(result.validation_errors, [])
+        self.assertEqual([task.order.order_id for task in result.tasks], ["ORD-MUST-WINDOW"])
+        self.assertEqual(result.input_order_count, 2)
+        self.assertEqual(result.schedulable_order_count, 1)
+        self.assertEqual(result.deferred_orders, [{
+            "order_id": "ORD-DEFERRED-WINDOW",
+            "planning_bucket": "deferred",
+            "reason": "planning_window_deferred",
+            "deferred_reason_code": "planning_window_deferred",
+            "message": "Order is outside the configured candidate planning window.",
+        }])
+
     def test_candidate_acceptance_policy_limits_deferred_count(self):
         must = _make_order("ORD-MUST-LIMIT")
         candidate_a = _make_order("ORD-CANDIDATE-A", planningBucket="candidate")

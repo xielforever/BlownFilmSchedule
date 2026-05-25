@@ -683,6 +683,64 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertGreaterEqual(machine.max_thickness, order.target_thickness)
         self.assertGreaterEqual(machine.layer_structure, len(order.recipe_materials))
 
+    def test_schedule_policy_assigns_planning_buckets_from_configured_windows(self):
+        orders = [
+            ProductionOrderModel(
+                order_id="ORD-MUST",
+                product_type="Film-A",
+                target_width=500,
+                target_thickness=35,
+                total_quantity_kg=1000,
+                cleanroom_req="Class_100K",
+                customer_class="STANDARD",
+                order_class="NORMAL",
+                corona_req=False,
+                core_size_inch=3,
+                due_date_mins=2 * 1440,
+            ),
+            ProductionOrderModel(
+                order_id="ORD-CANDIDATE",
+                product_type="Film-A",
+                target_width=500,
+                target_thickness=35,
+                total_quantity_kg=1000,
+                cleanroom_req="Class_100K",
+                customer_class="STANDARD",
+                order_class="NORMAL",
+                corona_req=False,
+                core_size_inch=3,
+                due_date_mins=7 * 1440,
+            ),
+            ProductionOrderModel(
+                order_id="ORD-DEFERRED",
+                product_type="Film-A",
+                target_width=500,
+                target_thickness=35,
+                total_quantity_kg=1000,
+                cleanroom_req="Class_100K",
+                customer_class="STANDARD",
+                order_class="NORMAL",
+                corona_req=False,
+                core_size_inch=3,
+                due_date_mins=20 * 1440,
+            ),
+        ]
+
+        database._apply_schedule_policy_to_master_data(
+            [],
+            orders,
+            {
+                "planning_must_schedule_horizon_days": 3,
+                "planning_candidate_horizon_days": 14,
+            },
+        )
+
+        self.assertEqual([order.planning_bucket for order in orders], [
+            "must_schedule",
+            "candidate",
+            "deferred",
+        ])
+
     def test_solver_params_include_policy_snapshot_when_present(self):
         result = type("Result", (), {
             "input_order_count": 2,

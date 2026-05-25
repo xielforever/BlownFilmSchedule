@@ -399,6 +399,10 @@ class AdvancedMedicalAPS:
         return str(getattr(order, "planning_bucket", "") or "").lower() == "candidate"
 
     @staticmethod
+    def _is_planning_window_deferred(order: ProductionOrderModel) -> bool:
+        return str(getattr(order, "planning_bucket", "") or "").lower() == "deferred"
+
+    @staticmethod
     def _normalize_arc_pruning_policy(policy: Optional[Dict]) -> Dict:
         policy = policy or {}
         return {
@@ -509,6 +513,15 @@ class AdvancedMedicalAPS:
         for order_item in original_orders:
             fits = [evaluate_machine_fit(order_item, m) for m in machines]
             if any(fit.eligible for fit in fits):
+                if self._is_planning_window_deferred(order_item):
+                    result.deferred_orders.append({
+                        "order_id": order_item.order_id,
+                        "planning_bucket": "deferred",
+                        "reason": "planning_window_deferred",
+                        "deferred_reason_code": "planning_window_deferred",
+                        "message": "Order is outside the configured candidate planning window.",
+                    })
+                    continue
                 schedulable_orders.append(order_item)
                 continue
 

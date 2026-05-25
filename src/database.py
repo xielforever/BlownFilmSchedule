@@ -192,6 +192,21 @@ def _apply_schedule_policy_to_master_data(
         for order in orders:
             order.priority_override = 0
 
+    must_horizon_mins = max(0, int(policy.get("planning_must_schedule_horizon_days") or 0)) * 1440
+    candidate_horizon_days = max(
+        int(policy.get("planning_candidate_horizon_days") or 0),
+        int(policy.get("planning_must_schedule_horizon_days") or 0),
+    )
+    candidate_horizon_mins = max(0, candidate_horizon_days) * 1440
+    for order in orders:
+        due_mins = int(getattr(order, "due_date_mins", 0) or 0)
+        if due_mins <= must_horizon_mins:
+            order.planning_bucket = "must_schedule"
+        elif due_mins <= candidate_horizon_mins:
+            order.planning_bucket = "candidate"
+        else:
+            order.planning_bucket = "deferred"
+
 
 def _build_schedule_run_solver_params(
     result: ScheduleResult,
