@@ -1,15 +1,48 @@
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scripts.solver_benchmark import BenchmarkCase, main, run_benchmark_suite
+from scripts.solver_benchmark import (
+    BenchmarkCase,
+    build_sprint5_baseline_cases,
+    main,
+    run_benchmark_suite,
+)
 
 
 class TestSolverBenchmark(unittest.TestCase):
+    def test_sprint5_baseline_cases_cover_scale_targets_and_profiles(self):
+        cases = build_sprint5_baseline_cases(
+            order_counts=[50, 100, 200, 300],
+            profiles=["fast", "standard"],
+            machine_count=4,
+            max_wall_time_seconds=90.0,
+        )
+
+        self.assertEqual(
+            [case.name for case in cases],
+            [
+                "sprint5-fast-50-baseline",
+                "sprint5-fast-100-baseline",
+                "sprint5-fast-200-baseline",
+                "sprint5-fast-300-baseline",
+                "sprint5-standard-50-baseline",
+                "sprint5-standard-100-baseline",
+                "sprint5-standard-200-baseline",
+                "sprint5-standard-300-baseline",
+            ],
+        )
+        self.assertEqual([case.order_count for case in cases], [50, 100, 200, 300, 50, 100, 200, 300])
+        self.assertEqual({case.machine_count for case in cases}, {4})
+        self.assertEqual({case.max_wall_time_seconds for case in cases}, {90.0})
+        self.assertTrue(all(case.comparison_group is None for case in cases))
+        self.assertTrue(all(not case.arc_pruning_enabled for case in cases))
+
     def test_benchmark_suite_returns_pass_fail_summary(self):
         summary = run_benchmark_suite([
             BenchmarkCase(name="tiny", order_count=3, machine_count=1, max_wall_time_seconds=10.0),
@@ -145,6 +178,62 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertIn("max_wall_time_seconds", summary["profile_acceptance"]["standard"])
         self.assertIn("min_scheduled_ratio", summary["profile_acceptance"]["standard"])
         self.assertIn("deferred_reason_counts", summary["profile_acceptance"]["standard"])
+
+    def test_benchmark_command_uses_sprint5_baseline_case_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "sprint5-baseline.json")
+            exit_code = main([
+                "--sprint5-baseline",
+                "--order-counts", "3,4",
+                "--machine-count", "1",
+                "--profiles", "fast,standard",
+                "--output", path,
+                "--max-wall-time-seconds", "10",
+            ])
+            with open(path, encoding="utf-8") as f:
+                summary = json.load(f)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            [case["name"] for case in summary["cases"]],
+            [
+                "sprint5-fast-3-baseline",
+                "sprint5-fast-4-baseline",
+                "sprint5-standard-3-baseline",
+                "sprint5-standard-4-baseline",
+            ],
+        )
+        self.assertEqual(summary["case_count"], 4)
+        self.assertEqual(summary["profile_acceptance"]["fast"]["case_count"], 2)
+        self.assertEqual(summary["profile_acceptance"]["standard"]["case_count"], 2)
+
+    def test_benchmark_script_runs_directly_from_repo_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "direct-summary.json")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/solver_benchmark.py",
+                    "--sprint5-baseline",
+                    "--order-counts",
+                    "1",
+                    "--machine-count",
+                    "1",
+                    "--profiles",
+                    "fast",
+                    "--output",
+                    path,
+                    "--max-wall-time-seconds",
+                    "10",
+                ],
+                cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertTrue(os.path.exists(path))
 
     def test_benchmark_command_passes_arc_pruning_policy(self):
         with tempfile.TemporaryDirectory() as tmp:
