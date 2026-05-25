@@ -1781,6 +1781,29 @@ def _unplaced_solver_failed_validation_items(unplaced_orders: list[dict[str, Any
     return items
 
 
+def _publish_audit_details(
+    *,
+    run_params: dict[str, Any],
+    validation: dict[str, Any],
+    previous_run_ids: list[int],
+) -> dict[str, Any]:
+    summary = run_params.get("summary") or {}
+    deferred_orders = run_params.get("deferred_orders") or []
+    unplaced_orders = run_params.get("unplaced_solver_failed_orders") or []
+    deferred_count = summary.get("deferred_order_count", len(deferred_orders))
+    unplaced_count = summary.get("unplaced_solver_failed_order_count", len(unplaced_orders))
+    return {
+        "superseded_run_ids": previous_run_ids,
+        "scheduled_order_count": int(summary.get("scheduled_order_count") or 0),
+        "blocked_order_count": int(summary.get("blocked_order_count") or 0),
+        "deferred_order_count": int(deferred_count or 0),
+        "unplaced_solver_failed_order_count": int(unplaced_count or 0),
+        "deferred_reason_counts": summary.get("deferred_reason_counts") or {},
+        "hard_error_count": validation.get("hard_error_count") or 0,
+        "publish_blocker_count": validation.get("publish_blocker_count") or validation.get("hard_error_count") or 0,
+    }
+
+
 def _publish_audit_payload(
     *,
     event_type: str,
@@ -4324,10 +4347,11 @@ def confirm_preplan(run_id: int, db=Depends(get_db), user=Depends(require_role("
         selected_order_count=len(run_params.get("selected_order_ids") or []),
         warning_count=validation.get("warning_count") or 0,
         queue_row_count=queue_row_count,
-        details={
-            "superseded_run_ids": previous_run_ids,
-            "hard_error_count": validation.get("hard_error_count") or 0,
-        },
+        details=_publish_audit_details(
+            run_params=run_params,
+            validation=validation,
+            previous_run_ids=previous_run_ids,
+        ),
     ))
     db.commit()
     return {

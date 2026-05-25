@@ -23,6 +23,30 @@ class TestPublishAuditPayload(unittest.TestCase):
         self.assertEqual(payload["queue_row_count"], 7)
         self.assertEqual(payload["details"]["superseded_run_ids"], [1, 2])
 
+    def test_publish_audit_details_distinguishes_order_buckets(self):
+        details = schedule_router._publish_audit_details(
+            run_params={
+                "summary": {
+                    "scheduled_order_count": 3,
+                    "blocked_order_count": 1,
+                    "deferred_order_count": 2,
+                    "unplaced_solver_failed_order_count": 1,
+                    "deferred_reason_counts": {"candidate_optional_rejected": 2},
+                },
+                "deferred_orders": [{"order_id": "ORD-CAND-1"}, {"order_id": "ORD-CAND-2"}],
+                "unplaced_solver_failed_orders": [{"order_id": "ORD-MUST"}],
+            },
+            validation={"hard_error_count": 0, "publish_blocker_count": 0},
+            previous_run_ids=[8, 9],
+        )
+
+        self.assertEqual(details["scheduled_order_count"], 3)
+        self.assertEqual(details["blocked_order_count"], 1)
+        self.assertEqual(details["deferred_order_count"], 2)
+        self.assertEqual(details["unplaced_solver_failed_order_count"], 1)
+        self.assertEqual(details["deferred_reason_counts"]["candidate_optional_rejected"], 2)
+        self.assertEqual(details["superseded_run_ids"], [8, 9])
+
     def test_validation_summary_payload_captures_counts_and_task_signature(self):
         payload = schedule_router._validation_summary_payload(
             {
