@@ -198,9 +198,39 @@ def _apply_schedule_policy_to_master_data(
         int(policy.get("planning_must_schedule_horizon_days") or 0),
     )
     candidate_horizon_mins = max(0, candidate_horizon_days) * 1440
+    material_ready_horizon_mins = max(
+        0,
+        int(policy.get("planning_material_ready_horizon_days", candidate_horizon_days) or 0),
+    ) * 1440
+    force_must_order_classes = {
+        str(value).strip().upper()
+        for value in policy.get("planning_force_must_order_classes", []) or []
+        if str(value).strip()
+    }
+    force_must_customer_classes = {
+        str(value).strip().upper()
+        for value in policy.get("planning_force_must_customer_classes", []) or []
+        if str(value).strip()
+    }
+    scarce_machine_threshold = max(0, int(policy.get("planning_scarce_machine_threshold") or 0))
+
     for order in orders:
         due_mins = int(getattr(order, "due_date_mins", 0) or 0)
-        if due_mins <= must_horizon_mins:
+        material_available_mins = int(getattr(order, "material_available_mins", 0) or 0)
+        eligible_machine_count = sum(1 for machine in machines if machine.can_produce(order))
+        force_must = (
+            str(getattr(order, "order_class", "") or "").strip().upper() in force_must_order_classes
+            or str(getattr(order, "customer_class", "") or "").strip().upper() in force_must_customer_classes
+            or (
+                scarce_machine_threshold > 0
+                and eligible_machine_count > 0
+                and eligible_machine_count <= scarce_machine_threshold
+                and due_mins <= candidate_horizon_mins
+            )
+        )
+        if material_available_mins > material_ready_horizon_mins:
+            order.planning_bucket = "deferred"
+        elif due_mins <= must_horizon_mins or force_must:
             order.planning_bucket = "must_schedule"
         elif due_mins <= candidate_horizon_mins:
             order.planning_bucket = "candidate"
@@ -348,6 +378,10 @@ class DatabaseManager:
                     solver_log_search_progress          BOOLEAN NOT NULL DEFAULT FALSE,
                     planning_must_schedule_horizon_days INTEGER NOT NULL DEFAULT 3,
                     planning_candidate_horizon_days     INTEGER NOT NULL DEFAULT 14,
+                    planning_material_ready_horizon_days INTEGER NOT NULL DEFAULT 14,
+                    planning_force_must_order_classes   TEXT[] NOT NULL DEFAULT ARRAY['URGENT']::TEXT[],
+                    planning_force_must_customer_classes TEXT[] NOT NULL DEFAULT ARRAY['VIP']::TEXT[],
+                    planning_scarce_machine_threshold   INTEGER NOT NULL DEFAULT 1,
                     candidate_reject_penalty            INTEGER NOT NULL DEFAULT 10000000,
                     candidate_max_deferred_count        INTEGER,
                     candidate_min_acceptance_ratio      DOUBLE PRECISION NOT NULL DEFAULT 0,
@@ -609,6 +643,10 @@ class DatabaseManager:
                 ADD COLUMN IF NOT EXISTS solver_log_search_progress BOOLEAN NOT NULL DEFAULT FALSE,
                 ADD COLUMN IF NOT EXISTS planning_must_schedule_horizon_days INTEGER NOT NULL DEFAULT 3,
                 ADD COLUMN IF NOT EXISTS planning_candidate_horizon_days INTEGER NOT NULL DEFAULT 14,
+                ADD COLUMN IF NOT EXISTS planning_material_ready_horizon_days INTEGER NOT NULL DEFAULT 14,
+                ADD COLUMN IF NOT EXISTS planning_force_must_order_classes TEXT[] NOT NULL DEFAULT ARRAY['URGENT']::TEXT[],
+                ADD COLUMN IF NOT EXISTS planning_force_must_customer_classes TEXT[] NOT NULL DEFAULT ARRAY['VIP']::TEXT[],
+                ADD COLUMN IF NOT EXISTS planning_scarce_machine_threshold INTEGER NOT NULL DEFAULT 1,
                 ADD COLUMN IF NOT EXISTS candidate_reject_penalty INTEGER NOT NULL DEFAULT 10000000,
                 ADD COLUMN IF NOT EXISTS candidate_max_deferred_count INTEGER,
                 ADD COLUMN IF NOT EXISTS candidate_min_acceptance_ratio DOUBLE PRECISION NOT NULL DEFAULT 0,
@@ -640,6 +678,9 @@ class DatabaseManager:
                     solver_profile, solver_time_limit_seconds, solver_relative_gap_limit,
                     solver_random_seed, solver_num_workers, solver_log_search_progress,
                     planning_must_schedule_horizon_days, planning_candidate_horizon_days,
+                    planning_material_ready_horizon_days,
+                    planning_force_must_order_classes, planning_force_must_customer_classes,
+                    planning_scarce_machine_threshold,
                     candidate_reject_penalty, candidate_max_deferred_count,
                     candidate_min_acceptance_ratio,
                     arc_pruning_enabled, arc_pruning_max_setup_mins,
@@ -676,6 +717,10 @@ class DatabaseManager:
             "solver_log_search_progress": False,
             "planning_must_schedule_horizon_days": 3,
             "planning_candidate_horizon_days": 14,
+            "planning_material_ready_horizon_days": 14,
+            "planning_force_must_order_classes": ["URGENT"],
+            "planning_force_must_customer_classes": ["VIP"],
+            "planning_scarce_machine_threshold": 1,
             "candidate_reject_penalty": 10_000_000,
             "candidate_max_deferred_count": None,
             "candidate_min_acceptance_ratio": 0.0,

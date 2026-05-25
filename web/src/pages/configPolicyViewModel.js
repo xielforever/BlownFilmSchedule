@@ -26,6 +26,8 @@ export const numericPolicyFieldGroups = [
     keys: [
       'planning_must_schedule_horizon_days',
       'planning_candidate_horizon_days',
+      'planning_material_ready_horizon_days',
+      'planning_scarce_machine_threshold',
       'candidate_reject_penalty',
       'candidate_max_deferred_count',
       'candidate_min_acceptance_ratio',
@@ -51,6 +53,14 @@ export const numericPolicyFieldGroups = [
 ];
 
 export const listPolicyFields = [
+  {
+    key: 'planning_force_must_order_classes',
+    placeholder: 'URGENT, SAMPLE',
+  },
+  {
+    key: 'planning_force_must_customer_classes',
+    placeholder: 'VIP',
+  },
   {
     key: 'screening_allowed_order_statuses',
     placeholder: 'PENDING, RELEASED',
@@ -99,6 +109,11 @@ export const auditKeyLabels = {
   maintenance: '维护窗口',
 };
 
+auditKeyLabels.planning_material_ready_horizon_days = '物料齐套窗口';
+auditKeyLabels.planning_force_must_order_classes = '强制必排订单等级';
+auditKeyLabels.planning_force_must_customer_classes = '强制必排客户等级';
+auditKeyLabels.planning_scarce_machine_threshold = '稀缺机台阈值';
+
 export const policyFieldRuleClasses = {
   auto_release_enabled: 'experimental',
   material_constraint_enabled: 'hard',
@@ -138,6 +153,11 @@ export const policyFieldRuleClasses = {
   arc_pruning_max_setup_mins: 'performance',
   arc_pruning_top_k_per_order: 'performance',
 };
+
+policyFieldRuleClasses.planning_material_ready_horizon_days = 'soft';
+policyFieldRuleClasses.planning_force_must_order_classes = 'soft';
+policyFieldRuleClasses.planning_force_must_customer_classes = 'soft';
+policyFieldRuleClasses.planning_scarce_machine_threshold = 'soft';
 
 export const adminOnlyDisablePolicyKeys = [
   'material_constraint_enabled',

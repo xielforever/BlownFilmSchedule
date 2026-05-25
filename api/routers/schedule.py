@@ -174,6 +174,10 @@ class ScheduleSettingsPayload(BaseModel):
     solver_log_search_progress: Optional[bool] = None
     planning_must_schedule_horizon_days: Optional[int] = None
     planning_candidate_horizon_days: Optional[int] = None
+    planning_material_ready_horizon_days: Optional[int] = None
+    planning_force_must_order_classes: Optional[list[str]] = None
+    planning_force_must_customer_classes: Optional[list[str]] = None
+    planning_scarce_machine_threshold: Optional[int] = None
     candidate_reject_penalty: Optional[int] = None
     candidate_max_deferred_count: Optional[int] = None
     candidate_min_acceptance_ratio: Optional[float] = None
@@ -228,6 +232,10 @@ POLICY_VALUE_KEYS = (
     "solver_log_search_progress",
     "planning_must_schedule_horizon_days",
     "planning_candidate_horizon_days",
+    "planning_material_ready_horizon_days",
+    "planning_force_must_order_classes",
+    "planning_force_must_customer_classes",
+    "planning_scarce_machine_threshold",
     "candidate_reject_penalty",
     "candidate_max_deferred_count",
     "candidate_min_acceptance_ratio",
@@ -270,6 +278,10 @@ POLICY_DEFAULTS = {
     "solver_log_search_progress": False,
     "planning_must_schedule_horizon_days": 3,
     "planning_candidate_horizon_days": 14,
+    "planning_material_ready_horizon_days": 14,
+    "planning_force_must_order_classes": ["URGENT"],
+    "planning_force_must_customer_classes": ["VIP"],
+    "planning_scarce_machine_threshold": 1,
     "candidate_reject_penalty": 10_000_000,
     "candidate_max_deferred_count": None,
     "candidate_min_acceptance_ratio": 0.0,
@@ -396,6 +408,10 @@ def _ensure_planning_schema_locked(db):
             solver_log_search_progress          BOOLEAN NOT NULL DEFAULT FALSE,
             planning_must_schedule_horizon_days INTEGER NOT NULL DEFAULT 3,
             planning_candidate_horizon_days     INTEGER NOT NULL DEFAULT 14,
+            planning_material_ready_horizon_days INTEGER NOT NULL DEFAULT 14,
+            planning_force_must_order_classes   TEXT[] NOT NULL DEFAULT ARRAY['URGENT']::TEXT[],
+            planning_force_must_customer_classes TEXT[] NOT NULL DEFAULT ARRAY['VIP']::TEXT[],
+            planning_scarce_machine_threshold   INTEGER NOT NULL DEFAULT 1,
             candidate_reject_penalty            INTEGER NOT NULL DEFAULT 10000000,
             candidate_max_deferred_count        INTEGER,
             candidate_min_acceptance_ratio      DOUBLE PRECISION NOT NULL DEFAULT 0,
@@ -436,6 +452,10 @@ def _ensure_planning_schema_locked(db):
             ADD COLUMN IF NOT EXISTS solver_log_search_progress BOOLEAN NOT NULL DEFAULT FALSE,
             ADD COLUMN IF NOT EXISTS planning_must_schedule_horizon_days INTEGER NOT NULL DEFAULT 3,
             ADD COLUMN IF NOT EXISTS planning_candidate_horizon_days INTEGER NOT NULL DEFAULT 14,
+            ADD COLUMN IF NOT EXISTS planning_material_ready_horizon_days INTEGER NOT NULL DEFAULT 14,
+            ADD COLUMN IF NOT EXISTS planning_force_must_order_classes TEXT[] NOT NULL DEFAULT ARRAY['URGENT']::TEXT[],
+            ADD COLUMN IF NOT EXISTS planning_force_must_customer_classes TEXT[] NOT NULL DEFAULT ARRAY['VIP']::TEXT[],
+            ADD COLUMN IF NOT EXISTS planning_scarce_machine_threshold INTEGER NOT NULL DEFAULT 1,
             ADD COLUMN IF NOT EXISTS candidate_reject_penalty INTEGER NOT NULL DEFAULT 10000000,
             ADD COLUMN IF NOT EXISTS candidate_max_deferred_count INTEGER,
             ADD COLUMN IF NOT EXISTS candidate_min_acceptance_ratio DOUBLE PRECISION NOT NULL DEFAULT 0,
@@ -585,6 +605,9 @@ def _get_schedule_settings(db):
             solver_profile, solver_time_limit_seconds, solver_relative_gap_limit,
             solver_random_seed, solver_num_workers, solver_log_search_progress,
             planning_must_schedule_horizon_days, planning_candidate_horizon_days,
+            planning_material_ready_horizon_days,
+            planning_force_must_order_classes, planning_force_must_customer_classes,
+            planning_scarce_machine_threshold,
             candidate_reject_penalty, candidate_max_deferred_count,
             candidate_min_acceptance_ratio,
             arc_pruning_enabled, arc_pruning_max_setup_mins,
@@ -626,6 +649,23 @@ def _policy_list(settings: dict, key: str, *, transform=None) -> list[str]:
     if normalized:
         return normalized
     return list(POLICY_DEFAULTS.get(key, []))
+
+
+def _policy_list_allow_empty(settings: dict, key: str, *, transform=None) -> list[str]:
+    values = POLICY_DEFAULTS.get(key, []) if key not in settings or settings.get(key) is None else settings.get(key)
+    values = _normalize_json(values, values)
+    if isinstance(values, str):
+        values = [values]
+    transform = transform or (lambda item: item)
+    normalized = []
+    seen = set()
+    for value in values or []:
+        item = transform(str(value).strip())
+        if not item or item in seen:
+            continue
+        normalized.append(item)
+        seen.add(item)
+    return normalized
 
 
 def _screening_override_code_lists(settings: dict) -> tuple[list[str], list[str]]:
@@ -675,6 +715,22 @@ def _policy_snapshot(settings: dict, enabled_rule_counts: dict | None = None) ->
         "planning_bucket": {
             "must_schedule_horizon_days": int(settings.get("planning_must_schedule_horizon_days") or 3),
             "candidate_horizon_days": int(settings.get("planning_candidate_horizon_days") or 14),
+            "material_ready_horizon_days": int(
+                14
+                if settings.get("planning_material_ready_horizon_days") is None
+                else settings.get("planning_material_ready_horizon_days")
+            ),
+            "force_must_order_classes": _policy_list_allow_empty(
+                settings,
+                "planning_force_must_order_classes",
+                transform=str.upper,
+            ),
+            "force_must_customer_classes": _policy_list_allow_empty(
+                settings,
+                "planning_force_must_customer_classes",
+                transform=str.upper,
+            ),
+            "scarce_machine_threshold": int(settings.get("planning_scarce_machine_threshold") or 0),
         },
         "candidate_acceptance": {
             "reject_penalty": int(settings.get("candidate_reject_penalty") or 10_000_000),
@@ -3799,6 +3855,18 @@ def update_schedule_settings(
             assignments.append(f"{key}=%s")
             params.append(max(0, int(value)))
         elif key == "planning_candidate_horizon_days":
+            assignments.append(f"{key}=%s")
+            params.append(max(0, int(value)))
+        elif key == "planning_material_ready_horizon_days":
+            assignments.append(f"{key}=%s")
+            params.append(max(0, int(value)))
+        elif key == "planning_force_must_order_classes":
+            assignments.append(f"{key}=%s")
+            params.append(_policy_list_allow_empty({key: value}, key, transform=str.upper))
+        elif key == "planning_force_must_customer_classes":
+            assignments.append(f"{key}=%s")
+            params.append(_policy_list_allow_empty({key: value}, key, transform=str.upper))
+        elif key == "planning_scarce_machine_threshold":
             assignments.append(f"{key}=%s")
             params.append(max(0, int(value)))
         elif key == "candidate_reject_penalty":

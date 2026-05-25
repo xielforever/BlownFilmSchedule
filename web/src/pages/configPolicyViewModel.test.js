@@ -32,6 +32,10 @@ test('buildSchedulePolicyPayload includes solver, bucket, screening and review s
     solver_num_workers: 4,
     planning_must_schedule_horizon_days: 2,
     planning_candidate_horizon_days: 10,
+    planning_material_ready_horizon_days: 10,
+    planning_scarce_machine_threshold: 1,
+    planning_force_must_order_classes: 'URGENT,SAMPLE',
+    planning_force_must_customer_classes: ['VIP'],
     candidate_reject_penalty: 5000,
     candidate_max_deferred_count: 3,
     candidate_min_acceptance_ratio: 0.75,
@@ -54,6 +58,10 @@ test('buildSchedulePolicyPayload includes solver, bucket, screening and review s
   assert.equal(payload.solver_time_limit_seconds, 45);
   assert.equal(payload.candidate_max_deferred_count, 3);
   assert.equal(payload.candidate_min_acceptance_ratio, 0.75);
+  assert.equal(payload.planning_material_ready_horizon_days, 10);
+  assert.equal(payload.planning_scarce_machine_threshold, 1);
+  assert.deepEqual(payload.planning_force_must_order_classes, ['URGENT', 'SAMPLE']);
+  assert.deepEqual(payload.planning_force_must_customer_classes, ['VIP']);
   assert.deepEqual(payload.screening_allowed_order_statuses, ['PENDING', 'RELEASED']);
   assert.deepEqual(payload.screening_restricted_override_codes, ['material_not_ready', 'due_risk']);
   assert.deepEqual(payload.screening_required_positive_order_fields, [
@@ -65,7 +73,9 @@ test('buildSchedulePolicyPayload includes solver, bucket, screening and review s
 
 test('policy field metadata exposes configurable non-boolean strategy groups', () => {
   assert.ok(numericPolicyFieldGroups.some(group => group.keys.includes('candidate_min_acceptance_ratio')));
+  assert.ok(numericPolicyFieldGroups.some(group => group.keys.includes('planning_material_ready_horizon_days')));
   assert.ok(numericPolicyFieldGroups.some(group => group.keys.includes('arc_pruning_top_k_per_order')));
+  assert.ok(listPolicyFields.some(field => field.key === 'planning_force_must_order_classes'));
   assert.ok(listPolicyFields.some(field => field.key === 'screening_allowed_order_statuses'));
 });
 
@@ -73,6 +83,7 @@ test('policyFieldRuleClass classifies strategy fields for governance', () => {
   assert.equal(policyFieldRuleClass('machine_capability_constraint_enabled'), 'hard');
   assert.equal(policyFieldRuleClass('continuous_run_enforcement_mode'), 'hard');
   assert.equal(policyFieldRuleClass('candidate_reject_penalty'), 'soft');
+  assert.equal(policyFieldRuleClass('planning_force_must_order_classes'), 'soft');
   assert.equal(policyFieldRuleClass('due_date_optimization_enabled'), 'soft');
   assert.equal(policyFieldRuleClass('solver_time_limit_seconds'), 'performance');
   assert.equal(policyFieldRuleClass('arc_pruning_top_k_per_order'), 'performance');

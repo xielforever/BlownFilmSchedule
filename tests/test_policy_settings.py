@@ -114,12 +114,50 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(policy["candidate_max_deferred_count"], 3)
         self.assertEqual(policy["candidate_min_acceptance_ratio"], 0.6)
 
+    def test_database_policy_loader_exposes_business_bucket_rules(self):
+        class Cursor:
+            def __init__(self):
+                self.sql = ""
+
+            def execute(self, sql):
+                self.sql = sql
+
+            def fetchone(self):
+                return {
+                    "planning_material_ready_horizon_days": 10,
+                    "planning_force_must_order_classes": ["URGENT", "SAMPLE"],
+                    "planning_force_must_customer_classes": ["VIP"],
+                    "planning_scarce_machine_threshold": 2,
+                }
+
+        cur = Cursor()
+        manager = object.__new__(database.DatabaseManager)
+
+        policy = manager._load_schedule_policy(cur)
+
+        for key in [
+            "planning_material_ready_horizon_days",
+            "planning_force_must_order_classes",
+            "planning_force_must_customer_classes",
+            "planning_scarce_machine_threshold",
+        ]:
+            self.assertIn(key, cur.sql)
+            self.assertIn(key, policy)
+        self.assertEqual(policy["planning_material_ready_horizon_days"], 10)
+        self.assertEqual(policy["planning_force_must_order_classes"], ["URGENT", "SAMPLE"])
+        self.assertEqual(policy["planning_force_must_customer_classes"], ["VIP"])
+        self.assertEqual(policy["planning_scarce_machine_threshold"], 2)
+
     def test_database_fresh_schema_declares_candidate_acceptance_limits(self):
         with open(database.DDL_PATH, encoding="utf-8") as schema:
             ddl = schema.read()
 
         self.assertIn("candidate_max_deferred_count", ddl)
         self.assertIn("candidate_min_acceptance_ratio", ddl)
+        self.assertIn("planning_material_ready_horizon_days", ddl)
+        self.assertIn("planning_force_must_order_classes", ddl)
+        self.assertIn("planning_force_must_customer_classes", ddl)
+        self.assertIn("planning_scarce_machine_threshold", ddl)
 
     def test_database_policy_loader_exposes_screening_and_review_strategy(self):
         class Cursor:
@@ -181,6 +219,10 @@ class TestSchedulePolicySettings(unittest.TestCase):
             "solver_log_search_progress",
             "planning_must_schedule_horizon_days",
             "planning_candidate_horizon_days",
+            "planning_material_ready_horizon_days",
+            "planning_force_must_order_classes",
+            "planning_force_must_customer_classes",
+            "planning_scarce_machine_threshold",
             "candidate_reject_penalty",
             "candidate_max_deferred_count",
             "candidate_min_acceptance_ratio",
@@ -329,6 +371,10 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "solver_log_search_progress": True,
                 "planning_must_schedule_horizon_days": 5,
                 "planning_candidate_horizon_days": 21,
+                "planning_material_ready_horizon_days": 13,
+                "planning_force_must_order_classes": ["URGENT"],
+                "planning_force_must_customer_classes": ["VIP"],
+                "planning_scarce_machine_threshold": 1,
                 "candidate_reject_penalty": 4321,
                 "candidate_max_deferred_count": 2,
                 "candidate_min_acceptance_ratio": 0.5,
@@ -356,6 +402,10 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(snapshot["solver_profile"]["relative_gap_limit"], 0.01)
         self.assertEqual(snapshot["planning_bucket"]["must_schedule_horizon_days"], 5)
         self.assertEqual(snapshot["planning_bucket"]["candidate_horizon_days"], 21)
+        self.assertEqual(snapshot["planning_bucket"]["material_ready_horizon_days"], 13)
+        self.assertEqual(snapshot["planning_bucket"]["force_must_order_classes"], ["URGENT"])
+        self.assertEqual(snapshot["planning_bucket"]["force_must_customer_classes"], ["VIP"])
+        self.assertEqual(snapshot["planning_bucket"]["scarce_machine_threshold"], 1)
         self.assertEqual(snapshot["candidate_acceptance"]["reject_penalty"], 4321)
         self.assertEqual(snapshot["candidate_acceptance"]["max_deferred_count"], 2)
         self.assertEqual(snapshot["candidate_acceptance"]["min_acceptance_ratio"], 0.5)
@@ -374,6 +424,19 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(snapshot["manual_adjustment_review"]["delay_threshold_mins"], 30)
         self.assertEqual(snapshot["manual_adjustment_review"]["setup_threshold_mins"], 20)
         self.assertEqual(snapshot["manual_adjustment_review"]["tardiness_threshold_mins"], 15)
+
+    def test_policy_snapshot_allows_empty_force_must_bucket_lists(self):
+        snapshot = schedule_router._policy_snapshot(
+            {
+                **schedule_router.POLICY_DEFAULTS,
+                "planning_force_must_order_classes": [],
+                "planning_force_must_customer_classes": [],
+            },
+            {},
+        )
+
+        self.assertEqual(snapshot["planning_bucket"]["force_must_order_classes"], [])
+        self.assertEqual(snapshot["planning_bucket"]["force_must_customer_classes"], [])
 
     def test_policy_snapshot_captures_version_settings_and_rule_counts(self):
         snapshot = schedule_router._policy_snapshot(
@@ -740,6 +803,128 @@ class TestSchedulePolicySettings(unittest.TestCase):
             "candidate",
             "deferred",
         ])
+
+    def test_schedule_policy_uses_configured_business_bucket_rules(self):
+        machines = [
+            BlownFilmMachineModel(
+                machine_id="LINE-WIDE",
+                name="Wide line",
+                cleanroom_level="Class_100K",
+                layer_structure=3,
+                die_diameter_mm=300,
+                min_width=400,
+                max_width=1200,
+                min_thickness=20,
+                max_thickness=80,
+                hourly_output_kg=100,
+                max_slitting_lanes=4,
+            ),
+            BlownFilmMachineModel(
+                machine_id="LINE-NARROW",
+                name="Narrow line",
+                cleanroom_level="Class_100K",
+                layer_structure=3,
+                die_diameter_mm=200,
+                min_width=400,
+                max_width=700,
+                min_thickness=20,
+                max_thickness=80,
+                hourly_output_kg=80,
+                max_slitting_lanes=3,
+            ),
+        ]
+        orders = [
+            ProductionOrderModel(
+                order_id="ORD-MATERIAL-LATE",
+                product_type="Film-A",
+                target_width=500,
+                target_thickness=35,
+                total_quantity_kg=1000,
+                cleanroom_req="Class_100K",
+                customer_class="STANDARD",
+                order_class="NORMAL",
+                corona_req=False,
+                core_size_inch=3,
+                due_date_mins=2 * 1440,
+                material_available_mins=20 * 1440,
+            ),
+            ProductionOrderModel(
+                order_id="ORD-URGENT",
+                product_type="Film-A",
+                target_width=500,
+                target_thickness=35,
+                total_quantity_kg=1000,
+                cleanroom_req="Class_100K",
+                customer_class="STANDARD",
+                order_class="URGENT",
+                corona_req=False,
+                core_size_inch=3,
+                due_date_mins=10 * 1440,
+            ),
+            ProductionOrderModel(
+                order_id="ORD-VIP",
+                product_type="Film-A",
+                target_width=500,
+                target_thickness=35,
+                total_quantity_kg=1000,
+                cleanroom_req="Class_100K",
+                customer_class="VIP",
+                order_class="NORMAL",
+                corona_req=False,
+                core_size_inch=3,
+                due_date_mins=10 * 1440,
+            ),
+            ProductionOrderModel(
+                order_id="ORD-SCARCE",
+                product_type="Film-A",
+                target_width=1000,
+                target_thickness=35,
+                total_quantity_kg=1000,
+                cleanroom_req="Class_100K",
+                customer_class="STANDARD",
+                order_class="NORMAL",
+                corona_req=False,
+                core_size_inch=3,
+                due_date_mins=10 * 1440,
+            ),
+            ProductionOrderModel(
+                order_id="ORD-CANDIDATE",
+                product_type="Film-A",
+                target_width=500,
+                target_thickness=35,
+                total_quantity_kg=1000,
+                cleanroom_req="Class_100K",
+                customer_class="STANDARD",
+                order_class="NORMAL",
+                corona_req=False,
+                core_size_inch=3,
+                due_date_mins=10 * 1440,
+            ),
+        ]
+
+        database._apply_schedule_policy_to_master_data(
+            machines,
+            orders,
+            {
+                "planning_must_schedule_horizon_days": 3,
+                "planning_candidate_horizon_days": 14,
+                "planning_material_ready_horizon_days": 14,
+                "planning_force_must_order_classes": ["URGENT"],
+                "planning_force_must_customer_classes": ["VIP"],
+                "planning_scarce_machine_threshold": 1,
+            },
+        )
+
+        self.assertEqual(
+            {order.order_id: order.planning_bucket for order in orders},
+            {
+                "ORD-MATERIAL-LATE": "deferred",
+                "ORD-URGENT": "must_schedule",
+                "ORD-VIP": "must_schedule",
+                "ORD-SCARCE": "must_schedule",
+                "ORD-CANDIDATE": "candidate",
+            },
+        )
 
     def test_solver_params_include_policy_snapshot_when_present(self):
         result = type("Result", (), {

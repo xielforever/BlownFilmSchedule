@@ -174,6 +174,10 @@ const policySettingLabels = {
   manual_adjust_review_setup_threshold_mins: '人工调整换产复核阈值',
   manual_adjust_review_tardiness_threshold_mins: '人工调整迟交复核阈值',
 };
+policySettingLabels.planning_material_ready_horizon_days = '物料齐套窗口(天)';
+policySettingLabels.planning_force_must_order_classes = '强制必排订单等级';
+policySettingLabels.planning_force_must_customer_classes = '强制必排客户等级';
+policySettingLabels.planning_scarce_machine_threshold = '稀缺机台阈值';
 const policySettingDescriptions = {
   review_required: '开启后草案必须先校验，再发布到制造队列。',
   manual_adjust_enabled: '开启后复核员可以在草案中改机台或时间，并留下审计记录。',
