@@ -179,6 +179,16 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
         for task in result.tasks
     )
     total_setup_time_mins = sum(max(0, task.setup_time) for task in result.tasks)
+    machine_load = _machine_load(result.tasks)
+    baseline_metrics = {
+        "solver_status": result.status,
+        "wall_time_seconds": wall_time,
+        "gap": gap,
+        "late_order_count": late_order_count,
+        "weighted_tardiness": weighted_tardiness,
+        "total_setup_time_mins": total_setup_time_mins,
+        "machine_load": machine_load,
+    }
     failed_checks = []
     if result.status not in PASS_STATUSES:
         failed_checks.append("solver_status")
@@ -236,7 +246,8 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
             "top_k_per_order": case.arc_pruning_top_k_per_order,
         },
         "failed_checks": failed_checks,
-        "machine_load": _machine_load(result.tasks),
+        "machine_load": machine_load,
+        "baseline_metrics": baseline_metrics,
         "phase_metrics": {
             key: value
             for key, value in result.solver_metrics.items()
@@ -411,6 +422,29 @@ def render_markdown_report(summary: dict) -> str:
                 wall=_fmt(case.get("wall_time_seconds")),
                 arcs=_fmt(model_size.get("arc_count")),
                 pruned=_fmt(model_size.get("pruned_arc_count")),
+            )
+        )
+
+    lines.extend([
+        "",
+        "## Baseline Metrics",
+        "",
+        "| Case | Solver Status | Wall Time | Gap | Late | Weighted Tardiness | Setup Mins | Machines |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ])
+    for case in summary.get("cases", []):
+        metrics = case.get("baseline_metrics") or {}
+        machine_load = metrics.get("machine_load") or {}
+        lines.append(
+            "| {name} | {status} | {wall} | {gap} | {late} | {weighted} | {setup} | {machines} |".format(
+                name=case.get("name"),
+                status=metrics.get("solver_status"),
+                wall=_fmt(metrics.get("wall_time_seconds")),
+                gap=_fmt(metrics.get("gap")),
+                late=_fmt(metrics.get("late_order_count")),
+                weighted=_fmt(metrics.get("weighted_tardiness")),
+                setup=_fmt(metrics.get("total_setup_time_mins")),
+                machines=len(machine_load),
             )
         )
 

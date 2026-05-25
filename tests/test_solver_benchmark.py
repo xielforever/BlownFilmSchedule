@@ -51,6 +51,15 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertIn("deferred_reason_counts", case)
         self.assertIn("machine_load", case)
         self.assertIn("phase_metrics", case)
+        self.assertEqual(case["baseline_metrics"], {
+            "solver_status": case["solver_status"],
+            "wall_time_seconds": case["wall_time_seconds"],
+            "gap": case["gap"],
+            "late_order_count": case["late_order_count"],
+            "weighted_tardiness": case["weighted_tardiness"],
+            "total_setup_time_mins": case["total_setup_time_mins"],
+            "machine_load": case["machine_load"],
+        })
         self.assertIsInstance(case["machine_load"], dict)
 
     def test_benchmark_case_fails_when_scheduled_ratio_is_below_threshold(self):
@@ -244,6 +253,8 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertIn("# Solver Benchmark Report", report)
         self.assertIn("## Cases", report)
         self.assertIn("## Profile Acceptance", report)
+        self.assertIn("## Baseline Metrics", report)
+        self.assertIn("Weighted Tardiness", report)
         self.assertIn("## Deferred Reasons", report)
         self.assertIn("Min Scheduled Ratio | Deferred Reasons | Failed Checks", report)
         self.assertIn("fast-3-pruning-off", report)
