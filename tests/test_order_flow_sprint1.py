@@ -3321,6 +3321,24 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         self.assertEqual(result["screening_bucket_counts"]["blocked_material"], 1)
         self.assertEqual(result["screening_bucket_counts"]["ready"], 0)
 
+    def test_list_orders_ensures_screening_cache_schema_before_querying_cache_fields(self):
+        db = _FakeDb()
+        called = False
+        original = orders_router._ensure_order_screening_schema
+
+        def spy(target_db):
+            nonlocal called
+            called = True
+            return original(target_db)
+
+        orders_router._ensure_order_screening_schema = spy
+        try:
+            orders_router.list_orders(status="PENDING", q=None, page=1, size=50, db=db)
+        finally:
+            orders_router._ensure_order_screening_schema = original
+
+        self.assertTrue(called)
+
     def test_ensure_screening_schema_backfills_business_bucket_from_cached_result(self):
         db = _FakeDb()
         db.order_screening_cache["ORD-OLD-CACHE"] = {

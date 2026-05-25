@@ -100,6 +100,14 @@ async function pendingOrders(request, limit = 60) {
   return (await response.json()).items || [];
 }
 
+async function pendingReadyOrders(request, limit = 60) {
+  const response = await apiJson(request, 'get', '/api/orders', {
+    params: { status: 'PENDING', screening_status: 'ready', page: 1, size: limit },
+  });
+  expect(response.ok()).toBeTruthy();
+  return (await response.json()).items || [];
+}
+
 async function createPendingOrderFromSample(request, sample, orderId) {
   const response = await apiJson(request, 'post', '/api/orders', {
     data: {
@@ -249,8 +257,8 @@ test.describe.serial('schedule workbench closed loop', () => {
   });
 
   test('searches, filters, and keeps the order pool reversible', async ({ page, request }) => {
-    const orders = await pendingOrders(request, 20);
-    test.skip(!orders.length, 'no pending orders available for workbench e2e');
+    const orders = await pendingReadyOrders(request, 20);
+    test.skip(!orders.length, 'no ready pending orders available for workbench e2e');
     const sample = orders[0];
 
     await openOrderPoolIfCollapsed(page);
@@ -311,7 +319,7 @@ test.describe.serial('schedule workbench closed loop', () => {
   });
 
   test('shows screening recommended actions in the pending order pool', async ({ page, request }) => {
-    const sample = (await pendingOrders(request, 1))[0];
+    const sample = (await pendingReadyOrders(request, 1))[0];
     test.skip(!sample, 'no sample product available for screening action setup');
     const orderId = `E2EACTION${Date.now().toString().slice(-8)}`;
     const created = await apiJson(request, 'post', '/api/orders', {
@@ -342,7 +350,7 @@ test.describe.serial('schedule workbench closed loop', () => {
   });
 
   test('records restricted screening override from the order pool', async ({ page, request }) => {
-    const sample = (await pendingOrders(request, 1))[0];
+    const sample = (await pendingReadyOrders(request, 1))[0];
     test.skip(!sample, 'no sample product available for override setup');
     const orderId = `E2EOVERRIDE${Date.now().toString().slice(-7)}`;
     const created = await apiJson(request, 'post', '/api/orders', {

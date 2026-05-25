@@ -1004,6 +1004,7 @@ def list_orders(
     db=Depends(get_db),
     _=Depends(get_current_user),
 ):
+    _ensure_order_screening_schema(db)
     _ensure_order_screening_override_schema(db)
     _ensure_order_screening_action_schema(db)
     cur = db.cursor()
