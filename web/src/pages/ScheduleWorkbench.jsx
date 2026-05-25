@@ -36,6 +36,7 @@ import {
   screeningOverrideBadge,
   screeningOverrideDraftRisk,
   screeningPoolCounts,
+  lockedTaskSummaryCards,
   solverQualitySummary,
   validationDisplayCounts,
   validationDisplayMeta,
@@ -682,6 +683,10 @@ export default function ScheduleWorkbench() {
   );
   const solverQuality = useMemo(
     () => solverQualitySummary(activePlan),
+    [activePlan],
+  );
+  const lockedTaskCards = useMemo(
+    () => lockedTaskSummaryCards(activePlan?.locked_task_summary),
     [activePlan],
   );
   const sortedValidationItems = useMemo(() => {
@@ -2624,6 +2629,17 @@ export default function ScheduleWorkbench() {
             ))}
             {validation && !validation.items.length && <div className="workbench-ok">当前草案无阻断错误。</div>}
             {!validation && <div className="config-empty">选择草案后显示校验结果。</div>}
+          </div>
+          )}
+
+          {activeStage === 'draft_review' && lockedTaskCards.length > 0 && (
+          <div className="validation-list" data-testid="workbench-locked-task-summary">
+            <h4>锁定任务保护</h4>
+            <div className="workbench-validation-summary">
+              {lockedTaskCards.map(card => (
+                <span key={card.key}>{card.label} {card.value}</span>
+              ))}
+            </div>
           </div>
           )}
 

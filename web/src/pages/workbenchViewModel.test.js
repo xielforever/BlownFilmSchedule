@@ -12,6 +12,7 @@ import {
   deferredReasonFilterOptions,
   derivePublishChecklist,
   deriveReviewTabs,
+  lockedTaskSummaryCards,
   solverQualitySummary,
   deriveWorkflowStep,
   screeningPoolCounts,
@@ -254,6 +255,24 @@ test('derivePublishChecklist surfaces deferred orders before release', () => {
     checklist.find(item => item.key === 'deferred'),
     { key: 'deferred', label: '延后订单', status: 'warning', detail: '2 单' },
   );
+});
+
+test('lockedTaskSummaryCards exposes locked machine and time protection', () => {
+  assert.deepEqual(
+    lockedTaskSummaryCards({
+      locked_task_count: 3,
+      machine_locked_count: 2,
+      time_locked_count: 1,
+      protected_machine_ids: ['LINE-02', 'LINE-01'],
+    }),
+    [
+      { key: 'locked', label: '锁定任务', value: 3, tone: 'warning' },
+      { key: 'machine', label: '锁定机台', value: 2, tone: 'warning' },
+      { key: 'time', label: '锁定时间', value: 1, tone: 'warning' },
+      { key: 'machines', label: '受保护机台', value: 'LINE-01, LINE-02', tone: 'neutral' },
+    ],
+  );
+  assert.deepEqual(lockedTaskSummaryCards(null), []);
 });
 
 test('solverQualitySummary explains solver proof and candidate deferrals for workers', () => {

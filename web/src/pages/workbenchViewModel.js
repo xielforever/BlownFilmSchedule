@@ -197,6 +197,22 @@ export function deriveReviewTabs({ counts, needsActionCount = 0 }) {
   ];
 }
 
+export function lockedTaskSummaryCards(summary) {
+  if (!summary || Number(summary.locked_task_count || 0) <= 0) return [];
+  const protectedMachines = [...(summary.protected_machine_ids || [])].sort();
+  return [
+    { key: 'locked', label: '锁定任务', value: Number(summary.locked_task_count || 0), tone: 'warning' },
+    { key: 'machine', label: '锁定机台', value: Number(summary.machine_locked_count || 0), tone: 'warning' },
+    { key: 'time', label: '锁定时间', value: Number(summary.time_locked_count || 0), tone: 'warning' },
+    {
+      key: 'machines',
+      label: '受保护机台',
+      value: protectedMachines.length ? protectedMachines.join(', ') : '-',
+      tone: 'neutral',
+    },
+  ];
+}
+
 function formatPercent(value) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return '-';
   return `${(Number(value) * 100).toFixed(1)}%`;
