@@ -211,6 +211,50 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertEqual(summary["profile_acceptance"]["fast"]["case_count"], 2)
         self.assertEqual(summary["profile_acceptance"]["standard"]["case_count"], 2)
 
+    def test_sprint5_baseline_can_generate_arc_pruning_comparison_matrix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "sprint5-compare.json")
+            exit_code = main([
+                "--sprint5-baseline",
+                "--compare-arc-pruning",
+                "--order-counts", "3,4",
+                "--machine-count", "1",
+                "--profiles", "fast,standard",
+                "--arc-pruning-max-setup-mins", "999",
+                "--arc-pruning-top-k-per-order", "3",
+                "--arc-pruning-same-material-family-top-k", "3",
+                "--arc-pruning-same-cleanroom-top-k", "3",
+                "--arc-pruning-due-window-mins", "1440",
+                "--arc-pruning-due-window-top-k", "3",
+                "--output", path,
+                "--max-wall-time-seconds", "10",
+            ])
+            with open(path, encoding="utf-8") as f:
+                summary = json.load(f)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(summary["case_count"], 8)
+        self.assertEqual(len(summary["arc_pruning_comparisons"]), 4)
+        self.assertEqual(summary["scale_acceptance"]["3"]["case_count"], 4)
+        self.assertEqual(summary["scale_acceptance"]["4"]["case_count"], 4)
+        self.assertEqual(summary["scale_acceptance"]["3"]["comparison_count"], 2)
+        self.assertEqual(
+            [case["name"] for case in summary["cases"][:2]],
+            [
+                "sprint5-fast-3-pruning-off",
+                "sprint5-fast-3-pruning-on",
+            ],
+        )
+        self.assertEqual(summary["cases"][1]["arc_pruning_policy"], {
+            "enabled": True,
+            "max_setup_time_mins": 999,
+            "top_k_per_order": 3,
+            "same_material_family_top_k": 3,
+            "same_cleanroom_top_k": 3,
+            "due_window_mins": 1440,
+            "due_window_top_k": 3,
+        })
+
     def test_benchmark_script_runs_directly_from_repo_root(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "direct-summary.json")
@@ -358,6 +402,7 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertIn("# Solver Benchmark Report", report)
         self.assertIn("## Cases", report)
         self.assertIn("## Profile Acceptance", report)
+        self.assertIn("## Scale Acceptance", report)
         self.assertIn("## Baseline Metrics", report)
         self.assertIn("## Machine Model Sizes", report)
         self.assertIn("Weighted Tardiness", report)
