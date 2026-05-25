@@ -38,6 +38,10 @@ export const numericPolicyFieldGroups = [
     keys: [
       'arc_pruning_max_setup_mins',
       'arc_pruning_top_k_per_order',
+      'arc_pruning_same_material_family_top_k',
+      'arc_pruning_same_cleanroom_top_k',
+      'arc_pruning_due_window_mins',
+      'arc_pruning_due_window_top_k',
       'screening_due_risk_min_slack_mins',
       'screening_due_risk_duration_multiplier',
     ],
@@ -96,6 +100,10 @@ export const auditKeyLabels = {
   arc_pruning_enabled: '弧裁剪开关',
   arc_pruning_max_setup_mins: '弧裁剪换产阈值',
   arc_pruning_top_k_per_order: '弧裁剪 top-k',
+  arc_pruning_same_material_family_top_k: '弧裁剪材料族 top-k',
+  arc_pruning_same_cleanroom_top_k: '弧裁剪洁净等级 top-k',
+  arc_pruning_due_window_mins: '弧裁剪交期窗口',
+  arc_pruning_due_window_top_k: '弧裁剪交期 top-k',
   screening_allowed_order_statuses: '允许入池订单状态',
   screening_prohibited_override_codes: '禁止豁免原因',
   screening_restricted_override_codes: '受限豁免原因',
@@ -152,6 +160,10 @@ export const policyFieldRuleClasses = {
   arc_pruning_enabled: 'performance',
   arc_pruning_max_setup_mins: 'performance',
   arc_pruning_top_k_per_order: 'performance',
+  arc_pruning_same_material_family_top_k: 'performance',
+  arc_pruning_same_cleanroom_top_k: 'performance',
+  arc_pruning_due_window_mins: 'performance',
+  arc_pruning_due_window_top_k: 'performance',
 };
 
 policyFieldRuleClasses.planning_material_ready_horizon_days = 'soft';

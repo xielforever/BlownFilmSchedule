@@ -409,11 +409,44 @@ class AdvancedMedicalAPS:
             "enabled": bool(policy.get("enabled", False)),
             "max_setup_time_mins": max(0, int(policy.get("max_setup_time_mins") or 0)),
             "top_k_per_order": max(0, int(policy.get("top_k_per_order") or 0)),
+            "same_material_family_top_k": max(0, int(policy.get("same_material_family_top_k") or 0)),
+            "same_cleanroom_top_k": max(0, int(policy.get("same_cleanroom_top_k") or 0)),
+            "due_window_mins": max(0, int(policy.get("due_window_mins") or 0)),
+            "due_window_top_k": max(0, int(policy.get("due_window_top_k") or 0)),
         }
 
     def _should_prune_order_arc(self, setup_time_mins: int) -> bool:
         policy = self.arc_pruning_policy
         return policy["enabled"] and setup_time_mins > policy["max_setup_time_mins"]
+
+    @staticmethod
+    def _material_family(order: ProductionOrderModel) -> Tuple[str, ...]:
+        materials = tuple(str(item).strip().upper() for item in order.recipe_materials if str(item).strip())
+        return materials or (str(order.product_type).strip().upper(),)
+
+    @staticmethod
+    def _same_cleanroom(prev_order: ProductionOrderModel, next_order: ProductionOrderModel) -> bool:
+        return str(prev_order.cleanroom_req or "").strip().upper() == str(next_order.cleanroom_req or "").strip().upper()
+
+    @staticmethod
+    def _within_due_window(prev_order: ProductionOrderModel, next_order: ProductionOrderModel, window_mins: int) -> bool:
+        if window_mins <= 0:
+            return False
+        return abs(int(prev_order.due_date_mins or 0) - int(next_order.due_date_mins or 0)) <= window_mins
+
+    @staticmethod
+    def _prune_by_business_top_k(
+        candidates: List[Tuple[int, str, int]],
+        top_k: int,
+        predicate,
+    ) -> set[int]:
+        if top_k <= 0:
+            return set()
+        preferred = [candidate for candidate in candidates if predicate(candidate[2])]
+        if not preferred:
+            return set()
+        keep = {j for _setup_time, _order_id, j in sorted(preferred)[:top_k]}
+        return {j for _setup_time, _order_id, j in candidates if j not in keep}
 
     def _pruned_order_arcs_for_machine(
         self,
@@ -444,6 +477,33 @@ class AdvancedMedicalAPS:
                 for _setup_time, _order_id, j in candidates:
                     if j not in keep:
                         pruned.add((i, j))
+                candidates = [candidate for candidate in candidates if candidate[2] in keep]
+
+            business_rules = [
+                (
+                    policy["same_material_family_top_k"],
+                    lambda j, origin=orders[i]: self._material_family(origin) == self._material_family(orders[j]),
+                ),
+                (
+                    policy["same_cleanroom_top_k"],
+                    lambda j, origin=orders[i]: self._same_cleanroom(origin, orders[j]),
+                ),
+                (
+                    policy["due_window_top_k"],
+                    lambda j, origin=orders[i]: self._within_due_window(
+                        origin,
+                        orders[j],
+                        policy["due_window_mins"],
+                    ),
+                ),
+            ]
+            for rule_top_k, predicate in business_rules:
+                pruned_successors = self._prune_by_business_top_k(candidates, rule_top_k, predicate)
+                if not pruned_successors:
+                    continue
+                for j in pruned_successors:
+                    pruned.add((i, j))
+                candidates = [candidate for candidate in candidates if candidate[2] not in pruned_successors]
         return pruned
 
     def _apply_solver_profile(self, solver) -> None:

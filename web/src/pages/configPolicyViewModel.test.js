@@ -41,6 +41,10 @@ test('buildSchedulePolicyPayload includes solver, bucket, screening and review s
     candidate_min_acceptance_ratio: 0.75,
     arc_pruning_max_setup_mins: 180,
     arc_pruning_top_k_per_order: 4,
+    arc_pruning_same_material_family_top_k: 2,
+    arc_pruning_same_cleanroom_top_k: 2,
+    arc_pruning_due_window_mins: 1440,
+    arc_pruning_due_window_top_k: 3,
     screening_due_risk_min_slack_mins: 360,
     screening_due_risk_duration_multiplier: 2,
     manual_adjust_review_delay_threshold_mins: 20,
@@ -58,6 +62,10 @@ test('buildSchedulePolicyPayload includes solver, bucket, screening and review s
   assert.equal(payload.solver_time_limit_seconds, 45);
   assert.equal(payload.candidate_max_deferred_count, 3);
   assert.equal(payload.candidate_min_acceptance_ratio, 0.75);
+  assert.equal(payload.arc_pruning_same_material_family_top_k, 2);
+  assert.equal(payload.arc_pruning_same_cleanroom_top_k, 2);
+  assert.equal(payload.arc_pruning_due_window_mins, 1440);
+  assert.equal(payload.arc_pruning_due_window_top_k, 3);
   assert.equal(payload.planning_material_ready_horizon_days, 10);
   assert.equal(payload.planning_scarce_machine_threshold, 1);
   assert.deepEqual(payload.planning_force_must_order_classes, ['URGENT', 'SAMPLE']);
@@ -75,6 +83,10 @@ test('policy field metadata exposes configurable non-boolean strategy groups', (
   assert.ok(numericPolicyFieldGroups.some(group => group.keys.includes('candidate_min_acceptance_ratio')));
   assert.ok(numericPolicyFieldGroups.some(group => group.keys.includes('planning_material_ready_horizon_days')));
   assert.ok(numericPolicyFieldGroups.some(group => group.keys.includes('arc_pruning_top_k_per_order')));
+  assert.ok(numericPolicyFieldGroups.some(group => group.keys.includes('arc_pruning_same_material_family_top_k')));
+  assert.ok(numericPolicyFieldGroups.some(group => group.keys.includes('arc_pruning_same_cleanroom_top_k')));
+  assert.ok(numericPolicyFieldGroups.some(group => group.keys.includes('arc_pruning_due_window_mins')));
+  assert.ok(numericPolicyFieldGroups.some(group => group.keys.includes('arc_pruning_due_window_top_k')));
   assert.ok(listPolicyFields.some(field => field.key === 'planning_force_must_order_classes'));
   assert.ok(listPolicyFields.some(field => field.key === 'screening_allowed_order_statuses'));
 });
@@ -87,6 +99,7 @@ test('policyFieldRuleClass classifies strategy fields for governance', () => {
   assert.equal(policyFieldRuleClass('due_date_optimization_enabled'), 'soft');
   assert.equal(policyFieldRuleClass('solver_time_limit_seconds'), 'performance');
   assert.equal(policyFieldRuleClass('arc_pruning_top_k_per_order'), 'performance');
+  assert.equal(policyFieldRuleClass('arc_pruning_same_material_family_top_k'), 'performance');
   assert.equal(policyFieldRuleClass('auto_release_enabled'), 'experimental');
   assert.equal(policyFieldRuleClass('unknown_policy'), 'soft');
 });

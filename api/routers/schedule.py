@@ -184,6 +184,10 @@ class ScheduleSettingsPayload(BaseModel):
     arc_pruning_enabled: Optional[bool] = None
     arc_pruning_max_setup_mins: Optional[int] = None
     arc_pruning_top_k_per_order: Optional[int] = None
+    arc_pruning_same_material_family_top_k: Optional[int] = None
+    arc_pruning_same_cleanroom_top_k: Optional[int] = None
+    arc_pruning_due_window_mins: Optional[int] = None
+    arc_pruning_due_window_top_k: Optional[int] = None
     screening_due_risk_min_slack_mins: Optional[int] = None
     screening_due_risk_duration_multiplier: Optional[float] = None
     screening_allowed_order_statuses: Optional[list[str]] = None
@@ -242,6 +246,10 @@ POLICY_VALUE_KEYS = (
     "arc_pruning_enabled",
     "arc_pruning_max_setup_mins",
     "arc_pruning_top_k_per_order",
+    "arc_pruning_same_material_family_top_k",
+    "arc_pruning_same_cleanroom_top_k",
+    "arc_pruning_due_window_mins",
+    "arc_pruning_due_window_top_k",
     "screening_due_risk_min_slack_mins",
     "screening_due_risk_duration_multiplier",
     "screening_allowed_order_statuses",
@@ -288,6 +296,10 @@ POLICY_DEFAULTS = {
     "arc_pruning_enabled": False,
     "arc_pruning_max_setup_mins": 0,
     "arc_pruning_top_k_per_order": 0,
+    "arc_pruning_same_material_family_top_k": 0,
+    "arc_pruning_same_cleanroom_top_k": 0,
+    "arc_pruning_due_window_mins": 0,
+    "arc_pruning_due_window_top_k": 0,
     "screening_due_risk_min_slack_mins": 240,
     "screening_due_risk_duration_multiplier": 1.5,
     "screening_allowed_order_statuses": DEFAULT_SCREENING_POLICY["allowed_order_statuses"],
@@ -418,6 +430,10 @@ def _ensure_planning_schema_locked(db):
             arc_pruning_enabled                 BOOLEAN NOT NULL DEFAULT FALSE,
             arc_pruning_max_setup_mins          INTEGER NOT NULL DEFAULT 0,
             arc_pruning_top_k_per_order         INTEGER NOT NULL DEFAULT 0,
+            arc_pruning_same_material_family_top_k INTEGER NOT NULL DEFAULT 0,
+            arc_pruning_same_cleanroom_top_k    INTEGER NOT NULL DEFAULT 0,
+            arc_pruning_due_window_mins         INTEGER NOT NULL DEFAULT 0,
+            arc_pruning_due_window_top_k        INTEGER NOT NULL DEFAULT 0,
             screening_due_risk_min_slack_mins   INTEGER NOT NULL DEFAULT 240,
             screening_due_risk_duration_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.5,
             screening_allowed_order_statuses    TEXT[] NOT NULL DEFAULT ARRAY['PENDING']::TEXT[],
@@ -462,6 +478,10 @@ def _ensure_planning_schema_locked(db):
             ADD COLUMN IF NOT EXISTS arc_pruning_enabled BOOLEAN NOT NULL DEFAULT FALSE,
             ADD COLUMN IF NOT EXISTS arc_pruning_max_setup_mins INTEGER NOT NULL DEFAULT 0,
             ADD COLUMN IF NOT EXISTS arc_pruning_top_k_per_order INTEGER NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS arc_pruning_same_material_family_top_k INTEGER NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS arc_pruning_same_cleanroom_top_k INTEGER NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS arc_pruning_due_window_mins INTEGER NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS arc_pruning_due_window_top_k INTEGER NOT NULL DEFAULT 0,
             ADD COLUMN IF NOT EXISTS screening_due_risk_min_slack_mins INTEGER NOT NULL DEFAULT 240,
             ADD COLUMN IF NOT EXISTS screening_due_risk_duration_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.5,
             ADD COLUMN IF NOT EXISTS screening_allowed_order_statuses TEXT[] NOT NULL DEFAULT ARRAY['PENDING']::TEXT[],
@@ -612,6 +632,9 @@ def _get_schedule_settings(db):
             candidate_min_acceptance_ratio,
             arc_pruning_enabled, arc_pruning_max_setup_mins,
             arc_pruning_top_k_per_order,
+            arc_pruning_same_material_family_top_k,
+            arc_pruning_same_cleanroom_top_k,
+            arc_pruning_due_window_mins, arc_pruning_due_window_top_k,
             screening_due_risk_min_slack_mins, screening_due_risk_duration_multiplier,
             screening_allowed_order_statuses,
             screening_prohibited_override_codes,
@@ -741,6 +764,10 @@ def _policy_snapshot(settings: dict, enabled_rule_counts: dict | None = None) ->
             "enabled": bool(settings.get("arc_pruning_enabled", False)),
             "max_setup_time_mins": int(settings.get("arc_pruning_max_setup_mins") or 0),
             "top_k_per_order": int(settings.get("arc_pruning_top_k_per_order") or 0),
+            "same_material_family_top_k": int(settings.get("arc_pruning_same_material_family_top_k") or 0),
+            "same_cleanroom_top_k": int(settings.get("arc_pruning_same_cleanroom_top_k") or 0),
+            "due_window_mins": int(settings.get("arc_pruning_due_window_mins") or 0),
+            "due_window_top_k": int(settings.get("arc_pruning_due_window_top_k") or 0),
         },
         "order_screening": {
             "due_risk_min_slack_mins": int(settings.get("screening_due_risk_min_slack_mins") or 240),
@@ -860,6 +887,10 @@ def _build_scheduler(setup_mgr, settings: dict) -> AdvancedMedicalAPS:
             "enabled": bool(settings.get("arc_pruning_enabled", False)),
             "max_setup_time_mins": int(settings.get("arc_pruning_max_setup_mins") or 0),
             "top_k_per_order": int(settings.get("arc_pruning_top_k_per_order") or 0),
+            "same_material_family_top_k": int(settings.get("arc_pruning_same_material_family_top_k") or 0),
+            "same_cleanroom_top_k": int(settings.get("arc_pruning_same_cleanroom_top_k") or 0),
+            "due_window_mins": int(settings.get("arc_pruning_due_window_mins") or 0),
+            "due_window_top_k": int(settings.get("arc_pruning_due_window_top_k") or 0),
         },
     )
 
@@ -3923,6 +3954,14 @@ def update_schedule_settings(
             assignments.append(f"{key}=%s")
             params.append(max(0, int(value)))
         elif key == "arc_pruning_top_k_per_order":
+            assignments.append(f"{key}=%s")
+            params.append(max(0, int(value)))
+        elif key in {
+            "arc_pruning_same_material_family_top_k",
+            "arc_pruning_same_cleanroom_top_k",
+            "arc_pruning_due_window_mins",
+            "arc_pruning_due_window_top_k",
+        }:
             assignments.append(f"{key}=%s")
             params.append(max(0, int(value)))
         elif key == "screening_due_risk_min_slack_mins":

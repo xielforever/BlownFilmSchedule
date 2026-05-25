@@ -191,9 +191,64 @@ class TestSchedulerSequencing(unittest.TestCase):
             "enabled": True,
             "max_setup_time_mins": 999,
             "top_k_per_order": 1,
+            "same_material_family_top_k": 0,
+            "same_cleanroom_top_k": 0,
+            "due_window_mins": 0,
+            "due_window_top_k": 0,
         })
         self.assertEqual(model_size["pruned_arc_count"], 3)
         self.assertEqual(model_size["arc_count"], 13)
+
+    def test_arc_pruning_policy_applies_business_top_k_rules(self):
+        orders = [
+            _make_order(
+                "ORD-BIZ-A1",
+                recipeMaterialsSequence=["MAT-A"] * 5,
+                cleanroomReq="Class_10K",
+                dueDateMins=1000,
+            ),
+            _make_order(
+                "ORD-BIZ-A2",
+                recipeMaterialsSequence=["MAT-A"] * 5,
+                cleanroomReq="Class_10K",
+                dueDateMins=1060,
+            ),
+            _make_order(
+                "ORD-BIZ-B",
+                recipeMaterialsSequence=["MAT-B"] * 5,
+                cleanroomReq="Class_100K",
+                dueDateMins=4000,
+            ),
+        ]
+        machine = _make_machine(cleanroomLevel="Class_10K")
+        aps = AdvancedMedicalAPS(
+            _make_setup_mgr(),
+            arc_pruning_policy={
+                "enabled": True,
+                "max_setup_time_mins": 999,
+                "top_k_per_order": 0,
+                "same_material_family_top_k": 1,
+                "same_cleanroom_top_k": 1,
+                "due_window_mins": 120,
+                "due_window_top_k": 1,
+            },
+        )
+
+        result = aps.run(orders, [machine])
+
+        model_size = result.solver_metrics["model_size"]
+        self.assertIn(result.status, {"OPTIMAL", "FEASIBLE"})
+        self.assertEqual(model_size["arc_pruning_policy"], {
+            "enabled": True,
+            "max_setup_time_mins": 999,
+            "top_k_per_order": 0,
+            "same_material_family_top_k": 1,
+            "same_cleanroom_top_k": 1,
+            "due_window_mins": 120,
+            "due_window_top_k": 1,
+        })
+        self.assertEqual(model_size["pruned_arc_count"], 2)
+        self.assertEqual(model_size["arc_count"], 14)
 
     def test_locked_task_keeps_machine_and_time(self):
         locked_order = _make_order("ORD-LOCKED")

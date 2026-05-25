@@ -39,6 +39,10 @@ class BenchmarkCase:
     arc_pruning_enabled: bool = False
     arc_pruning_max_setup_mins: int = 0
     arc_pruning_top_k_per_order: int = 0
+    arc_pruning_same_material_family_top_k: int = 0
+    arc_pruning_same_cleanroom_top_k: int = 0
+    arc_pruning_due_window_mins: int = 0
+    arc_pruning_due_window_top_k: int = 0
     comparison_group: str | None = None
     comparison_variant: str | None = None
 
@@ -73,6 +77,10 @@ def _case_config(case: BenchmarkCase) -> dict:
         "arc_pruning_enabled": case.arc_pruning_enabled,
         "arc_pruning_max_setup_mins": case.arc_pruning_max_setup_mins,
         "arc_pruning_top_k_per_order": case.arc_pruning_top_k_per_order,
+        "arc_pruning_same_material_family_top_k": case.arc_pruning_same_material_family_top_k,
+        "arc_pruning_same_cleanroom_top_k": case.arc_pruning_same_cleanroom_top_k,
+        "arc_pruning_due_window_mins": case.arc_pruning_due_window_mins,
+        "arc_pruning_due_window_top_k": case.arc_pruning_due_window_top_k,
     }
     if case.comparison_group:
         config["comparison_group"] = case.comparison_group
@@ -191,6 +199,10 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
             "enabled": case.arc_pruning_enabled,
             "max_setup_time_mins": case.arc_pruning_max_setup_mins,
             "top_k_per_order": case.arc_pruning_top_k_per_order,
+            "same_material_family_top_k": case.arc_pruning_same_material_family_top_k,
+            "same_cleanroom_top_k": case.arc_pruning_same_cleanroom_top_k,
+            "due_window_mins": case.arc_pruning_due_window_mins,
+            "due_window_top_k": case.arc_pruning_due_window_top_k,
         },
     )
     result = aps.run(orders, machines)
@@ -274,6 +286,10 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
             "enabled": case.arc_pruning_enabled,
             "max_setup_time_mins": case.arc_pruning_max_setup_mins,
             "top_k_per_order": case.arc_pruning_top_k_per_order,
+            "same_material_family_top_k": case.arc_pruning_same_material_family_top_k,
+            "same_cleanroom_top_k": case.arc_pruning_same_cleanroom_top_k,
+            "due_window_mins": case.arc_pruning_due_window_mins,
+            "due_window_top_k": case.arc_pruning_due_window_top_k,
         },
         "failed_checks": failed_checks,
         "machine_load": machine_load,
@@ -424,6 +440,12 @@ def _fmt(value) -> str:
     return str(value)
 
 
+def _fmt_arc_pruning_policy(policy: dict | None) -> str:
+    if not policy:
+        return "-"
+    return ", ".join(f"{key}={value}" for key, value in sorted(policy.items()))
+
+
 def render_markdown_report(summary: dict) -> str:
     lines = [
         "# Solver Benchmark Report",
@@ -434,13 +456,13 @@ def render_markdown_report(summary: dict) -> str:
         "",
         "## Cases",
         "",
-        "| Case | Status | Passed | Scheduled | Deferred | Late | Weighted Tardiness | Setup Mins | Wall Time | Arc Count | Pruned Arcs |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Case | Status | Passed | Scheduled | Deferred | Late | Weighted Tardiness | Setup Mins | Wall Time | Arc Count | Pruned Arcs | Arc Pruning Strategy |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for case in summary.get("cases", []):
         model_size = case.get("model_size") or {}
         lines.append(
-            "| {name} | {status} | {passed} | {scheduled} | {deferred} | {late} | {weighted} | {setup} | {wall} | {arcs} | {pruned} |".format(
+            "| {name} | {status} | {passed} | {scheduled} | {deferred} | {late} | {weighted} | {setup} | {wall} | {arcs} | {pruned} | {strategy} |".format(
                 name=case.get("name"),
                 status=case.get("solver_status"),
                 passed=case.get("passed"),
@@ -452,6 +474,7 @@ def render_markdown_report(summary: dict) -> str:
                 wall=_fmt(case.get("wall_time_seconds")),
                 arcs=_fmt(model_size.get("arc_count")),
                 pruned=_fmt(model_size.get("pruned_arc_count")),
+                strategy=_fmt_arc_pruning_policy(case.get("arc_pruning_policy")),
             )
         )
 
@@ -619,6 +642,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--arc-pruning-enabled", action="store_true")
     parser.add_argument("--arc-pruning-max-setup-mins", type=int, default=0)
     parser.add_argument("--arc-pruning-top-k-per-order", type=int, default=0)
+    parser.add_argument("--arc-pruning-same-material-family-top-k", type=int, default=0)
+    parser.add_argument("--arc-pruning-same-cleanroom-top-k", type=int, default=0)
+    parser.add_argument("--arc-pruning-due-window-mins", type=int, default=0)
+    parser.add_argument("--arc-pruning-due-window-top-k", type=int, default=0)
     parser.add_argument("--compare-arc-pruning", action="store_true")
     parser.add_argument("--sprint5-baseline", action="store_true")
     parser.add_argument("--output", default="benchmark-summary.json")
@@ -670,6 +697,13 @@ def main(argv: list[str] | None = None) -> int:
                     ),
                     "arc_pruning_max_setup_mins": max(0, int(args.arc_pruning_max_setup_mins)),
                     "arc_pruning_top_k_per_order": max(0, int(args.arc_pruning_top_k_per_order)),
+                    "arc_pruning_same_material_family_top_k": max(
+                        0,
+                        int(args.arc_pruning_same_material_family_top_k),
+                    ),
+                    "arc_pruning_same_cleanroom_top_k": max(0, int(args.arc_pruning_same_cleanroom_top_k)),
+                    "arc_pruning_due_window_mins": max(0, int(args.arc_pruning_due_window_mins)),
+                    "arc_pruning_due_window_top_k": max(0, int(args.arc_pruning_due_window_top_k)),
                 }
                 if args.compare_arc_pruning:
                     group = f"{profile}-{count}"

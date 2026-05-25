@@ -229,6 +229,10 @@ class TestSchedulePolicySettings(unittest.TestCase):
             "arc_pruning_enabled",
             "arc_pruning_max_setup_mins",
             "arc_pruning_top_k_per_order",
+            "arc_pruning_same_material_family_top_k",
+            "arc_pruning_same_cleanroom_top_k",
+            "arc_pruning_due_window_mins",
+            "arc_pruning_due_window_top_k",
             "screening_due_risk_min_slack_mins",
             "screening_due_risk_duration_multiplier",
             "screening_allowed_order_statuses",
@@ -322,6 +326,10 @@ class TestSchedulePolicySettings(unittest.TestCase):
                     "arc_pruning_enabled": True,
                     "arc_pruning_max_setup_mins": 240,
                     "arc_pruning_top_k_per_order": 3,
+                    "arc_pruning_same_material_family_top_k": 2,
+                    "arc_pruning_same_cleanroom_top_k": 2,
+                    "arc_pruning_due_window_mins": 1440,
+                    "arc_pruning_due_window_top_k": 4,
                 },
             )
 
@@ -352,6 +360,10 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "enabled": True,
                 "max_setup_time_mins": 240,
                 "top_k_per_order": 3,
+                "same_material_family_top_k": 2,
+                "same_cleanroom_top_k": 2,
+                "due_window_mins": 1440,
+                "due_window_top_k": 4,
             },
         )
 
@@ -381,6 +393,10 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "arc_pruning_enabled": True,
                 "arc_pruning_max_setup_mins": 180,
                 "arc_pruning_top_k_per_order": 2,
+                "arc_pruning_same_material_family_top_k": 1,
+                "arc_pruning_same_cleanroom_top_k": 1,
+                "arc_pruning_due_window_mins": 720,
+                "arc_pruning_due_window_top_k": 3,
                 "screening_due_risk_min_slack_mins": 300,
                 "screening_due_risk_duration_multiplier": 2.0,
                 "screening_allowed_order_statuses": ["PENDING", "RELEASED"],
@@ -412,6 +428,10 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertEqual(snapshot["arc_pruning"]["enabled"], True)
         self.assertEqual(snapshot["arc_pruning"]["max_setup_time_mins"], 180)
         self.assertEqual(snapshot["arc_pruning"]["top_k_per_order"], 2)
+        self.assertEqual(snapshot["arc_pruning"]["same_material_family_top_k"], 1)
+        self.assertEqual(snapshot["arc_pruning"]["same_cleanroom_top_k"], 1)
+        self.assertEqual(snapshot["arc_pruning"]["due_window_mins"], 720)
+        self.assertEqual(snapshot["arc_pruning"]["due_window_top_k"], 3)
         self.assertEqual(snapshot["order_screening"]["due_risk_min_slack_mins"], 300)
         self.assertEqual(snapshot["order_screening"]["due_risk_duration_multiplier"], 2.0)
         self.assertEqual(snapshot["order_screening"]["allowed_order_statuses"], ["PENDING", "RELEASED"])
