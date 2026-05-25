@@ -207,6 +207,15 @@ POLICY_SETTING_KEYS = (
 )
 
 
+ADMIN_ONLY_DISABLE_POLICY_KEYS = frozenset({
+    "material_constraint_enabled",
+    "maintenance_constraint_enabled",
+    "setup_rules_enabled",
+    "cleanroom_constraint_enabled",
+    "machine_capability_constraint_enabled",
+})
+
+
 POLICY_VALUE_KEYS = (
     "continuous_run_limit_mins",
     "continuous_run_enforcement_mode",
@@ -287,11 +296,16 @@ def _require_policy_change_reason(value: str | None) -> str:
 
 
 def _require_high_risk_policy_permission(user, updated_fields: dict) -> None:
-    if updated_fields.get("continuous_run_enforcement_mode") != "experimental_disabled":
+    disables_hard_constraint = any(
+        key in updated_fields and updated_fields.get(key) is False
+        for key in ADMIN_ONLY_DISABLE_POLICY_KEYS
+    )
+    uses_experimental_cleaning = updated_fields.get("continuous_run_enforcement_mode") == "experimental_disabled"
+    if not disables_hard_constraint and not uses_experimental_cleaning:
         return
     role = getattr(user, "role", None)
     if role != "admin":
-        raise HTTPException(status_code=403, detail="实验性关闭连续运行清场规则需要管理员权限。")
+        raise HTTPException(status_code=403, detail="关闭或降级高风险排程策略需要管理员权限。")
 
 
 class PreplanCreatePayload(BaseModel):

@@ -423,6 +423,23 @@ class TestSchedulePolicySettings(unittest.TestCase):
             {"continuous_run_enforcement_mode": "experimental_disabled"},
         )
 
+    def test_disabling_hard_policy_switches_requires_admin(self):
+        for key in schedule_router.ADMIN_ONLY_DISABLE_POLICY_KEYS:
+            with self.subTest(key=key):
+                with self.assertRaises(schedule_router.HTTPException) as raised:
+                    schedule_router._require_high_risk_policy_permission(
+                        SimpleNamespace(username="planner", role="planner"),
+                        {key: False},
+                    )
+
+                self.assertEqual(raised.exception.status_code, 403)
+                self.assertIn("管理员", raised.exception.detail)
+
+                schedule_router._require_high_risk_policy_permission(
+                    SimpleNamespace(username="admin", role="admin"),
+                    {key: False},
+                )
+
     def test_config_audit_rows_are_serialized_for_api(self):
         row = schedule_router._config_audit_row_to_dict({
             "id": 7,

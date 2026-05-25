@@ -3362,7 +3362,7 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         result = schedule_router.update_schedule_settings(
             payload,
             db=db,
-            _=SimpleNamespace(username="planner"),
+            _=SimpleNamespace(username="admin", role="admin"),
         )
 
         self.assertEqual(result["policy_version"], 2)
@@ -3413,6 +3413,23 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         payload = schedule_router.ScheduleSettingsPayload(
             continuous_run_enforcement_mode="experimental_disabled",
             change_reason="temporary solver experiment",
+        )
+
+        with self.assertRaises(schedule_router.HTTPException) as raised:
+            schedule_router.update_schedule_settings(
+                payload,
+                db=db,
+                _=SimpleNamespace(username="planner", role="planner"),
+            )
+
+        self.assertEqual(raised.exception.status_code, 403)
+        self.assertEqual(db.config_change_audit, [])
+
+    def test_policy_update_blocks_planner_disabling_hard_constraint(self):
+        db = _FakeDb()
+        payload = schedule_router.ScheduleSettingsPayload(
+            machine_capability_constraint_enabled=False,
+            change_reason="temporary master data experiment",
         )
 
         with self.assertRaises(schedule_router.HTTPException) as raised:
