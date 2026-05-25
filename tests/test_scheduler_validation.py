@@ -138,6 +138,16 @@ class TestSchedulerSequencing(unittest.TestCase):
         self.assertEqual(model_size["eligible_orders_per_machine"], {"LINE-T": 2})
         self.assertGreaterEqual(model_size["arc_count"], 7)
         self.assertEqual(model_size["setup_cache_size"], 4)
+        self.assertEqual(model_size["machine_model_sizes"], {
+            "LINE-T": {
+                "eligible_order_count": 2,
+                "assignment_count": 2,
+                "optional_candidate_count": 1,
+                "arc_count": model_size["arc_count"],
+                "pruned_arc_count": 0,
+                "setup_cache_size": 4,
+            },
+        })
 
     def test_arc_pruning_policy_reduces_order_to_order_arcs(self):
         orders = [

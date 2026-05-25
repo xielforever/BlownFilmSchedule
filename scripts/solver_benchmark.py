@@ -478,6 +478,36 @@ def render_markdown_report(summary: dict) -> str:
             )
         )
 
+    machine_model_rows = []
+    for case in summary.get("cases", []):
+        for machine_id, metrics in ((case.get("model_size") or {}).get("machine_model_sizes") or {}).items():
+            machine_model_rows.append((case.get("name"), machine_id, metrics))
+    lines.extend([
+        "",
+        "## Machine Model Sizes",
+        "",
+    ])
+    if machine_model_rows:
+        lines.extend([
+            "| Case | Machine | Eligible Orders | Assignments | Optional Candidates | Arcs | Pruned Arcs | Setup Cache |",
+            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ])
+        for case_name, machine_id, metrics in machine_model_rows:
+            lines.append(
+                "| {case} | {machine} | {eligible} | {assignments} | {optional} | {arcs} | {pruned} | {cache} |".format(
+                    case=case_name,
+                    machine=machine_id,
+                    eligible=_fmt(metrics.get("eligible_order_count")),
+                    assignments=_fmt(metrics.get("assignment_count")),
+                    optional=_fmt(metrics.get("optional_candidate_count")),
+                    arcs=_fmt(metrics.get("arc_count")),
+                    pruned=_fmt(metrics.get("pruned_arc_count")),
+                    cache=_fmt(metrics.get("setup_cache_size")),
+                )
+            )
+    else:
+        lines.append("No per-machine model size telemetry was produced by these benchmark cases.")
+
     deferred_reason_rows = []
     for case in summary.get("cases", []):
         for reason, count in (case.get("deferred_reason_counts") or {}).items():

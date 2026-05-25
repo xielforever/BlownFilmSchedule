@@ -976,13 +976,19 @@ class AdvancedMedicalAPS:
         locked_tasks_by_order_id = locked_tasks_by_order_id or {}
         external_locked_tasks = external_locked_tasks or []
         eligible_orders_per_machine: Dict[str, int] = {}
+        machine_model_sizes: Dict[str, Dict] = {}
         arc_count = 0
         pruned_arc_count = 0
         for m_idx, machine in enumerate(machines):
             order_count = sum(1 for idx in range(len(orders)) if m_idx in eligible.get(idx, []))
             eligible_orders_per_machine[machine.machine_id] = order_count
+            machine_arc_count = 0
+            machine_pruned_arc_count = 0
+            machine_setup_cache_size = sum(1 for key in setup_cache if key[2] == m_idx)
             if order_count:
-                arc_count += 1 + (3 * order_count)
+                base_arc_count = 1 + (3 * order_count)
+                arc_count += base_arc_count
+                machine_arc_count += base_arc_count
                 m_orders = [i for i in range(len(orders)) if m_idx in eligible.get(i, [])]
                 pruned_arcs = self._pruned_order_arcs_for_machine(
                     m_orders,
@@ -998,8 +1004,22 @@ class AdvancedMedicalAPS:
                             continue
                         if (i, j) in pruned_arcs:
                             pruned_arc_count += 1
+                            machine_pruned_arc_count += 1
                         else:
                             arc_count += 1
+                            machine_arc_count += 1
+            machine_model_sizes[machine.machine_id] = {
+                "eligible_order_count": order_count,
+                "assignment_count": order_count,
+                "optional_candidate_count": sum(
+                    1
+                    for idx, order in enumerate(orders)
+                    if m_idx in eligible.get(idx, []) and self._is_optional_candidate(order)
+                ),
+                "arc_count": machine_arc_count,
+                "pruned_arc_count": machine_pruned_arc_count,
+                "setup_cache_size": machine_setup_cache_size,
+            }
 
         return {
             "order_count": len(orders),
@@ -1007,6 +1027,7 @@ class AdvancedMedicalAPS:
             "assignment_count": sum(len(machine_indices) for machine_indices in eligible.values()),
             "optional_candidate_count": sum(1 for order in orders if self._is_optional_candidate(order)),
             "eligible_orders_per_machine": eligible_orders_per_machine,
+            "machine_model_sizes": machine_model_sizes,
             "arc_count": arc_count,
             "pruned_arc_count": pruned_arc_count,
             "setup_cache_size": len(setup_cache),
