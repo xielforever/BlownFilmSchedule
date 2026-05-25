@@ -129,6 +129,25 @@ class TestPublishAuditPayload(unittest.TestCase):
         self.assertEqual(items[0]["code"], "maintenance.continuous_run_cleaning_required")
         self.assertIn("LINE-01", items[0]["message"])
 
+    def test_experimental_disabled_continuous_run_diagnostic_maps_to_publish_blocker_validation_item(self):
+        items = schedule_router._diagnostic_validation_items([
+            {
+                "entity_type": "schedule",
+                "entity_id": "continuous_run",
+                "severity": "critical",
+                "level": "publish_blocker",
+                "category": "maintenance",
+                "code": "maintenance.continuous_run_experimental_disabled",
+                "root_cause": "连续运行清场规则处于实验禁用模式，草案不得正式发布。",
+            }
+        ])
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["level"], "publish_blocker")
+        self.assertEqual(items[0]["severity"], "error")
+        self.assertEqual(items[0]["code"], "maintenance.continuous_run_experimental_disabled")
+        self.assertIn("实验禁用", items[0]["message"])
+
     def test_unplaced_solver_failed_orders_map_to_publish_blockers(self):
         items = schedule_router._unplaced_solver_failed_validation_items([
             {

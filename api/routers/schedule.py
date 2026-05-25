@@ -1741,8 +1741,12 @@ def _raise_if_unpublishable(validation: dict[str, Any]) -> None:
 
 def _diagnostic_validation_items(diagnostics: list[dict[str, Any]]) -> list[dict[str, Any]]:
     items = []
+    publish_validation_diagnostic_codes = {
+        "maintenance.continuous_run_cleaning_required",
+        "maintenance.continuous_run_experimental_disabled",
+    }
     for diagnostic in diagnostics or []:
-        if diagnostic.get("code") != "maintenance.continuous_run_cleaning_required":
+        if diagnostic.get("code") not in publish_validation_diagnostic_codes:
             continue
         level = diagnostic.get("level") or (
             "publish_blocker" if diagnostic.get("severity") == "critical" else "warning"
