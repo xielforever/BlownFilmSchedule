@@ -363,7 +363,7 @@ test.describe.serial('schedule workbench closed loop', () => {
 
     await openWorkbench(page);
     await openOrderPoolIfCollapsed(page);
-    await page.getByTestId('workbench-filter-screening').selectOption('blocked');
+    await page.getByTestId('workbench-filter-screening').selectOption('blocked_machine_capability');
     await page.getByTestId('workbench-search').fill(orderId);
     await expect(page.getByTestId(`workbench-pending-order-${testIdPart(orderId)}`)).toBeVisible();
     await expect(page.getByTestId(`workbench-screening-action-${testIdPart(orderId)}-expand_machine_capability`)).toContainText('调整机台规格能力');

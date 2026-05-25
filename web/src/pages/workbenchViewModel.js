@@ -512,6 +512,9 @@ export function matchesScreeningFilter(screeningOrStatus, filter) {
   if (filter === 'stale') return Boolean(screening.is_stale);
   if (screening.is_stale) return false;
   if (filter === 'schedulable') return screeningStatus === 'ready' || screeningStatus === 'risk';
+  if (String(filter).startsWith('blocked_')) {
+    return screeningStatus === 'blocked' && screening.business_bucket === filter;
+  }
   return screeningStatus === filter;
 }
 

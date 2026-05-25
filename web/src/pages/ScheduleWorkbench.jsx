@@ -126,6 +126,14 @@ const screeningLabels = {
   blocked: '阻断',
 };
 
+const screeningBucketLabels = {
+  blocked_data_error: '数据异常',
+  blocked_machine_capability: '机台能力异常',
+  blocked_cleanroom: '洁净室约束异常',
+  blocked_material: '物料异常',
+  blocked_policy: '策略阻断',
+};
+
 const screeningTones = {
   ready: 'success',
   risk: 'warning',
@@ -1710,6 +1718,9 @@ export default function ScheduleWorkbench() {
             <option value="schedulable">可排订单池</option>
             <option value="stale">{'\u9700\u91cd\u65b0\u7b5b\u9009'}</option>
             <option value="blocked">异常/阻断订单</option>
+            {Object.entries(screeningBucketLabels).map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
             <option value="">全部初筛</option>
             {Object.entries(screeningLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>

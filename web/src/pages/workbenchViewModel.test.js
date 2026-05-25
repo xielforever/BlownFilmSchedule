@@ -96,6 +96,30 @@ test('matchesScreeningFilter treats schedulable as ready or risk only', () => {
   assert.equal(matchesScreeningFilter('ready', ''), true);
 });
 
+test('matchesScreeningFilter supports blocked business bucket routing', () => {
+  assert.equal(
+    matchesScreeningFilter(
+      { screening_status: 'blocked', business_bucket: 'blocked_machine_capability', is_stale: false },
+      'blocked_machine_capability',
+    ),
+    true,
+  );
+  assert.equal(
+    matchesScreeningFilter(
+      { screening_status: 'blocked', business_bucket: 'blocked_material', is_stale: false },
+      'blocked_machine_capability',
+    ),
+    false,
+  );
+  assert.equal(
+    matchesScreeningFilter(
+      { screening_status: 'ready', business_bucket: 'ready', is_stale: false },
+      'blocked_machine_capability',
+    ),
+    false,
+  );
+});
+
 test('matchesScreeningFilter separates stale screening results from schedulable pool', () => {
   assert.equal(matchesScreeningFilter({ screening_status: 'ready', is_stale: true }, 'schedulable'), false);
   assert.equal(matchesScreeningFilter({ screening_status: 'risk', is_stale: false }, 'schedulable'), true);
