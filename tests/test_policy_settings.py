@@ -409,6 +409,20 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertIn("变更原因", raised.exception.detail)
         self.assertEqual(schedule_router._require_policy_change_reason("  产线切换验证  "), "产线切换验证")
 
+    def test_experimental_continuous_run_mode_requires_admin(self):
+        with self.assertRaises(schedule_router.HTTPException) as raised:
+            schedule_router._require_high_risk_policy_permission(
+                SimpleNamespace(username="planner", role="planner"),
+                {"continuous_run_enforcement_mode": "experimental_disabled"},
+            )
+
+        self.assertEqual(raised.exception.status_code, 403)
+        self.assertIn("管理员", raised.exception.detail)
+        schedule_router._require_high_risk_policy_permission(
+            SimpleNamespace(username="admin", role="admin"),
+            {"continuous_run_enforcement_mode": "experimental_disabled"},
+        )
+
     def test_config_audit_rows_are_serialized_for_api(self):
         row = schedule_router._config_audit_row_to_dict({
             "id": 7,

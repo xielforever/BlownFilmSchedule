@@ -3408,6 +3408,23 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         self.assertEqual(result["policy_version"], 2)
         self.assertEqual(db.config_change_audit[0]["policy_version"], 2)
 
+    def test_policy_update_blocks_planner_experimental_cleaning_mode(self):
+        db = _FakeDb()
+        payload = schedule_router.ScheduleSettingsPayload(
+            continuous_run_enforcement_mode="experimental_disabled",
+            change_reason="temporary solver experiment",
+        )
+
+        with self.assertRaises(schedule_router.HTTPException) as raised:
+            schedule_router.update_schedule_settings(
+                payload,
+                db=db,
+                _=SimpleNamespace(username="planner", role="planner"),
+            )
+
+        self.assertEqual(raised.exception.status_code, 403)
+        self.assertEqual(db.config_change_audit, [])
+
     def test_update_order_writes_diff_and_impacted_drafts(self):
         db = _FakeDb()
         db.products.add("Film-A")

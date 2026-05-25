@@ -286,6 +286,14 @@ def _require_policy_change_reason(value: str | None) -> str:
     return reason
 
 
+def _require_high_risk_policy_permission(user, updated_fields: dict) -> None:
+    if updated_fields.get("continuous_run_enforcement_mode") != "experimental_disabled":
+        return
+    role = getattr(user, "role", None)
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="实验性关闭连续运行清场规则需要管理员权限。")
+
+
 class PreplanCreatePayload(BaseModel):
     order_ids: list[str] = Field(default_factory=list)
     mode: str = Field(default="AUTO")
@@ -3682,6 +3690,7 @@ def update_schedule_settings(
     if not updated_fields:
         raise HTTPException(status_code=400, detail="No settings to update.")
     change_reason = _require_policy_change_reason(updated_fields.pop("change_reason", None))
+    _require_high_risk_policy_permission(_, updated_fields)
     allowed = set(POLICY_SETTING_KEYS) | set(POLICY_VALUE_KEYS)
     assignments = []
     params = []
