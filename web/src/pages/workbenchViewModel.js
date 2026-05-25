@@ -191,6 +191,56 @@ export function deriveReviewTabs({ counts, needsActionCount = 0 }) {
   ];
 }
 
+function formatPercent(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '-';
+  return `${(Number(value) * 100).toFixed(1)}%`;
+}
+
+function formatSeconds(value) {
+  const number = Number(value || 0);
+  return `${number.toFixed(1)}s`;
+}
+
+export function solverQualitySummary(activePlan) {
+  const run = activePlan?.run || {};
+  const metrics = run.solver_metrics || {};
+  const phase1 = metrics.phase_1 || {};
+  const phase2 = metrics.phase_2 || {};
+  const modelSize = metrics.model_size || {};
+  const summary = run.summary || {};
+  const runStatus = run.status || phase1.status || 'UNKNOWN';
+  const phase1Status = phase1.status || runStatus;
+  const phase2Status = phase2.status || '-';
+  const deferredCount = Number(summary.deferred_order_count || 0);
+  const totalWallTime = Number(phase1.wall_time || 0) + Number(phase2.wall_time || 0);
+  const provenOptimal = runStatus === 'OPTIMAL' && phase1Status === 'OPTIMAL' && (!phase2.status || phase2.status === 'OPTIMAL');
+  const blocked = ['INFEASIBLE', 'INVALID', 'MODEL_INVALID'].includes(runStatus);
+  const label = blocked
+    ? '求解不可用'
+    : provenOptimal
+      ? '已证明最优'
+      : '可行但未证明最优';
+  const tone = blocked ? 'danger' : provenOptimal ? 'success' : 'warning';
+  const detailParts = [
+    `Phase 1 ${phase1Status}`,
+    `gap ${formatPercent(phase1.gap)}`,
+    `Phase 2 ${phase2Status}`,
+  ];
+  if (deferredCount) detailParts.push(`候选延后 ${deferredCount} 单`);
+
+  return {
+    tone,
+    label,
+    detail: detailParts.join(' · '),
+    metrics: [
+      { key: 'orders', label: '输入', value: Number(modelSize.order_count || summary.input_order_count || 0) },
+      { key: 'arcs', label: '弧', value: Number(modelSize.arc_count || 0) },
+      { key: 'pruned_arcs', label: '裁剪', value: Number(modelSize.pruned_arc_count || 0) },
+      { key: 'wall_time', label: '耗时', value: formatSeconds(totalWallTime) },
+    ],
+  };
+}
+
 export function summarizeQueue(queue = [], activeRunId = null) {
   const rows = activeRunId ? queue.filter(item => item.run_id === activeRunId) : queue;
   const counts = rows.reduce((acc, item) => {

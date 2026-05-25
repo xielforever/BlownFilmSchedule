@@ -36,6 +36,7 @@ import {
   screeningOverrideBadge,
   screeningOverrideDraftRisk,
   screeningPoolCounts,
+  solverQualitySummary,
   validationDisplayCounts,
   validationDisplayMeta,
   selectableOrderIds,
@@ -676,6 +677,10 @@ export default function ScheduleWorkbench() {
   const validationCounts = useMemo(
     () => validationDisplayCounts(validation),
     [validation],
+  );
+  const solverQuality = useMemo(
+    () => solverQualitySummary(activePlan),
+    [activePlan],
   );
   const sortedValidationItems = useMemo(() => {
     const severityRank = { error: 0, warning: 1, info: 2 };
@@ -1886,6 +1891,11 @@ export default function ScheduleWorkbench() {
               <div className="workbench-summary-item warning">
                 <span>延期订单</span>
                 <strong>{planOrderCounts.late}</strong>
+              </div>
+              <div className={`workbench-summary-item ${solverQuality.tone === 'danger' ? 'danger' : solverQuality.tone === 'warning' ? 'warning' : ''}`} data-testid="workbench-solver-quality">
+                <span>{solverQuality.label}</span>
+                <strong>{solverQuality.metrics.find(item => item.key === 'wall_time')?.value || '-'}</strong>
+                <small>{solverQuality.detail}</small>
               </div>
             </div>
           )}

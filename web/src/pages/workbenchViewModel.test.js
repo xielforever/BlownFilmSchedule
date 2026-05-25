@@ -11,6 +11,7 @@ import {
   canCreateScreeningOverride,
   deferredReasonFilterOptions,
   deriveReviewTabs,
+  solverQualitySummary,
   deriveWorkflowStep,
   screeningPoolCounts,
   selectableOrderIds,
@@ -234,6 +235,36 @@ test('deriveReviewTabs keeps draft review compact for workers', () => {
       { key: 'scheduled', label: '已排', count: 4 },
       { key: 'input', label: '全部输入', count: 7 },
     ],
+  );
+});
+
+test('solverQualitySummary explains solver proof and candidate deferrals for workers', () => {
+  assert.deepEqual(
+    solverQualitySummary({
+      run: {
+        status: 'FEASIBLE',
+        summary: {
+          deferred_order_count: 2,
+          deferred_reason_counts: { candidate_optional_rejected: 2 },
+        },
+        solver_metrics: {
+          phase_1: { status: 'FEASIBLE', gap: 0.125, wall_time: 1.4 },
+          phase_2: { status: 'UNKNOWN', gap: null, wall_time: 0.8 },
+          model_size: { order_count: 12, arc_count: 40, pruned_arc_count: 5 },
+        },
+      },
+    }),
+    {
+      tone: 'warning',
+      label: '可行但未证明最优',
+      detail: 'Phase 1 FEASIBLE · gap 12.5% · Phase 2 UNKNOWN · 候选延后 2 单',
+      metrics: [
+        { key: 'orders', label: '输入', value: 12 },
+        { key: 'arcs', label: '弧', value: 40 },
+        { key: 'pruned_arcs', label: '裁剪', value: 5 },
+        { key: 'wall_time', label: '耗时', value: '2.2s' },
+      ],
+    },
   );
 });
 
