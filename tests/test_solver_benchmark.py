@@ -135,6 +135,7 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertEqual(summary["profile_acceptance"]["standard"]["case_count"], 1)
         self.assertIn("max_wall_time_seconds", summary["profile_acceptance"]["standard"])
         self.assertIn("min_scheduled_ratio", summary["profile_acceptance"]["standard"])
+        self.assertIn("deferred_reason_counts", summary["profile_acceptance"]["standard"])
 
     def test_benchmark_command_passes_arc_pruning_policy(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -244,6 +245,7 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertIn("## Cases", report)
         self.assertIn("## Profile Acceptance", report)
         self.assertIn("## Deferred Reasons", report)
+        self.assertIn("Min Scheduled Ratio | Deferred Reasons | Failed Checks", report)
         self.assertIn("fast-3-pruning-off", report)
         self.assertIn("fast-3-pruning-on", report)
         self.assertIn("## Arc Pruning Comparisons", report)

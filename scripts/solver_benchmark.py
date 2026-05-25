@@ -334,6 +334,10 @@ def _profile_acceptance(case_results: list[dict]) -> dict[str, dict]:
     acceptance = {}
     for profile, cases in sorted(grouped.items()):
         gaps = [float(case["gap"]) for case in cases if case.get("gap") is not None]
+        deferred_reason_counts: dict[str, int] = {}
+        for case in cases:
+            for reason, count in (case.get("deferred_reason_counts") or {}).items():
+                deferred_reason_counts[reason] = deferred_reason_counts.get(reason, 0) + int(count or 0)
         acceptance[profile] = {
             "case_count": len(cases),
             "passed_count": sum(1 for case in cases if case.get("passed")),
@@ -341,6 +345,7 @@ def _profile_acceptance(case_results: list[dict]) -> dict[str, dict]:
             "max_wall_time_seconds": max((float(case.get("wall_time_seconds") or 0.0) for case in cases), default=0.0),
             "max_gap": max(gaps) if gaps else None,
             "min_scheduled_ratio": min((float(case.get("scheduled_ratio") or 0.0) for case in cases), default=0.0),
+            "deferred_reason_counts": dict(sorted(deferred_reason_counts.items(), key=lambda item: (-item[1], item[0]))),
             "failed_checks": sorted({
                 check
                 for case in cases
@@ -434,12 +439,16 @@ def render_markdown_report(summary: dict) -> str:
             "",
             "## Profile Acceptance",
             "",
-            "| Profile | Cases | Passed | Failed | Max Wall Time | Max Gap | Min Scheduled Ratio | Failed Checks |",
-            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+            "| Profile | Cases | Passed | Failed | Max Wall Time | Max Gap | Min Scheduled Ratio | Deferred Reasons | Failed Checks |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
         ])
         for profile, item in sorted(profile_acceptance.items()):
+            deferred_reasons = ", ".join(
+                f"{reason}:{count}"
+                for reason, count in (item.get("deferred_reason_counts") or {}).items()
+            ) or "-"
             lines.append(
-                "| {profile} | {cases} | {passed} | {failed} | {wall} | {gap} | {ratio} | {checks} |".format(
+                "| {profile} | {cases} | {passed} | {failed} | {wall} | {gap} | {ratio} | {deferred} | {checks} |".format(
                     profile=profile,
                     cases=item.get("case_count"),
                     passed=item.get("passed_count"),
@@ -447,6 +456,7 @@ def render_markdown_report(summary: dict) -> str:
                     wall=_fmt(item.get("max_wall_time_seconds")),
                     gap=_fmt(item.get("max_gap")),
                     ratio=_fmt(item.get("min_scheduled_ratio")),
+                    deferred=deferred_reasons,
                     checks=", ".join(item.get("failed_checks") or []) or "-",
                 )
             )
