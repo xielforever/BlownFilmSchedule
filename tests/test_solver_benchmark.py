@@ -130,6 +130,10 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertEqual([case["profile"] for case in summary["cases"]], ["fast", "standard"])
         self.assertEqual([case["order_count"] for case in summary["cases"]], [3, 3])
         self.assertEqual([case["name"] for case in summary["cases"]], ["fast-3", "standard-3"])
+        self.assertEqual(summary["profile_acceptance"]["fast"]["case_count"], 1)
+        self.assertEqual(summary["profile_acceptance"]["standard"]["case_count"], 1)
+        self.assertIn("max_wall_time_seconds", summary["profile_acceptance"]["standard"])
+        self.assertIn("min_scheduled_ratio", summary["profile_acceptance"]["standard"])
 
     def test_benchmark_command_passes_arc_pruning_policy(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -237,6 +241,7 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertIn("# Solver Benchmark Report", report)
         self.assertIn("## Cases", report)
+        self.assertIn("## Profile Acceptance", report)
         self.assertIn("fast-3-pruning-off", report)
         self.assertIn("fast-3-pruning-on", report)
         self.assertIn("## Arc Pruning Comparisons", report)

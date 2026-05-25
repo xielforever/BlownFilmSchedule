@@ -316,6 +316,30 @@ def _arc_pruning_comparisons(case_results: list[dict]) -> list[dict]:
     return comparisons
 
 
+def _profile_acceptance(case_results: list[dict]) -> dict[str, dict]:
+    grouped: dict[str, list[dict]] = {}
+    for case in case_results:
+        grouped.setdefault(case.get("profile") or "unknown", []).append(case)
+
+    acceptance = {}
+    for profile, cases in sorted(grouped.items()):
+        gaps = [float(case["gap"]) for case in cases if case.get("gap") is not None]
+        acceptance[profile] = {
+            "case_count": len(cases),
+            "passed_count": sum(1 for case in cases if case.get("passed")),
+            "failed_count": sum(1 for case in cases if not case.get("passed")),
+            "max_wall_time_seconds": max((float(case.get("wall_time_seconds") or 0.0) for case in cases), default=0.0),
+            "max_gap": max(gaps) if gaps else None,
+            "min_scheduled_ratio": min((float(case.get("scheduled_ratio") or 0.0) for case in cases), default=0.0),
+            "failed_checks": sorted({
+                check
+                for case in cases
+                for check in (case.get("failed_checks") or [])
+            }),
+        }
+    return acceptance
+
+
 def run_benchmark_suite(cases: Iterable[BenchmarkCase]) -> dict:
     case_list = list(cases)
     case_results = [run_benchmark_case(case) for case in case_list]
@@ -331,6 +355,7 @@ def run_benchmark_suite(cases: Iterable[BenchmarkCase]) -> dict:
         "failed_count": sum(1 for item in case_results if not item["passed"]) + failed_comparison_count,
         "case_configs": [_case_config(case) for case in case_list],
         "cases": case_results,
+        "profile_acceptance": _profile_acceptance(case_results),
         "arc_pruning_comparisons": arc_pruning_comparisons,
     }
 
@@ -373,6 +398,29 @@ def render_markdown_report(summary: dict) -> str:
                 pruned=_fmt(model_size.get("pruned_arc_count")),
             )
         )
+
+    profile_acceptance = summary.get("profile_acceptance") or {}
+    if profile_acceptance:
+        lines.extend([
+            "",
+            "## Profile Acceptance",
+            "",
+            "| Profile | Cases | Passed | Failed | Max Wall Time | Max Gap | Min Scheduled Ratio | Failed Checks |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+        ])
+        for profile, item in sorted(profile_acceptance.items()):
+            lines.append(
+                "| {profile} | {cases} | {passed} | {failed} | {wall} | {gap} | {ratio} | {checks} |".format(
+                    profile=profile,
+                    cases=item.get("case_count"),
+                    passed=item.get("passed_count"),
+                    failed=item.get("failed_count"),
+                    wall=_fmt(item.get("max_wall_time_seconds")),
+                    gap=_fmt(item.get("max_gap")),
+                    ratio=_fmt(item.get("min_scheduled_ratio")),
+                    checks=", ".join(item.get("failed_checks") or []) or "-",
+                )
+            )
 
     comparisons = summary.get("arc_pruning_comparisons") or []
     if comparisons:
