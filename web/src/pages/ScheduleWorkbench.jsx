@@ -323,6 +323,7 @@ function planDetailCounts(detail) {
     schedulable: Array.isArray(detail?.schedulable_orders) ? detail.schedulable_orders.length : fallback.schedulable,
     scheduled: Array.isArray(detail?.scheduled_orders) ? detail.scheduled_orders.length : fallback.scheduled,
     blocked: Array.isArray(detail?.blocked_orders) ? detail.blocked_orders.length : fallback.blocked,
+    deferred: Array.isArray(detail?.deferred_orders) ? detail.deferred_orders.length : asNumber(detail?.run?.summary?.deferred_order_count),
     late: Array.isArray(detail?.late_orders) ? detail.late_orders.length : (detail?.run?.late_orders || 0),
     hardErrors: asNumber(detail?.validation?.hard_error_count),
   };
@@ -331,6 +332,7 @@ function planDetailCounts(detail) {
 function preferredPlanOrderTab(detail) {
   const counts = planDetailCounts(detail);
   if (counts.hardErrors > 0 || counts.blocked > 0 || counts.late > 0) return 'needs_action';
+  if (counts.deferred > 0) return 'deferred';
   return 'scheduled';
 }
 
@@ -845,6 +847,9 @@ export default function ScheduleWorkbench() {
       } else if (rowBucket === 'unplaced_schedulable') {
         statusLabel = '可排未落位';
         statusTone = 'warning';
+      } else if (rowBucket === 'deferred') {
+        statusLabel = '延后';
+        statusTone = 'warning';
       } else if (isLate) {
         statusLabel = '延期';
         statusTone = 'warning';
@@ -884,6 +889,7 @@ export default function ScheduleWorkbench() {
       activePlan?.scheduled_orders,
       activePlan?.unplaced_schedulable_orders,
       activePlan?.blocked_orders,
+      activePlan?.deferred_orders,
       activePlan?.late_orders,
     ].some(Array.isArray);
     const scheduled = (hasBackendBuckets ? asArray(activePlan?.scheduled_orders) : planTasks)
@@ -898,6 +904,9 @@ export default function ScheduleWorkbench() {
     const unplaced = asArray(activePlan?.unplaced_schedulable_orders)
       .map(row => buildRow(row?.order_id ? row : row, { bucket: 'unplaced_schedulable' }))
       .sort((a, b) => orderSortKey(a).localeCompare(orderSortKey(b)));
+    const deferred = asArray(activePlan?.deferred_orders)
+      .map(row => buildRow(row?.order_id ? row : row, { bucket: 'deferred' }))
+      .sort((a, b) => orderSortKey(a).localeCompare(orderSortKey(b)));
     const late = (hasBackendBuckets ? asArray(activePlan?.late_orders) : lateTasks)
       .map(row => buildRow(row?.order_id ? row : row, { bucket: 'late' }))
       .sort((a, b) => orderSortKey(a).localeCompare(orderSortKey(b)));
@@ -907,7 +916,7 @@ export default function ScheduleWorkbench() {
       key: `${item.code}-${item.order_id}-${index}`,
     }));
     const needsActionMap = new Map();
-    [...blockers, ...blocked, ...unplaced, ...late].forEach(row => {
+    [...blockers, ...blocked, ...unplaced, ...deferred, ...late].forEach(row => {
       if (row?.order_id && !needsActionMap.has(row.order_id)) needsActionMap.set(row.order_id, row);
     });
     return {
@@ -917,6 +926,7 @@ export default function ScheduleWorkbench() {
       schedulable,
       scheduled,
       blocked,
+      deferred,
       late,
       blockers,
     };
@@ -926,6 +936,7 @@ export default function ScheduleWorkbench() {
     schedulable: Array.isArray(activePlan?.schedulable_orders) ? activePlan.schedulable_orders.length : activeCounts.schedulable,
     scheduled: Array.isArray(activePlan?.scheduled_orders) ? activePlan.scheduled_orders.length : activeCounts.scheduled,
     blocked: Array.isArray(activePlan?.blocked_orders) ? activePlan.blocked_orders.length : activeCounts.blocked,
+    deferred: Array.isArray(activePlan?.deferred_orders) ? activePlan.deferred_orders.length : asNumber(activePlan?.run?.summary?.deferred_order_count),
     late: Array.isArray(activePlan?.late_orders) ? activePlan.late_orders.length : (activePlan?.run?.late_orders || lateTasks.length),
   }), [activeCounts, activePlan, lateTasks.length]);
   const needsActionCount = planOrderRows.needs_action?.length || 0;

@@ -184,8 +184,14 @@ export function derivePrimaryAction({
 }
 
 export function deriveReviewTabs({ counts, needsActionCount = 0 }) {
-  return [
+  const tabs = [
     { key: 'needs_action', label: '需处理', count: needsActionCount, tone: needsActionCount ? 'danger' : 'neutral' },
+  ];
+  if (Number(counts.deferred || 0) > 0) {
+    tabs.push({ key: 'deferred', label: '延后', count: counts.deferred, tone: 'warning' });
+  }
+  return [
+    ...tabs,
     { key: 'scheduled', label: '已排', count: counts.scheduled, tone: 'success' },
     { key: 'input', label: '全部输入', count: counts.input, tone: 'neutral' },
   ];
