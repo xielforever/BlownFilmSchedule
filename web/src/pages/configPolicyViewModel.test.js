@@ -6,6 +6,7 @@ import {
   buildSchedulePolicyPayload,
   numericPolicyFieldGroups,
   listPolicyFields,
+  policyFieldRuleClass,
 } from './configPolicyViewModel.js';
 
 test('buildSchedulePolicyPayload includes solver, bucket, screening and review strategies', () => {
@@ -64,6 +65,17 @@ test('policy field metadata exposes configurable non-boolean strategy groups', (
   assert.ok(numericPolicyFieldGroups.some(group => group.keys.includes('candidate_min_acceptance_ratio')));
   assert.ok(numericPolicyFieldGroups.some(group => group.keys.includes('arc_pruning_top_k_per_order')));
   assert.ok(listPolicyFields.some(field => field.key === 'screening_allowed_order_statuses'));
+});
+
+test('policyFieldRuleClass classifies strategy fields for governance', () => {
+  assert.equal(policyFieldRuleClass('machine_capability_constraint_enabled'), 'hard');
+  assert.equal(policyFieldRuleClass('continuous_run_enforcement_mode'), 'hard');
+  assert.equal(policyFieldRuleClass('candidate_reject_penalty'), 'soft');
+  assert.equal(policyFieldRuleClass('due_date_optimization_enabled'), 'soft');
+  assert.equal(policyFieldRuleClass('solver_time_limit_seconds'), 'performance');
+  assert.equal(policyFieldRuleClass('arc_pruning_top_k_per_order'), 'performance');
+  assert.equal(policyFieldRuleClass('auto_release_enabled'), 'experimental');
+  assert.equal(policyFieldRuleClass('unknown_policy'), 'soft');
 });
 
 test('buildConfigAuditMeta includes policy version for traceability', () => {

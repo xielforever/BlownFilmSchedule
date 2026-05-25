@@ -99,6 +99,50 @@ export const auditKeyLabels = {
   maintenance: '维护窗口',
 };
 
+export const policyFieldRuleClasses = {
+  auto_release_enabled: 'experimental',
+  material_constraint_enabled: 'hard',
+  maintenance_constraint_enabled: 'hard',
+  setup_rules_enabled: 'hard',
+  cleanroom_constraint_enabled: 'hard',
+  machine_capability_constraint_enabled: 'hard',
+  continuous_run_limit_mins: 'hard',
+  continuous_run_enforcement_mode: 'hard',
+  screening_allowed_order_statuses: 'hard',
+  screening_prohibited_override_codes: 'hard',
+  screening_required_positive_order_fields: 'hard',
+  review_required: 'soft',
+  manual_adjust_enabled: 'soft',
+  manual_adjust_reason_required: 'soft',
+  publish_with_warnings_allowed: 'soft',
+  due_date_optimization_enabled: 'soft',
+  phase2_feasible_tardiness_tolerance_mins: 'soft',
+  planning_must_schedule_horizon_days: 'soft',
+  planning_candidate_horizon_days: 'soft',
+  candidate_reject_penalty: 'soft',
+  candidate_max_deferred_count: 'soft',
+  candidate_min_acceptance_ratio: 'soft',
+  screening_due_risk_min_slack_mins: 'soft',
+  screening_due_risk_duration_multiplier: 'soft',
+  screening_restricted_override_codes: 'soft',
+  manual_adjust_review_delay_threshold_mins: 'soft',
+  manual_adjust_review_setup_threshold_mins: 'soft',
+  manual_adjust_review_tardiness_threshold_mins: 'soft',
+  solver_profile: 'performance',
+  solver_time_limit_seconds: 'performance',
+  solver_relative_gap_limit: 'performance',
+  solver_random_seed: 'performance',
+  solver_num_workers: 'performance',
+  solver_log_search_progress: 'performance',
+  arc_pruning_enabled: 'performance',
+  arc_pruning_max_setup_mins: 'performance',
+  arc_pruning_top_k_per_order: 'performance',
+};
+
+export function policyFieldRuleClass(key = '') {
+  return policyFieldRuleClasses[key] || 'soft';
+}
+
 export function normalizePolicyList(value) {
   if (Array.isArray(value)) return value.map(item => String(item).trim()).filter(Boolean);
   return String(value ?? '')

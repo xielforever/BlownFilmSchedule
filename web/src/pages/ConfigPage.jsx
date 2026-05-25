@@ -34,6 +34,7 @@ import {
   buildSchedulePolicyPayload,
   listPolicyFields,
   numericPolicyFieldGroups,
+  policyFieldRuleClass,
 } from './configPolicyViewModel';
 
 const tabs = [
@@ -185,6 +186,18 @@ const policySettingDescriptions = {
   due_date_optimization_enabled: '关闭后不以交期权重作为优先优化目标。',
 };
 const policyGroups = booleanPolicyGroups;
+
+const policyRuleClassLabels = {
+  hard: '硬规则',
+  soft: '软策略',
+  performance: '性能',
+  experimental: '实验',
+};
+
+function PolicyRuleClassBadge({ fieldKey }) {
+  const ruleClass = policyFieldRuleClass(fieldKey);
+  return <span className={`policy-rule-class ${ruleClass}`}>{policyRuleClassLabels[ruleClass] || ruleClass}</span>;
+}
 const highRiskPolicyKeys = [
   'maintenance_constraint_enabled',
   'cleanroom_constraint_enabled',
@@ -1149,7 +1162,7 @@ function PolicyConfig({ settings, rules, audit, onSettingsSaved, onAuditReload, 
               {group.keys.map(key => (
                 <label key={key} className="policy-switch">
                   <div>
-                    <strong>{policySettingLabels[key]}</strong>
+                    <strong>{policySettingLabels[key]} <PolicyRuleClassBadge fieldKey={key} /></strong>
                     <span>{policySettingDescriptions[key]}</span>
                   </div>
                   <SwitchInput
@@ -1168,7 +1181,7 @@ function PolicyConfig({ settings, rules, audit, onSettingsSaved, onAuditReload, 
             <h4>{group.title}</h4>
             <div className="config-form">
               {group.keys.map(key => (
-                <Field key={key} label={policySettingLabels[key] || key}>
+                <Field key={key} label={<>{policySettingLabels[key] || key} <PolicyRuleClassBadge fieldKey={key} /></>}>
                   <NumberInput
                     value={draft[key]}
                     testId={`config-policy-${key}`}
@@ -1183,7 +1196,7 @@ function PolicyConfig({ settings, rules, audit, onSettingsSaved, onAuditReload, 
           <h4>订单准入列表策略</h4>
           <div className="config-form">
             {listPolicyFields.map(field => (
-              <Field key={field.key} label={policySettingLabels[field.key] || field.key}>
+              <Field key={field.key} label={<>{policySettingLabels[field.key] || field.key} <PolicyRuleClassBadge fieldKey={field.key} /></>}>
                 <TextInput
                   value={Array.isArray(draft[field.key]) ? draft[field.key].join(', ') : draft[field.key]}
                   placeholder={field.placeholder}
