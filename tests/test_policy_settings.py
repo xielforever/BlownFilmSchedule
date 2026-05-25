@@ -722,6 +722,10 @@ class TestSchedulePolicySettings(unittest.TestCase):
             "solver_params": {
                 "selected_order_ids": ["ORD-READY"],
                 "preplan_screening": screening_snapshot,
+                "solver_metrics": {
+                    "phase_1": {"status": "OPTIMAL", "gap": 0.0},
+                    "model_size": {"order_count": 1},
+                },
             },
             "confirmed_by": None,
             "confirmed_at": None,
@@ -733,6 +737,8 @@ class TestSchedulePolicySettings(unittest.TestCase):
         data = schedule_router._run_row_to_dict(row)
 
         self.assertEqual(data["preplan_screening"], screening_snapshot)
+        self.assertEqual(data["solver_metrics"]["phase_1"]["status"], "OPTIMAL")
+        self.assertEqual(data["solver_metrics"]["model_size"]["order_count"], 1)
 
     def test_task_row_to_dict_exposes_prev_order_and_setup_detail(self):
         row = {
