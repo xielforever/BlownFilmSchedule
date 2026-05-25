@@ -136,6 +136,14 @@ def _machine_load(tasks) -> dict:
     return load
 
 
+def _deferred_reason_counts(deferred_orders) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for order in deferred_orders or []:
+        reason = order.get("deferred_reason_code") or order.get("reason") or "unknown"
+        counts[reason] = counts.get(reason, 0) + 1
+    return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
+
+
 def run_benchmark_case(case: BenchmarkCase) -> dict:
     orders, machines, setup_mgr = build_benchmark_dataset(case)
     aps = AdvancedMedicalAPS(
@@ -193,6 +201,7 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
         not failed_checks
     )
 
+    deferred_orders = getattr(result, "deferred_orders", [])
     return {
         "name": case.name,
         "order_count": case.order_count,
@@ -203,7 +212,8 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
         "solver_status": result.status,
         "passed": bool(passed),
         "scheduled_order_count": len(result.tasks),
-        "deferred_order_count": len(getattr(result, "deferred_orders", [])),
+        "deferred_order_count": len(deferred_orders),
+        "deferred_reason_counts": _deferred_reason_counts(deferred_orders),
         "blocked_order_count": getattr(result, "blocked_order_count", 0),
         "scheduled_ratio": scheduled_ratio,
         "min_scheduled_ratio": case.min_scheduled_ratio,
@@ -398,6 +408,25 @@ def render_markdown_report(summary: dict) -> str:
                 pruned=_fmt(model_size.get("pruned_arc_count")),
             )
         )
+
+    deferred_reason_rows = []
+    for case in summary.get("cases", []):
+        for reason, count in (case.get("deferred_reason_counts") or {}).items():
+            deferred_reason_rows.append((case.get("name"), reason, count))
+    lines.extend([
+        "",
+        "## Deferred Reasons",
+        "",
+    ])
+    if deferred_reason_rows:
+        lines.extend([
+            "| Case | Reason | Count |",
+            "| --- | --- | ---: |",
+        ])
+        for case_name, reason, count in deferred_reason_rows:
+            lines.append(f"| {case_name} | {reason} | {count} |")
+    else:
+        lines.append("No deferred orders were produced by these benchmark cases.")
 
     profile_acceptance = summary.get("profile_acceptance") or {}
     if profile_acceptance:
