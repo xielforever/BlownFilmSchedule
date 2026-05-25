@@ -13,6 +13,7 @@ import {
   deleteMaterialSwitchRule,
   deleteSpecRule,
   getConfigAudit,
+  getMe,
   getMachines,
   getOrderScreening,
   getOrders,
@@ -32,6 +33,7 @@ import {
   buildConfigAuditMeta,
   booleanPolicyGroups,
   buildSchedulePolicyPayload,
+  canTogglePolicyField,
   listPolicyFields,
   numericPolicyFieldGroups,
   policyFieldRuleClass,
@@ -1085,7 +1087,7 @@ function ConfigAuditPanel({ audit }) {
   );
 }
 
-function PolicyConfig({ settings, rules, audit, onSettingsSaved, onAuditReload, onSaved }) {
+function PolicyConfig({ settings, rules, audit, currentUser, onSettingsSaved, onAuditReload, onSaved }) {
   const [draftOverrides, setDraftOverrides] = useState({});
   const [changeReason, setChangeReason] = useState('');
   const [riskConfirmed, setRiskConfirmed] = useState(false);
@@ -1164,10 +1166,13 @@ function PolicyConfig({ settings, rules, audit, onSettingsSaved, onAuditReload, 
                   <div>
                     <strong>{policySettingLabels[key]} <PolicyRuleClassBadge fieldKey={key} /></strong>
                     <span>{policySettingDescriptions[key]}</span>
+                    {!canTogglePolicyField(currentUser, key, draft[key] !== false) && (
+                      <span className="policy-permission-note">需管理员关闭</span>
+                    )}
                   </div>
                   <SwitchInput
                     checked={draft[key] !== false}
-                    disabled={saving}
+                    disabled={saving || !canTogglePolicyField(currentUser, key, draft[key] !== false)}
                     testId={`config-policy-${key}`}
                     onChange={value => patch(key, value)}
                   />
@@ -1714,12 +1719,14 @@ export default function ConfigPage() {
   const [rules, setRules] = useState(null);
   const [settings, setSettings] = useState(null);
   const [audit, setAudit] = useState([]);
+  const [currentUser, setCurrentUser] = useState(null);
   const [status, setStatus] = useState({ message: '', tone: 'ok' });
 
   const showSaved = (message, tone = 'ok') => setStatus({ message, tone });
 
   const loadAll = useCallback(async (options = {}) => {
-    const [ordersRes, machinesRes, rulesRes, settingsRes, auditRes] = await Promise.all([
+    const [meRes, ordersRes, machinesRes, rulesRes, settingsRes, auditRes] = await Promise.all([
+      getMe().catch(() => ({ data: null })),
       loadAllOrders(),
       getMachines(),
       getRulesSummary(),
@@ -1727,12 +1734,13 @@ export default function ConfigPage() {
       getConfigAudit({ limit: 50 }),
     ]);
     if (options.isCancelled?.()) return;
+    setCurrentUser(meRes.data);
     setOrders(ordersRes);
     setMachines(machinesRes.data);
     setRules(rulesRes.data);
     setSettings(settingsRes.data);
     setAudit(auditRes.data || []);
-  }, [setAudit, setMachines, setOrders, setRules, setSettings]);
+  }, [setAudit, setCurrentUser, setMachines, setOrders, setRules, setSettings]);
 
   const reloadAudit = useCallback(async () => {
     const auditRes = await getConfigAudit({ limit: 50 });
@@ -1781,6 +1789,7 @@ export default function ConfigPage() {
           settings={settings}
           rules={rules}
           audit={audit}
+          currentUser={currentUser}
           onSettingsSaved={setSettings}
           onAuditReload={reloadAudit}
           onSaved={showSaved}

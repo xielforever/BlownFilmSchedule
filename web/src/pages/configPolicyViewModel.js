@@ -139,8 +139,22 @@ export const policyFieldRuleClasses = {
   arc_pruning_top_k_per_order: 'performance',
 };
 
+export const adminOnlyDisablePolicyKeys = [
+  'material_constraint_enabled',
+  'maintenance_constraint_enabled',
+  'setup_rules_enabled',
+  'cleanroom_constraint_enabled',
+  'machine_capability_constraint_enabled',
+];
+
 export function policyFieldRuleClass(key = '') {
   return policyFieldRuleClasses[key] || 'soft';
+}
+
+export function canTogglePolicyField(user, key = '', currentValue = true) {
+  if (user?.role === 'admin') return true;
+  if (adminOnlyDisablePolicyKeys.includes(key) && currentValue !== false) return false;
+  return true;
 }
 
 const policyRuleClassLabels = {

@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   buildConfigAuditMeta,
   buildSchedulePolicyPayload,
+  canTogglePolicyField,
   numericPolicyFieldGroups,
   listPolicyFields,
   policyFieldRuleClass,
@@ -86,6 +87,13 @@ test('policyAuditRuleClassSummary summarizes changed strategy classes', () => {
   );
   assert.equal(policyAuditRuleClassSummary('candidate_reject_penalty,due_date_optimization_enabled'), '软策略');
   assert.equal(policyAuditRuleClassSummary(''), '软策略');
+});
+
+test('canTogglePolicyField prevents non-admin hard rule disablement', () => {
+  assert.equal(canTogglePolicyField({ role: 'planner' }, 'machine_capability_constraint_enabled', true), false);
+  assert.equal(canTogglePolicyField({ role: 'planner' }, 'machine_capability_constraint_enabled', false), true);
+  assert.equal(canTogglePolicyField({ role: 'planner' }, 'due_date_optimization_enabled', true), true);
+  assert.equal(canTogglePolicyField({ role: 'admin' }, 'machine_capability_constraint_enabled', true), true);
 });
 
 test('buildConfigAuditMeta includes policy version for traceability', () => {
