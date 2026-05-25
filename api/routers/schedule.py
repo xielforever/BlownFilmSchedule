@@ -1804,6 +1804,61 @@ def _unplaced_solver_failed_validation_items(unplaced_orders: list[dict[str, Any
     return items
 
 
+def _candidate_acceptance_validation_items(run_params: dict[str, Any]) -> list[dict[str, Any]]:
+    policy = ((run_params or {}).get("policy_snapshot") or {}).get("candidate_acceptance") or {}
+    if not policy:
+        return []
+
+    summary = (run_params or {}).get("summary") or {}
+    planning_bucket_counts = summary.get("planning_bucket_counts") or {}
+    candidate_total = int(planning_bucket_counts.get("candidate") or 0)
+    if candidate_total <= 0:
+        return []
+
+    deferred_orders = (run_params or {}).get("deferred_orders") or []
+    if deferred_orders:
+        candidate_deferred_count = sum(
+            1
+            for order in deferred_orders
+            if order.get("planning_bucket") == "candidate"
+            or order.get("reason") == "candidate_optional_rejected"
+            or order.get("deferred_reason_code") == "candidate_optional_rejected"
+        )
+    else:
+        reason_counts = summary.get("deferred_reason_counts") or {}
+        candidate_deferred_count = int(reason_counts.get("candidate_optional_rejected") or 0)
+
+    items = []
+    max_deferred_count = policy.get("max_deferred_count")
+    if max_deferred_count is not None and candidate_deferred_count > int(max_deferred_count):
+        items.append(_validation_item(
+            "error",
+            "candidate_deferred_count_exceeded",
+            (
+                f"Candidate deferred orders {candidate_deferred_count} exceed "
+                f"configured maximum {int(max_deferred_count)}."
+            ),
+            level="publish_blocker",
+        ))
+
+    min_acceptance_ratio = float(policy.get("min_acceptance_ratio") or 0)
+    if min_acceptance_ratio > 0:
+        accepted_count = max(0, candidate_total - candidate_deferred_count)
+        required_count = ceil(candidate_total * min(1.0, max(0.0, min_acceptance_ratio)))
+        if accepted_count < required_count:
+            items.append(_validation_item(
+                "error",
+                "candidate_acceptance_ratio_below_minimum",
+                (
+                    f"Candidate accepted orders {accepted_count}/{candidate_total} are below "
+                    f"configured minimum {required_count}/{candidate_total}."
+                ),
+                level="publish_blocker",
+            ))
+
+    return items
+
+
 def _publish_audit_details(
     *,
     run_params: dict[str, Any],
@@ -2397,6 +2452,7 @@ def _load_preplan_validation(db, run_id: int):
     params = _normalize_json(run_row.get("solver_params") if run_row else None, {}) or {}
     items.extend(_diagnostic_validation_items(params.get("diagnostics") or []))
     items.extend(_unplaced_solver_failed_validation_items(params.get("unplaced_solver_failed_orders") or []))
+    items.extend(_candidate_acceptance_validation_items(params))
     summary = params.get("summary") or {}
     selected_ids = params.get("selected_order_ids") or []
     saved_snapshots = params.get("order_snapshots") or []

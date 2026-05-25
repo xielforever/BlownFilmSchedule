@@ -188,6 +188,40 @@ class TestPublishAuditPayload(unittest.TestCase):
         self.assertEqual(items[0]["order_id"], "ORD-MUST")
         self.assertIn("Required order", items[0]["message"])
 
+    def test_candidate_acceptance_policy_violation_maps_to_publish_blockers(self):
+        items = schedule_router._candidate_acceptance_validation_items({
+            "policy_snapshot": {
+                "candidate_acceptance": {
+                    "max_deferred_count": 1,
+                    "min_acceptance_ratio": 0.75,
+                },
+            },
+            "summary": {
+                "planning_bucket_counts": {"candidate": 4},
+            },
+            "deferred_orders": [
+                {
+                    "order_id": "ORD-CAND-1",
+                    "planning_bucket": "candidate",
+                    "reason": "candidate_optional_rejected",
+                },
+                {
+                    "order_id": "ORD-CAND-2",
+                    "planning_bucket": "candidate",
+                    "deferred_reason_code": "candidate_optional_rejected",
+                },
+            ],
+        })
+
+        self.assertEqual(len(items), 2)
+        self.assertEqual({item["code"] for item in items}, {
+            "candidate_deferred_count_exceeded",
+            "candidate_acceptance_ratio_below_minimum",
+        })
+        for item in items:
+            self.assertEqual(item["level"], "publish_blocker")
+            self.assertEqual(item["severity"], "error")
+
     def test_validation_summary_rejects_missing_invalid_or_mismatched_summary(self):
         validation = {
             "status": "PASSED",
