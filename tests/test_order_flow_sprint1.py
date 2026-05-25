@@ -1136,7 +1136,7 @@ class _FakeCursor:
             self.rowcount = 1
             return
         if normalized.startswith("insert into order_screening_cache"):
-            order_id, screening_status, business_bucket, code, root_cause, result, summary, scope = params
+            order_id, screening_status, business_bucket, code, root_cause, result, summary, scope, policy_version = params
             self.db.order_screening_cache[order_id] = {
                 "order_id": order_id,
                 "screening_status": screening_status,
@@ -1146,6 +1146,7 @@ class _FakeCursor:
                 "result": self._unwrap(result),
                 "summary": self._unwrap(summary),
                 "scope": scope,
+                "policy_version": policy_version,
                 "is_stale": False,
             }
             self._rows = []
@@ -1381,6 +1382,7 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
     def test_create_order_writes_initial_audit_and_defaults_to_pending(self):
         db = _FakeDb()
         db.products.add("Film-A")
+        db.schedule_settings["policy_version"] = 4
 
         payload = orders_router.OrderCreatePayload(
             order_id="ORD-NEW-001",
@@ -1401,6 +1403,7 @@ class TestOrderFlowSprint1Routes(unittest.TestCase):
         self.assertEqual(result["screening"]["screening_status"], "ready")
         self.assertEqual(db.production_orders["ORD-NEW-001"]["status"], "PENDING")
         self.assertEqual(db.order_screening_cache["ORD-NEW-001"]["screening_status"], "ready")
+        self.assertEqual(db.order_screening_cache["ORD-NEW-001"]["policy_version"], 4)
         self.assertEqual(len(db.order_revision_audit), 1)
         self.assertEqual(db.order_revision_audit[0]["action_type"], "CREATE")
         self.assertEqual(db.commit_count, 1)

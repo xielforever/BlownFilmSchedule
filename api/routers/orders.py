@@ -265,12 +265,17 @@ def _ensure_order_screening_schema(db) -> None:
             is_stale            BOOLEAN      NOT NULL DEFAULT FALSE,
             stale_reason        VARCHAR(120),
             stale_at            TIMESTAMPTZ,
+            policy_version      INTEGER      NOT NULL DEFAULT 1,
             computed_at         TIMESTAMPTZ  DEFAULT NOW()
         )
     """)
     cur.execute("""
         ALTER TABLE order_screening_cache
             ADD COLUMN IF NOT EXISTS business_bucket VARCHAR(80)
+    """)
+    cur.execute("""
+        ALTER TABLE order_screening_cache
+            ADD COLUMN IF NOT EXISTS policy_version INTEGER NOT NULL DEFAULT 1
     """)
     cur.execute("""
         UPDATE order_screening_cache
@@ -660,7 +665,8 @@ def _load_order_screening_policy(cur) -> dict[str, Any]:
                 screening_allowed_order_statuses,
                 screening_prohibited_override_codes,
                 screening_restricted_override_codes,
-                screening_required_positive_order_fields
+                screening_required_positive_order_fields,
+                policy_version
             FROM schedule_settings
             WHERE id=TRUE
         """)
@@ -686,6 +692,7 @@ def _load_order_screening_policy(cur) -> dict[str, Any]:
             "screening_required_positive_order_fields",
             DEFAULT_SCREENING_POLICY["required_positive_order_fields"],
         ),
+        "policy_version": int(row.get("policy_version") or 1),
     }
 
 
@@ -754,6 +761,8 @@ def _run_order_screening(db, *, order_ids: list[str] | None, scope: str):
         scope=scope,
         screening_policy=screening_policy,
     )
+    result["policy_version"] = int(screening_policy.get("policy_version") or 1)
+    result.setdefault("summary", {})["policy_version"] = result["policy_version"]
     result["requested_order_ids"] = order_ids or []
     return result
 
@@ -764,8 +773,8 @@ def _persist_order_screening_result(cur, result: dict) -> None:
     for item in result.get("items", []):
         cur.execute("""
             INSERT INTO order_screening_cache
-                (order_id, screening_status, business_bucket, code, root_cause, result, summary, scope, is_stale)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,FALSE)
+                (order_id, screening_status, business_bucket, code, root_cause, result, summary, scope, policy_version, is_stale)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,FALSE)
             ON CONFLICT (order_id) DO UPDATE SET
                 screening_status=EXCLUDED.screening_status,
                 business_bucket=EXCLUDED.business_bucket,
@@ -774,6 +783,7 @@ def _persist_order_screening_result(cur, result: dict) -> None:
                 result=EXCLUDED.result,
                 summary=EXCLUDED.summary,
                 scope=EXCLUDED.scope,
+                policy_version=EXCLUDED.policy_version,
                 is_stale=FALSE,
                 computed_at=NOW()
         """, (
@@ -785,6 +795,7 @@ def _persist_order_screening_result(cur, result: dict) -> None:
             Json(item),
             Json(summary),
             scope,
+            int(result.get("policy_version") or summary.get("policy_version") or 1),
         ))
 
 
