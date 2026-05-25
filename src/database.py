@@ -1082,9 +1082,11 @@ class DatabaseManager:
         policy_snapshot: Optional[dict] = None,
         screening_snapshot: Optional[dict] = None,
         input_screening_snapshot: Optional[dict] = None,
+        ensure_schema: bool = True,
     ):
         """保存排程结果到数据库"""
-        self.ensure_planning_schema()
+        if ensure_schema:
+            self.ensure_planning_schema()
         if getattr(result, "validation_errors", None) and not allow_invalid:
             raise ValueError(
                 "排程结果未通过校验，拒绝入库: "

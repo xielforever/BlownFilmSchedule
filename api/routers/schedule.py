@@ -3912,6 +3912,7 @@ def create_preplan(
             policy_snapshot=policy_snapshot,
             screening_snapshot=screening,
             input_screening_snapshot=build_screening_snapshot(screening),
+            ensure_schema=False,
         )
 
     if settings["auto_release_enabled"] and not settings["review_required"]:

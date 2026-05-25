@@ -66,6 +66,10 @@ async function configureWorkbenchSettings(request) {
       manual_adjust_reason_required: false,
       publish_with_warnings_allowed: true,
       machine_capability_constraint_enabled: true,
+      solver_profile: 'fast',
+      solver_time_limit_seconds: 5,
+      solver_relative_gap_limit: 0.05,
+      solver_num_workers: 2,
       change_reason: 'E2E workbench setup',
     },
   });
@@ -87,6 +91,10 @@ async function restoreWorkbenchSettings(request) {
       cleanroom_constraint_enabled: originalSettings.cleanroom_constraint_enabled,
       machine_capability_constraint_enabled: originalSettings.machine_capability_constraint_enabled,
       due_date_optimization_enabled: originalSettings.due_date_optimization_enabled,
+      solver_profile: originalSettings.solver_profile,
+      solver_time_limit_seconds: originalSettings.solver_time_limit_seconds,
+      solver_relative_gap_limit: originalSettings.solver_relative_gap_limit,
+      solver_num_workers: originalSettings.solver_num_workers,
       change_reason: 'E2E workbench restore',
     },
   });
@@ -216,6 +224,19 @@ async function openDraftVersion(page, runId) {
   await expect(page.getByTestId(`workbench-version-run-${runId}`)).toBeVisible();
   await page.getByTestId(`workbench-version-run-${runId}`).click();
   await expect(page.getByTestId('workbench-active-preplan-summary')).toContainText(`#${runId}`);
+}
+
+async function discardStaleDraftIfPresent(page) {
+  const staleDiscard = page.getByTestId('workbench-cancel-stale-preplan');
+  if (!(await staleDiscard.isVisible().catch(() => false))) return;
+
+  await expect(staleDiscard).toBeEnabled();
+  await staleDiscard.click();
+  await expect(page.getByTestId('workbench-cancel-confirm-panel')).toBeVisible();
+  await page.getByTestId('workbench-cancel-reason').fill('E2E stale draft recovery before creating a fresh draft');
+  await page.getByTestId('workbench-cancel-confirm').click();
+  await expect(page.getByTestId('workbench-status')).toContainText('已废弃');
+  await expect(page.getByTestId('workbench-stage-order_pool')).toHaveAttribute('aria-current', 'step');
 }
 
 async function findDraft(request, predicate, chunkSize = 10) {
@@ -418,9 +439,10 @@ test.describe.serial('schedule workbench closed loop', () => {
   });
 
   test('creates, validates, selects, and cancels a draft safely', async ({ page, request }) => {
-    const orders = await pendingOrders(request, 8);
-    test.skip(!orders.length, 'no pending orders available for draft creation');
+    const orders = await pendingReadyOrders(request, 8);
+    test.skip(!orders.length, 'no ready pending orders available for draft creation');
 
+    await discardStaleDraftIfPresent(page);
     await openOrderPoolIfCollapsed(page);
     await page.getByTestId('workbench-search').fill(orders[0].order_id);
     await page.getByTestId(`workbench-pending-order-${testIdPart(orders[0].order_id)}`).click();
