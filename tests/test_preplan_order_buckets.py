@@ -196,6 +196,49 @@ class TestPreplanOrderBuckets(unittest.TestCase):
         self.assertEqual(buckets["candidate_orders"][0]["planning_bucket"], "candidate")
         self.assertEqual(buckets["deferred_orders"][0]["bucket"], "deferred")
 
+    def test_planning_policy_applies_business_bucket_rules_in_preplan_details(self):
+        narrow_machine = _machine()
+        wide_machine = {**_machine(), "machine_id": "LINE-WIDE", "max_width": 1200}
+        material_late = _order_due("ORD-MATERIAL-LATE", 25)
+        material_late["material_available_time"] = datetime(2026, 6, 20, tzinfo=timezone.utc)
+        urgent = _order_due("ORD-URGENT", 30)
+        urgent["order_class"] = "URGENT"
+        vip = _order_due("ORD-VIP", 30)
+        vip["customer_class"] = "VIP"
+        scarce = _order_due("ORD-SCARCE", 30)
+        scarce["target_width"] = 1000
+        candidate = _order_due("ORD-CANDIDATE", 30)
+
+        buckets = _build_preplan_order_buckets(
+            order_rows=[material_late, urgent, vip, scarce, candidate],
+            machines=[narrow_machine, wide_machine],
+            tasks=[],
+            diagnostics=[],
+            selected_order_ids=[
+                "ORD-MATERIAL-LATE",
+                "ORD-URGENT",
+                "ORD-VIP",
+                "ORD-SCARCE",
+                "ORD-CANDIDATE",
+            ],
+            planning_bucket_policy={
+                "plan_start": datetime(2026, 5, 24, tzinfo=timezone.utc),
+                "must_schedule_horizon_days": 3,
+                "candidate_horizon_days": 14,
+                "material_ready_horizon_days": 14,
+                "force_must_order_classes": ["URGENT"],
+                "force_must_customer_classes": ["VIP"],
+                "scarce_machine_threshold": 1,
+            },
+        )
+
+        self.assertEqual(
+            [row["order_id"] for row in buckets["must_schedule_orders"]],
+            ["ORD-URGENT", "ORD-VIP", "ORD-SCARCE"],
+        )
+        self.assertEqual([row["order_id"] for row in buckets["candidate_orders"]], ["ORD-CANDIDATE"])
+        self.assertIn("ORD-MATERIAL-LATE", [row["order_id"] for row in buckets["deferred_orders"]])
+
     def test_solver_deferred_orders_use_structured_reason(self):
         buckets = _build_preplan_order_buckets(
             order_rows=[_order_due("ORD-CANDIDATE", 30)],

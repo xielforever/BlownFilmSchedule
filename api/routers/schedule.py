@@ -1550,7 +1550,41 @@ def _planning_bucket(order, policy=None):
         plan_start = plan_start.replace(tzinfo=due_date.tzinfo)
     must_days = max(0, int(policy.get("must_schedule_horizon_days") or 0))
     candidate_days = max(must_days, int(policy.get("candidate_horizon_days") or must_days))
+    material_ready_days = max(0, int(policy.get("material_ready_horizon_days", candidate_days) or 0))
+    material_available_time = _as_datetime((order or {}).get("material_available_time"))
+    if material_available_time:
+        if material_available_time.tzinfo is None and plan_start.tzinfo is not None:
+            material_available_time = material_available_time.replace(tzinfo=plan_start.tzinfo)
+        if plan_start.tzinfo is None and material_available_time.tzinfo is not None:
+            plan_start = plan_start.replace(tzinfo=material_available_time.tzinfo)
+        if material_available_time > plan_start + timedelta(days=material_ready_days):
+            return "deferred"
+
+    force_must_order_classes = {
+        str(value).strip().upper()
+        for value in policy.get("force_must_order_classes", []) or []
+        if str(value).strip()
+    }
+    force_must_customer_classes = {
+        str(value).strip().upper()
+        for value in policy.get("force_must_customer_classes", []) or []
+        if str(value).strip()
+    }
+    scarce_machine_threshold = max(0, int(policy.get("scarce_machine_threshold") or 0))
+    eligible_machine_count = _as_int((order or {}).get("eligible_machine_count"))
+    force_must = (
+        str((order or {}).get("order_class") or "").strip().upper() in force_must_order_classes
+        or str((order or {}).get("customer_class") or "").strip().upper() in force_must_customer_classes
+        or (
+            scarce_machine_threshold > 0
+            and eligible_machine_count > 0
+            and eligible_machine_count <= scarce_machine_threshold
+            and due_date <= plan_start + timedelta(days=candidate_days)
+        )
+    )
     if due_date <= plan_start + timedelta(days=must_days):
+        return "must_schedule"
+    if force_must:
         return "must_schedule"
     if due_date <= plan_start + timedelta(days=candidate_days):
         return "candidate"
@@ -1711,6 +1745,10 @@ def _load_preplan_order_context(cur, run, tasks, diagnostics):
             "plan_start": run.get("run_time"),
             "must_schedule_horizon_days": planning_snapshot.get("must_schedule_horizon_days"),
             "candidate_horizon_days": planning_snapshot.get("candidate_horizon_days"),
+            "material_ready_horizon_days": planning_snapshot.get("material_ready_horizon_days"),
+            "force_must_order_classes": planning_snapshot.get("force_must_order_classes") or [],
+            "force_must_customer_classes": planning_snapshot.get("force_must_customer_classes") or [],
+            "scarce_machine_threshold": planning_snapshot.get("scarce_machine_threshold"),
         }
     screening_items_by_order_id = {
         item.get("order_id"): item
