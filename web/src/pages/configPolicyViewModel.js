@@ -143,6 +143,21 @@ export function policyFieldRuleClass(key = '') {
   return policyFieldRuleClasses[key] || 'soft';
 }
 
+const policyRuleClassLabels = {
+  hard: '硬规则',
+  soft: '软策略',
+  performance: '性能',
+  experimental: '实验',
+};
+
+export function policyAuditRuleClassSummary(configKey = '') {
+  const classes = String(configKey || '')
+    .split(',')
+    .map(item => policyFieldRuleClass(item.trim()));
+  const unique = [...new Set(classes.length ? classes : ['soft'])];
+  return unique.map(item => policyRuleClassLabels[item] || item).join('、');
+}
+
 export function normalizePolicyList(value) {
   if (Array.isArray(value)) return value.map(item => String(item).trim()).filter(Boolean);
   return String(value ?? '')
@@ -189,6 +204,7 @@ export function buildConfigAuditMeta(entry = {}, formatTime = value => value || 
   const version = entry.policy_version ? `版本 #${entry.policy_version}` : '未记录版本';
   return [
     formatAuditKey(entry.config_key),
+    policyAuditRuleClassSummary(entry.config_key),
     version,
     entry.changed_by || '系统',
     formatTime(entry.created_at),

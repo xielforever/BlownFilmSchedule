@@ -7,6 +7,7 @@ import {
   numericPolicyFieldGroups,
   listPolicyFields,
   policyFieldRuleClass,
+  policyAuditRuleClassSummary,
 } from './configPolicyViewModel.js';
 
 test('buildSchedulePolicyPayload includes solver, bucket, screening and review strategies', () => {
@@ -78,6 +79,15 @@ test('policyFieldRuleClass classifies strategy fields for governance', () => {
   assert.equal(policyFieldRuleClass('unknown_policy'), 'soft');
 });
 
+test('policyAuditRuleClassSummary summarizes changed strategy classes', () => {
+  assert.equal(
+    policyAuditRuleClassSummary('machine_capability_constraint_enabled,solver_time_limit_seconds,auto_release_enabled'),
+    '硬规则、性能、实验',
+  );
+  assert.equal(policyAuditRuleClassSummary('candidate_reject_penalty,due_date_optimization_enabled'), '软策略');
+  assert.equal(policyAuditRuleClassSummary(''), '软策略');
+});
+
 test('buildConfigAuditMeta includes policy version for traceability', () => {
   const meta = buildConfigAuditMeta(
     {
@@ -91,6 +101,6 @@ test('buildConfigAuditMeta includes policy version for traceability', () => {
 
   assert.equal(
     meta,
-    '求解时间上限、允许入池订单状态 · 版本 #7 · planner-a · time:2026-05-24T10:30:00Z',
+    '求解时间上限、允许入池订单状态 · 性能、硬规则 · 版本 #7 · planner-a · time:2026-05-24T10:30:00Z',
   );
 });
