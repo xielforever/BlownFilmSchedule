@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { dashboardOrderBucketCards } from './dashboardViewModel.js';
+import { dashboardDeferredReasonCards, dashboardOrderBucketCards } from './dashboardViewModel.js';
 
 test('dashboardOrderBucketCards exposes deferred and unplaced solver buckets', () => {
   const cards = dashboardOrderBucketCards({
@@ -34,4 +34,20 @@ test('dashboardOrderBucketCards falls back to scheduled count for legacy summari
     cards.map(card => card.value),
     [4, 4, 0, 0, 0],
   );
+});
+
+test('dashboardDeferredReasonCards exposes deferred reason counts', () => {
+  assert.deepEqual(
+    dashboardDeferredReasonCards({
+      candidate_optional_rejected: 5,
+      planning_window_deferred: 2,
+      unknown_reason: 1,
+    }),
+    [
+      { key: 'candidate_optional_rejected', label: '候选策略延后', value: 5, tone: 'warning' },
+      { key: 'planning_window_deferred', label: '计划窗口延后', value: 2, tone: 'warning' },
+      { key: 'unknown_reason', label: 'unknown_reason', value: 1, tone: 'warning' },
+    ],
+  );
+  assert.deepEqual(dashboardDeferredReasonCards({}), []);
 });

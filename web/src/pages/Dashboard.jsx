@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import * as echarts from 'echarts';
 import { getDashboard, getGantt, getScheduleDiagnostics, getScheduleStatus } from '../api/client';
-import { dashboardOrderBucketCards } from './dashboardViewModel';
+import { dashboardDeferredReasonCards, dashboardOrderBucketCards } from './dashboardViewModel';
 
 const ORDER_CLASS_COLORS = {
   URGENT: '#ef4444',
@@ -748,6 +748,7 @@ export default function Dashboard() {
   const downtimeCount = ganttData?.downtime?.length || 0;
   const maintenanceCount = ganttData?.maintenance?.length || 0;
   const orderBucketCards = dashboardOrderBucketCards(summary);
+  const deferredReasonCards = dashboardDeferredReasonCards(summary.deferred_reason_counts);
   const bucketToneColors = {
     danger: '#ef4444',
     warning: '#f97316',
@@ -773,6 +774,14 @@ export default function Dashboard() {
         <KpiCard label="废料总量" value={`${summary.total_scrap_kg}kg`} />
         <KpiCard label="机台利用率" value={`${summary.avg_utilization}%`} valueColor="#3b82f6" />
       </div>
+
+      {deferredReasonCards.length > 0 && (
+        <div className="kpi-grid compact" data-testid="dashboard-deferred-reasons">
+          {deferredReasonCards.map(card => (
+            <KpiCard key={card.key} label={card.label} value={card.value} valueColor={bucketToneColors[card.tone]} />
+          ))}
+        </div>
+      )}
 
       {/* Gantt Chart Section */}
       <div className="card dashboard-gantt-card">
