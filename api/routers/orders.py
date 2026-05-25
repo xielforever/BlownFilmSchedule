@@ -763,6 +763,8 @@ def _run_order_screening(db, *, order_ids: list[str] | None, scope: str):
     )
     result["policy_version"] = int(screening_policy.get("policy_version") or 1)
     result.setdefault("summary", {})["policy_version"] = result["policy_version"]
+    for item in result.get("items", []):
+        item["policy_version"] = result["policy_version"]
     result["requested_order_ids"] = order_ids or []
     return result
 
