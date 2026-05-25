@@ -3,12 +3,14 @@ import json
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.diagnostics import Diagnostic, DiagnosticEvidence, DiagnosticRecommendation
 from src.models import BlownFilmMachineModel, ProductionOrderModel
-from src.output_formatter import export_schedule_json, export_schedule_report
+from src.output_formatter import export_schedule_json, export_schedule_report, print_summary_stats
 from src.scheduler import ScheduleResult, ScheduledTask
 
 
@@ -165,6 +167,25 @@ class TestOutputFormatter(unittest.TestCase):
         self.assertEqual(data["deferred_order_count"], 1)
         self.assertEqual(data["unplaced_solver_failed_order_count"], 1)
         self.assertEqual(data["unplaced_solver_failed_orders"], result.unplaced_solver_failed_orders)
+
+    def test_print_summary_stats_includes_order_bucket_counts_without_tasks(self):
+        result = ScheduleResult()
+        result.status = "INFEASIBLE"
+        result.input_order_count = 3
+        result.blocked_order_count = 1
+        result.deferred_orders = [{"order_id": "ORD-CANDIDATE"}]
+        result.unplaced_solver_failed_orders = [{"order_id": "ORD-MUST"}]
+
+        stream = StringIO()
+        with redirect_stdout(stream):
+            print_summary_stats(result)
+        text = stream.getvalue()
+
+        self.assertIn("输入订单", text)
+        self.assertIn("3", text)
+        self.assertIn("阻断订单", text)
+        self.assertIn("延后订单", text)
+        self.assertIn("求解未落位", text)
 
     def test_schedule_report_contains_order_and_global_root_causes(self):
         result = ScheduleResult()

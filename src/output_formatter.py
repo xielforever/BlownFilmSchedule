@@ -454,28 +454,35 @@ def print_ascii_gantt(result: ScheduleResult):
 
 def print_summary_stats(result: ScheduleResult):
     """输出全厂汇总统计"""
-    if not result.tasks:
-        print("  [无排程数据]")
-        return
-
     total_setup = sum(t.setup_time for t in result.tasks)
     total_scrap = sum(t.scrap_kg for t in result.tasks)
     total_prod = sum(t.end_mins - t.start_mins for t in result.tasks)
     late_tasks = [t for t in result.tasks if t.end_mins > t.order.due_date_mins]
     vip_late = [t for t in late_tasks
                 if t.order.customer_class == "VIP" or t.order.order_class == "URGENT"]
+    deferred_orders = getattr(result, "deferred_orders", []) or []
+    unplaced_orders = getattr(result, "unplaced_solver_failed_orders", []) or []
 
     print("\n" + "─" * 60)
     print("  全厂排程汇总统计")
     print("─" * 60)
     print(f"  求解状态          : {result.status}")
+    print(f"  输入订单          : {getattr(result, 'input_order_count', len(result.tasks))}")
     print(f"  已排订单数        : {len(result.tasks)}")
+    print(f"  阻断订单          : {getattr(result, 'blocked_order_count', 0)}")
+    print(f"  延后订单          : {len(deferred_orders)}")
+    print(f"  求解未落位        : {len(unplaced_orders)}")
     print(f"  使用机台数        : {len(result.machine_sequences)}")
     print(f"  总换产时间(min)   : {total_setup}")
     print(f"  总废料重量(kg)    : {total_scrap:.1f}")
     print(f"  总生产时间(min)   : {total_prod}")
     print(f"  逾期订单数        : {len(late_tasks)}")
     print(f"  VIP/URGENT 逾期   : {len(vip_late)}")
+
+    if not result.tasks:
+        print("\n  [无已排任务，保留订单桶统计供排程复核]")
+        print("─" * 60)
+        return
 
     # 机台利用率
     print("\n  机台利用率:")
