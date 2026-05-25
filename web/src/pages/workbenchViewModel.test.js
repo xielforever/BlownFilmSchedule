@@ -12,6 +12,7 @@ import {
   deferredReasonFilterOptions,
   derivePublishChecklist,
   deriveReviewTabs,
+  adjustmentImpactSummaryCards,
   lockedTaskSummaryCards,
   solverQualitySummary,
   deriveWorkflowStep,
@@ -273,6 +274,33 @@ test('lockedTaskSummaryCards exposes locked machine and time protection', () => 
     ],
   );
   assert.deepEqual(lockedTaskSummaryCards(null), []);
+});
+
+test('adjustmentImpactSummaryCards exposes move cost and review risk', () => {
+  assert.deepEqual(
+    adjustmentImpactSummaryCards({
+      adjustment_count: 2,
+      machine_change_count: 1,
+      time_changed_count: 2,
+      locked_after_adjustment_count: 1,
+      total_setup_time_delta_mins: 35,
+      total_tardiness_delta_mins: 50,
+      max_delay_delta_mins: 120,
+      review_required_count: 1,
+      has_negative_impact: true,
+    }),
+    [
+      { key: 'adjustments', label: '调整次数', value: 2, tone: 'warning' },
+      { key: 'machine_changes', label: '换机', value: 1, tone: 'warning' },
+      { key: 'time_changes', label: '时间变化', value: 2, tone: 'warning' },
+      { key: 'locked_after', label: '调整后锁定', value: 1, tone: 'warning' },
+      { key: 'setup_delta', label: '换产增加', value: '35 分钟', tone: 'warning' },
+      { key: 'tardiness_delta', label: '延期增加', value: '50 分钟', tone: 'danger' },
+      { key: 'max_delay', label: '最大完工延后', value: '120 分钟', tone: 'danger' },
+      { key: 'review_required', label: '需复核', value: 1, tone: 'danger' },
+    ],
+  );
+  assert.deepEqual(adjustmentImpactSummaryCards(null), []);
 });
 
 test('solverQualitySummary explains solver proof and candidate deferrals for workers', () => {

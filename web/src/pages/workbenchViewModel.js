@@ -213,6 +213,25 @@ export function lockedTaskSummaryCards(summary) {
   ];
 }
 
+function formatMinutes(value) {
+  return `${Number(value || 0)} 分钟`;
+}
+
+export function adjustmentImpactSummaryCards(summary) {
+  if (!summary || Number(summary.adjustment_count || 0) <= 0) return [];
+  const hasNegativeImpact = Boolean(summary.has_negative_impact);
+  return [
+    { key: 'adjustments', label: '调整次数', value: Number(summary.adjustment_count || 0), tone: 'warning' },
+    { key: 'machine_changes', label: '换机', value: Number(summary.machine_change_count || 0), tone: 'warning' },
+    { key: 'time_changes', label: '时间变化', value: Number(summary.time_changed_count || 0), tone: 'warning' },
+    { key: 'locked_after', label: '调整后锁定', value: Number(summary.locked_after_adjustment_count || 0), tone: 'warning' },
+    { key: 'setup_delta', label: '换产增加', value: formatMinutes(summary.total_setup_time_delta_mins), tone: 'warning' },
+    { key: 'tardiness_delta', label: '延期增加', value: formatMinutes(summary.total_tardiness_delta_mins), tone: hasNegativeImpact ? 'danger' : 'warning' },
+    { key: 'max_delay', label: '最大完工延后', value: formatMinutes(summary.max_delay_delta_mins), tone: hasNegativeImpact ? 'danger' : 'warning' },
+    { key: 'review_required', label: '需复核', value: Number(summary.review_required_count || 0), tone: hasNegativeImpact ? 'danger' : 'warning' },
+  ];
+}
+
 function formatPercent(value) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return '-';
   return `${(Number(value) * 100).toFixed(1)}%`;

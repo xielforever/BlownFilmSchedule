@@ -20,6 +20,7 @@ import {
 } from '../api/client';
 import { Link } from 'react-router-dom';
 import {
+  adjustmentImpactSummaryCards,
   deriveDraftVersionState,
   derivePublishChecklist,
   derivePrimaryAction,
@@ -687,6 +688,10 @@ export default function ScheduleWorkbench() {
   );
   const lockedTaskCards = useMemo(
     () => lockedTaskSummaryCards(activePlan?.locked_task_summary),
+    [activePlan],
+  );
+  const adjustmentImpactCards = useMemo(
+    () => adjustmentImpactSummaryCards(activePlan?.adjustment_impact_summary),
     [activePlan],
   );
   const sortedValidationItems = useMemo(() => {
@@ -2658,6 +2663,17 @@ export default function ScheduleWorkbench() {
               ))}
               {!blockedDiagnostics.length && <div className="config-empty">后端未返回未排订单明细，请查看当前排程报告。</div>}
             </div>
+          )}
+
+          {activeStage === 'draft_review' && adjustmentImpactCards.length > 0 && (
+          <div className="validation-list" data-testid="workbench-adjustment-impact-summary">
+            <h4>调整影响摘要</h4>
+            <div className="workbench-validation-summary">
+              {adjustmentImpactCards.map(card => (
+                <span key={card.key}>{card.label} {card.value}</span>
+              ))}
+            </div>
+          </div>
           )}
 
           {activeStage === 'draft_review' && (
