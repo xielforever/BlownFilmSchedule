@@ -54,6 +54,8 @@ class BenchmarkCase:
     machine_count: int = 2
     profile: str = "fast"
     max_wall_time_seconds: float = 120.0
+    solver_time_limit_seconds: float | None = None
+    solver_phase1_time_budget_ratio: float | None = None
     max_gap: float | None = None
     min_scheduled_ratio: float = 0.0
     max_late_order_count: int | None = None
@@ -92,6 +94,8 @@ def _case_config(case: BenchmarkCase) -> dict:
         "machine_count": case.machine_count,
         "profile": case.profile,
         "max_wall_time_seconds": case.max_wall_time_seconds,
+        "solver_time_limit_seconds": _solver_time_limit_seconds(case),
+        "solver_phase1_time_budget_ratio": _solver_phase1_time_budget_ratio(case),
         "max_gap": case.max_gap,
         "min_scheduled_ratio": case.min_scheduled_ratio,
         "max_late_order_count": case.max_late_order_count,
@@ -131,6 +135,18 @@ def _profile_acceptance_policy(case: BenchmarkCase) -> dict:
         "max_weighted_tardiness": case.max_weighted_tardiness,
         "max_total_setup_time_mins": case.max_total_setup_time_mins,
     }
+
+
+def _solver_time_limit_seconds(case: BenchmarkCase) -> float:
+    if case.solver_time_limit_seconds is not None:
+        return max(0.1, float(case.solver_time_limit_seconds))
+    return max(0.1, float(case.max_wall_time_seconds) * 0.95)
+
+
+def _solver_phase1_time_budget_ratio(case: BenchmarkCase) -> float:
+    if case.solver_phase1_time_budget_ratio is not None:
+        return min(0.95, max(0.05, float(case.solver_phase1_time_budget_ratio)))
+    return 0.5
 
 
 def _make_machine(index: int) -> BlownFilmMachineModel:
@@ -184,6 +200,8 @@ def build_sprint5_baseline_cases(
     profiles: Iterable[str] = ("fast", "standard"),
     machine_count: int = 4,
     max_wall_time_seconds: float | None = None,
+    solver_time_limit_seconds: float | None = None,
+    solver_phase1_time_budget_ratio: float | None = None,
     max_gap: float | None = None,
     min_scheduled_ratio: float | None = None,
 ) -> list[BenchmarkCase]:
@@ -201,6 +219,8 @@ def build_sprint5_baseline_cases(
                     if max_wall_time_seconds is None
                     else max_wall_time_seconds
                 ),
+                solver_time_limit_seconds=solver_time_limit_seconds,
+                solver_phase1_time_budget_ratio=solver_phase1_time_budget_ratio,
                 max_gap=defaults["max_gap"] if max_gap is None else max_gap,
                 min_scheduled_ratio=(
                     defaults["min_scheduled_ratio"]
@@ -227,6 +247,20 @@ def _machine_load(tasks) -> dict:
     return load
 
 
+def _cleaning_diagnostics(diagnostics) -> dict[str, int]:
+    counts = {
+        "required_count": 0,
+        "disabled_count": 0,
+    }
+    for diagnostic in diagnostics or []:
+        code = getattr(diagnostic, "code", "")
+        if code == "maintenance.continuous_run_cleaning_required":
+            counts["required_count"] += 1
+        elif code == "maintenance.continuous_run_experimental_disabled":
+            counts["disabled_count"] += 1
+    return counts
+
+
 def _deferred_reason_counts(deferred_orders) -> dict[str, int]:
     counts: dict[str, int] = {}
     for order in deferred_orders or []:
@@ -238,16 +272,18 @@ def _deferred_reason_counts(deferred_orders) -> dict[str, int]:
 def run_benchmark_case(case: BenchmarkCase) -> dict:
     orders, machines, setup_mgr = build_benchmark_dataset(case)
     profile_acceptance_policy = _profile_acceptance_policy(case)
+    solver_profile_policy = {
+        "profile": case.profile,
+        "time_limit_seconds": _solver_time_limit_seconds(case),
+        "phase1_time_budget_ratio": _solver_phase1_time_budget_ratio(case),
+        "relative_gap_limit": profile_acceptance_policy["max_gap"] or 0.0,
+        "random_seed": 0,
+        "num_workers": 8,
+        "log_search_progress": False,
+    }
     aps = AdvancedMedicalAPS(
         setup_mgr,
-        solver_profile_policy={
-            "profile": case.profile,
-            "time_limit_seconds": case.max_wall_time_seconds,
-            "relative_gap_limit": profile_acceptance_policy["max_gap"] or 0.0,
-            "random_seed": 0,
-            "num_workers": 8,
-            "log_search_progress": False,
-        },
+        solver_profile_policy=solver_profile_policy,
         candidate_acceptance_policy={"reject_penalty": 10_000_000},
         arc_pruning_policy={
             "enabled": case.arc_pruning_enabled,
@@ -276,6 +312,7 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
     )
     total_setup_time_mins = sum(max(0, task.setup_time) for task in result.tasks)
     machine_load = _machine_load(result.tasks)
+    cleaning_diagnostics = _cleaning_diagnostics(result.diagnostics)
     baseline_metrics = {
         "solver_status": result.status,
         "wall_time_seconds": wall_time,
@@ -283,6 +320,7 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
         "late_order_count": late_order_count,
         "weighted_tardiness": weighted_tardiness,
         "total_setup_time_mins": total_setup_time_mins,
+        "cleaning_diagnostics": cleaning_diagnostics,
         "machine_load": machine_load,
     }
     failed_checks = []
@@ -332,6 +370,7 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
         "late_order_count": late_order_count,
         "weighted_tardiness": weighted_tardiness,
         "total_setup_time_mins": total_setup_time_mins,
+        "cleaning_diagnostics": cleaning_diagnostics,
         "quality_thresholds": {
             "max_late_order_count": case.max_late_order_count,
             "max_weighted_tardiness": case.max_weighted_tardiness,
@@ -341,6 +380,7 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
             "max_pruning_setup_time_delta_mins": case.max_pruning_setup_time_delta_mins,
         },
         "profile_acceptance_policy": profile_acceptance_policy,
+        "solver_profile_policy": solver_profile_policy,
         "arc_pruning_policy": {
             "enabled": case.arc_pruning_enabled,
             "max_setup_time_mins": case.arc_pruning_max_setup_mins,
@@ -394,6 +434,10 @@ def _comparison_thresholds(baseline: dict, pruned: dict) -> dict:
 
 def _failed_comparison_checks(comparison: dict, thresholds: dict) -> list[str]:
     checks = []
+    if not comparison.get("baseline_case_passed", False):
+        checks.append("baseline_case_failed")
+    if not comparison.get("pruned_case_passed", False):
+        checks.append("pruned_case_failed")
     mapping = {
         "late_order_count_delta": "max_pruning_late_order_delta",
         "weighted_tardiness_delta": "max_pruning_weighted_tardiness_delta",
@@ -427,6 +471,8 @@ def _arc_pruning_comparisons(case_results: list[dict]) -> list[dict]:
             "comparison_group": group,
             "baseline_case": baseline["name"],
             "pruned_case": pruned["name"],
+            "baseline_case_passed": bool(baseline.get("passed")),
+            "pruned_case_passed": bool(pruned.get("passed")),
             "wall_time_seconds_delta": _numeric_delta(pruned, baseline, "wall_time_seconds"),
             "late_order_count_delta": _numeric_delta(pruned, baseline, "late_order_count"),
             "weighted_tardiness_delta": _numeric_delta(pruned, baseline, "weighted_tardiness"),
@@ -556,13 +602,13 @@ def render_markdown_report(summary: dict) -> str:
         "",
         "## Cases",
         "",
-        "| Case | Status | Passed | Scheduled | Deferred | Late | Weighted Tardiness | Setup Mins | Wall Time | Arc Count | Pruned Arcs | Arc Pruning Strategy |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+        "| Case | Status | Passed | Scheduled | Deferred | Late | Weighted Tardiness | Setup Mins | Wall Time | Solver Budget | Arc Count | Pruned Arcs | Arc Pruning Strategy |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for case in summary.get("cases", []):
         model_size = case.get("model_size") or {}
         lines.append(
-            "| {name} | {status} | {passed} | {scheduled} | {deferred} | {late} | {weighted} | {setup} | {wall} | {arcs} | {pruned} | {strategy} |".format(
+            "| {name} | {status} | {passed} | {scheduled} | {deferred} | {late} | {weighted} | {setup} | {wall} | {budget} | {arcs} | {pruned} | {strategy} |".format(
                 name=case.get("name"),
                 status=case.get("solver_status"),
                 passed=case.get("passed"),
@@ -572,6 +618,7 @@ def render_markdown_report(summary: dict) -> str:
                 weighted=_fmt(case.get("weighted_tardiness")),
                 setup=_fmt(case.get("total_setup_time_mins")),
                 wall=_fmt(case.get("wall_time_seconds")),
+                budget=_fmt((case.get("solver_profile_policy") or {}).get("time_limit_seconds")),
                 arcs=_fmt(model_size.get("arc_count")),
                 pruned=_fmt(model_size.get("pruned_arc_count")),
                 strategy=_fmt_arc_pruning_policy(case.get("arc_pruning_policy")),
@@ -582,14 +629,15 @@ def render_markdown_report(summary: dict) -> str:
         "",
         "## Baseline Metrics",
         "",
-        "| Case | Solver Status | Wall Time | Gap | Late | Weighted Tardiness | Setup Mins | Machines |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Case | Solver Status | Wall Time | Gap | Late | Weighted Tardiness | Setup Mins | Cleaning Required | Cleaning Disabled | Machines |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ])
     for case in summary.get("cases", []):
         metrics = case.get("baseline_metrics") or {}
         machine_load = metrics.get("machine_load") or {}
+        cleaning = metrics.get("cleaning_diagnostics") or {}
         lines.append(
-            "| {name} | {status} | {wall} | {gap} | {late} | {weighted} | {setup} | {machines} |".format(
+            "| {name} | {status} | {wall} | {gap} | {late} | {weighted} | {setup} | {cleaning_required} | {cleaning_disabled} | {machines} |".format(
                 name=case.get("name"),
                 status=metrics.get("solver_status"),
                 wall=_fmt(metrics.get("wall_time_seconds")),
@@ -597,6 +645,8 @@ def render_markdown_report(summary: dict) -> str:
                 late=_fmt(metrics.get("late_order_count")),
                 weighted=_fmt(metrics.get("weighted_tardiness")),
                 setup=_fmt(metrics.get("total_setup_time_mins")),
+                cleaning_required=_fmt(cleaning.get("required_count")),
+                cleaning_disabled=_fmt(cleaning.get("disabled_count")),
                 machines=len(machine_load),
             )
         )
@@ -761,6 +811,16 @@ def _common_case_options(args, profile: str, count: int) -> dict:
             if args.max_wall_time_seconds is None
             else args.max_wall_time_seconds
         ),
+        "solver_time_limit_seconds": (
+            None
+            if args.solver_time_limit_seconds is None
+            else max(0.1, float(args.solver_time_limit_seconds))
+        ),
+        "solver_phase1_time_budget_ratio": (
+            None
+            if args.solver_phase1_time_budget_ratio is None
+            else min(0.95, max(0.05, float(args.solver_phase1_time_budget_ratio)))
+        ),
         "max_gap": defaults["max_gap"] if args.max_gap is None else args.max_gap,
         "min_scheduled_ratio": (
             defaults["min_scheduled_ratio"]
@@ -827,6 +887,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--profile", default="fast", choices=["fast", "standard", "deep"])
     parser.add_argument("--profiles", type=_parse_profiles, default=None)
     parser.add_argument("--max-wall-time-seconds", type=float, default=None)
+    parser.add_argument("--solver-time-limit-seconds", type=float, default=None)
+    parser.add_argument("--solver-phase1-time-budget-ratio", type=float, default=None)
     parser.add_argument("--max-gap", type=float, default=None)
     parser.add_argument("--min-scheduled-ratio", type=float, default=None)
     parser.add_argument("--max-late-order-count", type=int, default=None)
@@ -855,6 +917,8 @@ def main(argv: list[str] | None = None) -> int:
             profiles=profiles,
             machine_count=max(1, args.machine_count),
             max_wall_time_seconds=args.max_wall_time_seconds,
+            solver_time_limit_seconds=args.solver_time_limit_seconds,
+            solver_phase1_time_budget_ratio=args.solver_phase1_time_budget_ratio,
             max_gap=args.max_gap,
             min_scheduled_ratio=(
                 None if args.min_scheduled_ratio is None else max(0.0, float(args.min_scheduled_ratio))

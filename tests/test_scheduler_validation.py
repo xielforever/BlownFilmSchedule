@@ -120,6 +120,43 @@ class TestSchedulerSequencing(unittest.TestCase):
         self.assertEqual(phase2["tardiness_bound_source"], "phase1_optimal")
         self.assertEqual(phase2["configured_tardiness_tolerance_mins"], 15)
 
+    def test_solver_profile_time_limit_is_total_budget_across_phases(self):
+        class BudgetCapturingAPS(AdvancedMedicalAPS):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.phase_time_limits = []
+
+            def _solve_phase(self, *args, **kwargs):
+                phase = kwargs["phase"]
+                self.phase_time_limits.append(kwargs.get("time_limit_seconds"))
+                self._last_solver_status = "FEASIBLE"
+                self._last_phase_metrics = {
+                    "phase": phase,
+                    "status": "FEASIBLE",
+                    "objective": 0,
+                    "best_bound": 0.0,
+                    "gap": 0.0,
+                    "branches": 0,
+                    "conflicts": 0,
+                    "wall_time": 2.5 if phase == 1 else 1.5,
+                }
+                return ("FEASIBLE", object(), {}, 0)
+
+            def _extract_solution(self, *args, **kwargs):
+                return None
+
+            def _validate_result(self, *args, **kwargs):
+                return None
+
+        aps = BudgetCapturingAPS(
+            _make_setup_mgr(),
+            solver_profile_policy={"time_limit_seconds": 10.0},
+        )
+
+        aps.run([_make_order("ORD-BUDGET")], [_make_machine()])
+
+        self.assertEqual(aps.phase_time_limits, [5.0, 7.5])
+
     def test_solver_metrics_record_model_size(self):
         orders = [
             _make_order("ORD-MODEL-MUST"),
@@ -196,8 +233,27 @@ class TestSchedulerSequencing(unittest.TestCase):
             "due_window_mins": 0,
             "due_window_top_k": 0,
         })
-        self.assertEqual(model_size["pruned_arc_count"], 3)
-        self.assertEqual(model_size["arc_count"], 13)
+        self.assertEqual(model_size["pruned_arc_count"], 2)
+        self.assertEqual(model_size["arc_count"], 14)
+
+    def test_arc_pruning_top_k_preserves_feasible_order_backbone(self):
+        orders = [_make_order(f"ORD-BACKBONE-{i}", dueDateMins=1000 + i * 60) for i in range(6)]
+        machine = _make_machine()
+        aps = AdvancedMedicalAPS(
+            _make_setup_mgr(),
+            arc_pruning_policy={
+                "enabled": True,
+                "max_setup_time_mins": 999,
+                "top_k_per_order": 1,
+            },
+        )
+
+        result = aps.run(orders, [machine])
+
+        model_size = result.solver_metrics["model_size"]
+        self.assertIn(result.status, {"OPTIMAL", "FEASIBLE"})
+        self.assertEqual(len(result.tasks), 6)
+        self.assertGreater(model_size["pruned_arc_count"], 0)
 
     def test_arc_pruning_policy_applies_business_top_k_rules(self):
         orders = [
@@ -247,8 +303,8 @@ class TestSchedulerSequencing(unittest.TestCase):
             "due_window_mins": 120,
             "due_window_top_k": 1,
         })
-        self.assertEqual(model_size["pruned_arc_count"], 2)
-        self.assertEqual(model_size["arc_count"], 14)
+        self.assertEqual(model_size["pruned_arc_count"], 1)
+        self.assertEqual(model_size["arc_count"], 15)
 
     def test_locked_task_keeps_machine_and_time(self):
         locked_order = _make_order("ORD-LOCKED")

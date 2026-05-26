@@ -373,6 +373,10 @@ class AdvancedMedicalAPS:
                 0.1,
                 float(policy.get("time_limit_seconds") or SOLVER_TIME_LIMIT_SECONDS),
             ),
+            "phase1_time_budget_ratio": min(
+                0.95,
+                max(0.05, float(policy.get("phase1_time_budget_ratio") or 0.5)),
+            ),
             "relative_gap_limit": max(0.0, float(policy.get("relative_gap_limit") or 0.0)),
             "random_seed": max(0, int(policy.get("random_seed") or 0)),
             "num_workers": max(1, int(policy.get("num_workers") or 8)),
@@ -439,13 +443,16 @@ class AdvancedMedicalAPS:
         candidates: List[Tuple[int, str, int]],
         top_k: int,
         predicate,
+        protected_successors: set[int] | None = None,
     ) -> set[int]:
+        protected_successors = protected_successors or set()
         if top_k <= 0:
             return set()
         preferred = [candidate for candidate in candidates if predicate(candidate[2])]
         if not preferred:
             return set()
         keep = {j for _setup_time, _order_id, j in sorted(preferred)[:top_k]}
+        keep.update(protected_successors)
         return {j for _setup_time, _order_id, j in candidates if j not in keep}
 
     def _pruned_order_arcs_for_machine(
@@ -460,8 +467,17 @@ class AdvancedMedicalAPS:
             return set()
 
         pruned: set[Tuple[int, int]] = set()
+        ordered_orders = sorted(
+            m_orders,
+            key=lambda idx: (int(orders[idx].due_date_mins or 0), orders[idx].order_id, idx),
+        )
+        protected_successors_by_order: Dict[int, set[int]] = {idx: set() for idx in m_orders}
+        if len(ordered_orders) > 1:
+            for pos, idx in enumerate(ordered_orders):
+                protected_successors_by_order[idx].add(ordered_orders[(pos + 1) % len(ordered_orders)])
         for i in m_orders:
             candidates = []
+            protected_successors = protected_successors_by_order.get(i, set())
             for j in m_orders:
                 if i == j:
                     continue
@@ -474,6 +490,7 @@ class AdvancedMedicalAPS:
             top_k = policy["top_k_per_order"]
             if top_k and len(candidates) > top_k:
                 keep = {j for _setup_time, _order_id, j in sorted(candidates)[:top_k]}
+                keep.update(protected_successors)
                 for _setup_time, _order_id, j in candidates:
                     if j not in keep:
                         pruned.add((i, j))
@@ -498,7 +515,12 @@ class AdvancedMedicalAPS:
                 ),
             ]
             for rule_top_k, predicate in business_rules:
-                pruned_successors = self._prune_by_business_top_k(candidates, rule_top_k, predicate)
+                pruned_successors = self._prune_by_business_top_k(
+                    candidates,
+                    rule_top_k,
+                    predicate,
+                    protected_successors,
+                )
                 if not pruned_successors:
                     continue
                 for j in pruned_successors:
@@ -506,9 +528,20 @@ class AdvancedMedicalAPS:
                 candidates = [candidate for candidate in candidates if candidate[2] not in pruned_successors]
         return pruned
 
-    def _apply_solver_profile(self, solver) -> None:
+    def _phase1_time_limit_seconds(self) -> float:
         policy = self.solver_profile_policy
-        solver.parameters.max_time_in_seconds = policy["time_limit_seconds"]
+        return max(0.1, policy["time_limit_seconds"] * policy["phase1_time_budget_ratio"])
+
+    def _remaining_time_limit_seconds(self, elapsed_seconds: float) -> float:
+        return max(0.1, self.solver_profile_policy["time_limit_seconds"] - elapsed_seconds)
+
+    def _apply_solver_profile(self, solver, time_limit_seconds: Optional[float] = None) -> None:
+        policy = self.solver_profile_policy
+        solver.parameters.max_time_in_seconds = (
+            policy["time_limit_seconds"]
+            if time_limit_seconds is None
+            else max(0.1, float(time_limit_seconds))
+        )
         solver.parameters.relative_gap_limit = policy["relative_gap_limit"]
         solver.parameters.random_seed = policy["random_seed"]
         solver.parameters.num_workers = policy["num_workers"]
@@ -692,6 +725,7 @@ class AdvancedMedicalAPS:
             H, phase=1, tardiness_bound=None,
             locked_tasks_by_order_id=locked_tasks_by_order_id,
             external_locked_tasks=external_locked_tasks,
+            time_limit_seconds=self._phase1_time_limit_seconds(),
         )
         result.solver_metrics["phase_1"] = getattr(self, "_last_phase_metrics", {})
 
@@ -721,6 +755,7 @@ class AdvancedMedicalAPS:
 
         status1, solver1, vars1, best_tardiness = phase1_result
         result.phase1_score = best_tardiness
+        phase1_elapsed = float(result.solver_metrics["phase_1"].get("wall_time") or 0.0)
         logger.info("第一阶段完成: status=%s, best_tardiness=%d", status1, best_tardiness)
 
         # ═══════════════════════════════════════════════════
@@ -733,6 +768,7 @@ class AdvancedMedicalAPS:
             H, phase=2, tardiness_bound=phase2_tardiness_bound,
             locked_tasks_by_order_id=locked_tasks_by_order_id,
             external_locked_tasks=external_locked_tasks,
+            time_limit_seconds=self._remaining_time_limit_seconds(phase1_elapsed),
         )
         result.solver_metrics["phase_2"] = getattr(self, "_last_phase_metrics", {})
         result.solver_metrics["phase_2"].update({
@@ -1168,6 +1204,7 @@ class AdvancedMedicalAPS:
         H, phase, tardiness_bound,
         locked_tasks_by_order_id=None,
         external_locked_tasks=None,
+        time_limit_seconds: Optional[float] = None,
     ):
         """
         构建并求解单阶段 CP-SAT 模型。
@@ -1421,7 +1458,7 @@ class AdvancedMedicalAPS:
 
         # ─── 求解 ───
         solver = cp_model.CpSolver()
-        self._apply_solver_profile(solver)
+        self._apply_solver_profile(solver, time_limit_seconds=time_limit_seconds)
         status = solver.solve(model)
 
         status_map = {

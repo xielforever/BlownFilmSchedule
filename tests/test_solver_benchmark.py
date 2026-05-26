@@ -59,6 +59,8 @@ class TestSolverBenchmark(unittest.TestCase):
             "machine_count": 1,
             "profile": "fast",
             "max_wall_time_seconds": 10.0,
+            "solver_time_limit_seconds": 9.5,
+            "solver_phase1_time_budget_ratio": 0.5,
             "max_gap": None,
             "min_scheduled_ratio": 0.0,
             "max_late_order_count": None,
@@ -95,6 +97,7 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertIn("late_order_count", case)
         self.assertIn("weighted_tardiness", case)
         self.assertIn("total_setup_time_mins", case)
+        self.assertIn("cleaning_diagnostics", case)
         self.assertIn("deferred_reason_counts", case)
         self.assertIn("machine_load", case)
         self.assertIn("phase_metrics", case)
@@ -106,7 +109,12 @@ class TestSolverBenchmark(unittest.TestCase):
             "late_order_count": case["late_order_count"],
             "weighted_tardiness": case["weighted_tardiness"],
             "total_setup_time_mins": case["total_setup_time_mins"],
+            "cleaning_diagnostics": case["cleaning_diagnostics"],
             "machine_load": case["machine_load"],
+        })
+        self.assertEqual(case["cleaning_diagnostics"], {
+            "required_count": 0,
+            "disabled_count": 0,
         })
         self.assertIsInstance(case["machine_load"], dict)
 
@@ -155,6 +163,8 @@ class TestSolverBenchmark(unittest.TestCase):
                 "--machine-count", "1",
                 "--output", path,
                 "--max-wall-time-seconds", "10",
+                "--solver-time-limit-seconds", "6",
+                "--solver-phase1-time-budget-ratio", "0.4",
                 "--max-late-order-count", "5",
                 "--max-weighted-tardiness", "1000",
                 "--max-total-setup-time-mins", "1000",
@@ -168,6 +178,10 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertEqual(summary["cases"][0]["quality_thresholds"]["max_late_order_count"], 5)
         self.assertEqual(summary["cases"][0]["quality_thresholds"]["max_weighted_tardiness"], 1000)
         self.assertEqual(summary["cases"][0]["quality_thresholds"]["max_total_setup_time_mins"], 1000)
+        self.assertEqual(summary["cases"][0]["solver_profile_policy"]["time_limit_seconds"], 6)
+        self.assertEqual(summary["cases"][0]["solver_profile_policy"]["phase1_time_budget_ratio"], 0.4)
+        self.assertEqual(summary["case_configs"][0]["solver_time_limit_seconds"], 6)
+        self.assertEqual(summary["case_configs"][0]["solver_phase1_time_budget_ratio"], 0.4)
         self.assertIn("status", summary)
 
     def test_benchmark_command_can_compare_multiple_profiles(self):
@@ -237,6 +251,23 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertEqual(fast_policy["min_scheduled_ratio"], 0.75)
         self.assertEqual(summary["profile_acceptance"]["fast"]["acceptance_policy"], fast_policy)
         self.assertEqual(summary["profile_acceptance"]["standard"]["acceptance_policy"]["max_wall_time_seconds"], 20)
+
+    def test_benchmark_records_separate_solver_time_budget(self):
+        summary = run_benchmark_suite([
+            BenchmarkCase(
+                name="solver-budget",
+                order_count=2,
+                machine_count=1,
+                max_wall_time_seconds=10,
+                solver_time_limit_seconds=6,
+                solver_phase1_time_budget_ratio=0.4,
+            ),
+        ])
+
+        case = summary["cases"][0]
+        self.assertEqual(case["solver_profile_policy"]["time_limit_seconds"], 6)
+        self.assertEqual(case["solver_profile_policy"]["phase1_time_budget_ratio"], 0.4)
+        self.assertEqual(case["profile_acceptance_policy"]["max_wall_time_seconds"], 10)
 
     def test_benchmark_command_uses_sprint5_baseline_case_contract(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -436,6 +467,35 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertFalse(comparison["passed"])
         self.assertIn("total_setup_time_mins_delta", comparison["failed_checks"])
 
+    def test_arc_pruning_comparison_fails_when_pruned_case_fails(self):
+        summary = run_benchmark_suite([
+            BenchmarkCase(
+                name="baseline-ok",
+                order_count=3,
+                machine_count=1,
+                max_wall_time_seconds=10,
+                comparison_group="quality",
+                comparison_variant="pruning_off",
+                arc_pruning_enabled=False,
+            ),
+            BenchmarkCase(
+                name="pruned-infeasible",
+                order_count=3,
+                machine_count=1,
+                max_wall_time_seconds=0.001,
+                comparison_group="quality",
+                comparison_variant="pruning_on",
+                arc_pruning_enabled=True,
+                arc_pruning_max_setup_mins=999,
+                arc_pruning_top_k_per_order=1,
+            ),
+        ])
+
+        self.assertEqual(summary["status"], "FAIL")
+        comparison = summary["arc_pruning_comparisons"][0]
+        self.assertFalse(comparison["passed"])
+        self.assertIn("pruned_case_failed", comparison["failed_checks"])
+
     def test_benchmark_command_writes_markdown_report(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "summary.json")
@@ -462,6 +522,8 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertIn("## Baseline Metrics", report)
         self.assertIn("## Machine Model Sizes", report)
         self.assertIn("Weighted Tardiness", report)
+        self.assertIn("Cleaning Required", report)
+        self.assertIn("Cleaning Disabled", report)
         self.assertIn("Arc Pruning Strategy", report)
         self.assertIn("same_material_family_top_k", report)
         self.assertIn("Eligible Orders | Assignments | Optional Candidates | Arcs | Pruned Arcs | Setup Cache", report)

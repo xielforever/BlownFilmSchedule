@@ -1,0 +1,259 @@
+{
+  "schema_version": "solver-benchmark-v1",
+  "generated_at": "2026-05-25T23:37:52Z",
+  "status": "PASS",
+  "case_count": 1,
+  "passed_count": 1,
+  "failed_count": 0,
+  "case_configs": [
+    {
+      "name": "fast-50",
+      "order_count": 50,
+      "machine_count": 4,
+      "profile": "fast",
+      "max_wall_time_seconds": 120.0,
+      "solver_time_limit_seconds": 114.0,
+      "solver_phase1_time_budget_ratio": 0.5,
+      "max_gap": null,
+      "min_scheduled_ratio": 1.0,
+      "max_late_order_count": null,
+      "max_weighted_tardiness": null,
+      "max_total_setup_time_mins": null,
+      "max_pruning_late_order_delta": null,
+      "max_pruning_weighted_tardiness_delta": null,
+      "max_pruning_setup_time_delta_mins": null,
+      "profile_acceptance_policy": {
+        "profile": "fast",
+        "max_wall_time_seconds": 120.0,
+        "max_gap": null,
+        "min_scheduled_ratio": 1.0,
+        "max_late_order_count": null,
+        "max_weighted_tardiness": null,
+        "max_total_setup_time_mins": null
+      },
+      "arc_pruning_enabled": true,
+      "arc_pruning_max_setup_mins": 999,
+      "arc_pruning_top_k_per_order": 32,
+      "arc_pruning_same_material_family_top_k": 16,
+      "arc_pruning_same_cleanroom_top_k": 16,
+      "arc_pruning_due_window_mins": 4320,
+      "arc_pruning_due_window_top_k": 16
+    }
+  ],
+  "cases": [
+    {
+      "name": "fast-50",
+      "order_count": 50,
+      "machine_count": 4,
+      "profile": "fast",
+      "comparison_group": null,
+      "comparison_variant": null,
+      "solver_status": "UNPUBLISHABLE",
+      "passed": true,
+      "scheduled_order_count": 50,
+      "deferred_order_count": 0,
+      "deferred_reason_counts": {},
+      "blocked_order_count": 0,
+      "scheduled_ratio": 1.0,
+      "min_scheduled_ratio": 1.0,
+      "wall_time_seconds": 114.1165637,
+      "gap": 6212.0,
+      "late_order_count": 0,
+      "weighted_tardiness": 0,
+      "total_setup_time_mins": 1590,
+      "cleaning_diagnostics": {
+        "required_count": 1,
+        "disabled_count": 0
+      },
+      "quality_thresholds": {
+        "max_late_order_count": null,
+        "max_weighted_tardiness": null,
+        "max_total_setup_time_mins": null,
+        "max_pruning_late_order_delta": null,
+        "max_pruning_weighted_tardiness_delta": null,
+        "max_pruning_setup_time_delta_mins": null
+      },
+      "profile_acceptance_policy": {
+        "profile": "fast",
+        "max_wall_time_seconds": 120.0,
+        "max_gap": null,
+        "min_scheduled_ratio": 1.0,
+        "max_late_order_count": null,
+        "max_weighted_tardiness": null,
+        "max_total_setup_time_mins": null
+      },
+      "solver_profile_policy": {
+        "profile": "fast",
+        "time_limit_seconds": 114.0,
+        "phase1_time_budget_ratio": 0.5,
+        "relative_gap_limit": 0.0,
+        "random_seed": 0,
+        "num_workers": 8,
+        "log_search_progress": false
+      },
+      "arc_pruning_policy": {
+        "enabled": true,
+        "max_setup_time_mins": 999,
+        "top_k_per_order": 32,
+        "same_material_family_top_k": 16,
+        "same_cleanroom_top_k": 16,
+        "due_window_mins": 4320,
+        "due_window_top_k": 16
+      },
+      "failed_checks": [],
+      "machine_load": {
+        "LINE-B04": {
+          "task_count": 50,
+          "production_mins": 3000,
+          "setup_mins": 1590
+        }
+      },
+      "baseline_metrics": {
+        "solver_status": "UNPUBLISHABLE",
+        "wall_time_seconds": 114.1165637,
+        "gap": 6212.0,
+        "late_order_count": 0,
+        "weighted_tardiness": 0,
+        "total_setup_time_mins": 1590,
+        "cleaning_diagnostics": {
+          "required_count": 1,
+          "disabled_count": 0
+        },
+        "machine_load": {
+          "LINE-B04": {
+            "task_count": 50,
+            "production_mins": 3000,
+            "setup_mins": 1590
+          }
+        }
+      },
+      "phase_metrics": {
+        "phase_1": {
+          "phase": 1,
+          "status": "FEASIBLE",
+          "objective": 0,
+          "best_bound": 6212.0,
+          "gap": 6212.0,
+          "branches": 33095,
+          "conflicts": 53,
+          "wall_time": 57.1368492
+        },
+        "phase_2": {
+          "phase": 2,
+          "status": "FEASIBLE",
+          "objective": 1590,
+          "best_bound": 15970950.0,
+          "gap": 10043.622641509433,
+          "branches": 3038,
+          "conflicts": 0,
+          "wall_time": 56.9797145,
+          "tardiness_bound": 0,
+          "phase1_status_basis": "FEASIBLE",
+          "tardiness_bound_source": "phase1_feasible_with_configured_tolerance",
+          "configured_tardiness_tolerance_mins": 0
+        }
+      },
+      "model_size": {
+        "order_count": 50,
+        "machine_count": 4,
+        "assignment_count": 200,
+        "optional_candidate_count": 10,
+        "eligible_orders_per_machine": {
+          "LINE-B01": 50,
+          "LINE-B02": 50,
+          "LINE-B03": 50,
+          "LINE-B04": 50
+        },
+        "machine_model_sizes": {
+          "LINE-B01": {
+            "eligible_order_count": 50,
+            "assignment_count": 50,
+            "optional_candidate_count": 10,
+            "arc_count": 984,
+            "pruned_arc_count": 1617,
+            "setup_cache_size": 2500
+          },
+          "LINE-B02": {
+            "eligible_order_count": 50,
+            "assignment_count": 50,
+            "optional_candidate_count": 10,
+            "arc_count": 984,
+            "pruned_arc_count": 1617,
+            "setup_cache_size": 2500
+          },
+          "LINE-B03": {
+            "eligible_order_count": 50,
+            "assignment_count": 50,
+            "optional_candidate_count": 10,
+            "arc_count": 984,
+            "pruned_arc_count": 1617,
+            "setup_cache_size": 2500
+          },
+          "LINE-B04": {
+            "eligible_order_count": 50,
+            "assignment_count": 50,
+            "optional_candidate_count": 10,
+            "arc_count": 984,
+            "pruned_arc_count": 1617,
+            "setup_cache_size": 2500
+          }
+        },
+        "arc_count": 3936,
+        "pruned_arc_count": 6468,
+        "setup_cache_size": 10000,
+        "candidate_acceptance_policy": {
+          "reject_penalty": 10000000,
+          "max_deferred_count": null,
+          "min_acceptance_ratio": 0.0
+        },
+        "arc_pruning_policy": {
+          "enabled": true,
+          "max_setup_time_mins": 999,
+          "top_k_per_order": 32,
+          "same_material_family_top_k": 16,
+          "same_cleanroom_top_k": 16,
+          "due_window_mins": 4320,
+          "due_window_top_k": 16
+        },
+        "locked_order_count": 0,
+        "external_locked_interval_count": 0
+      }
+    }
+  ],
+  "profile_acceptance": {
+    "fast": {
+      "case_count": 1,
+      "passed_count": 1,
+      "failed_count": 0,
+      "acceptance_policy": {
+        "profile": "fast",
+        "max_wall_time_seconds": 120.0,
+        "max_gap": null,
+        "min_scheduled_ratio": 1.0,
+        "max_late_order_count": null,
+        "max_weighted_tardiness": null,
+        "max_total_setup_time_mins": null
+      },
+      "max_wall_time_seconds": 114.1165637,
+      "max_gap": 6212.0,
+      "min_scheduled_ratio": 1.0,
+      "deferred_reason_counts": {},
+      "failed_checks": []
+    }
+  },
+  "arc_pruning_comparisons": [],
+  "scale_acceptance": {
+    "50": {
+      "order_count": 50,
+      "case_count": 1,
+      "passed_count": 1,
+      "failed_count": 0,
+      "comparison_count": 0,
+      "max_wall_time_seconds": 114.1165637,
+      "min_scheduled_ratio": 1.0,
+      "max_arc_count": 3936,
+      "max_pruned_arc_count": 6468,
+      "failed_checks": []
+    }
+  }
+}
