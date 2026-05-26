@@ -354,10 +354,35 @@ class AdvancedMedicalAPS:
     @staticmethod
     def _normalize_solver_quality_policy(policy: Optional[Dict]) -> Dict:
         policy = policy or {}
+        max_late_order_count = policy.get("max_late_order_count")
+        max_weighted_tardiness = policy.get("max_weighted_tardiness")
         return {
             "phase2_feasible_tardiness_tolerance_mins": max(
                 0,
                 int(policy.get("phase2_feasible_tardiness_tolerance_mins") or 0),
+            ),
+            "phase1_tardiness_weight": (
+                10000
+                if int(policy.get("phase1_tardiness_weight") or 10000) < 1
+                else int(policy.get("phase1_tardiness_weight") or 10000)
+            ),
+            "phase1_late_order_penalty": max(
+                0,
+                int(policy.get("phase1_late_order_penalty") or 0),
+            ),
+            "phase2_tardiness_weight": max(
+                0,
+                int(policy.get("phase2_tardiness_weight") or 0),
+            ),
+            "max_late_order_count": (
+                None
+                if max_late_order_count is None or int(max_late_order_count) < 0
+                else int(max_late_order_count)
+            ),
+            "max_weighted_tardiness": (
+                None
+                if max_weighted_tardiness is None or int(max_weighted_tardiness) < 0
+                else int(max_weighted_tardiness)
             ),
         }
 
@@ -396,6 +421,10 @@ class AdvancedMedicalAPS:
                 else max(0, int(max_deferred_count))
             ),
             "min_acceptance_ratio": min(1.0, max(0.0, min_acceptance_ratio)),
+            "post_solve_late_defer_count": max(
+                0,
+                int(policy.get("post_solve_late_defer_count") or 0),
+            ),
         }
 
     @staticmethod
@@ -808,6 +837,8 @@ class AdvancedMedicalAPS:
             result.status = status2
             logger.info("第二阶段完成: status=%s, total_setup=%d", status2, setup_score)
 
+        self._defer_late_candidates_after_solve(result)
+
         required_order_ids = [
             order.order_id
             for order in orders
@@ -1127,6 +1158,7 @@ class AdvancedMedicalAPS:
             "arc_count": arc_count,
             "pruned_arc_count": pruned_arc_count,
             "setup_cache_size": len(setup_cache),
+            "solver_quality_policy": dict(self.solver_quality_policy),
             "candidate_acceptance_policy": dict(self.candidate_acceptance_policy),
             "arc_pruning_policy": dict(self.arc_pruning_policy),
             "locked_order_count": sum(
@@ -1375,12 +1407,24 @@ class AdvancedMedicalAPS:
             model.add_circuit(arcs)
 
             machine_intervals = [intervals[i][m_idx] for i in m_orders]
-            for locked_task in external_locked_tasks_by_machine_id.get(m.machine_id, []):
+            for locked_idx, locked_task in enumerate(external_locked_tasks_by_machine_id.get(m.machine_id, [])):
                 machine_intervals.append(model.new_fixed_size_interval_var(
                     locked_task.start_mins,
                     locked_task.end_mins - locked_task.start_mins,
                     f'locked_iv_{m_idx}_{locked_task.order.order_id}',
                 ))
+                for j in m_orders:
+                    before_locked = model.new_bool_var(f'before_locked_{m_idx}_{locked_idx}_{j}')
+                    after_locked = model.new_bool_var(f'after_locked_{m_idx}_{locked_idx}_{j}')
+                    model.add(before_locked + after_locked == presence[j][m_idx])
+                    setup_before_locked = self.setup_calc.calculate_setup_time(orders[j], locked_task.order, m)
+                    setup_after_locked = self.setup_calc.calculate_setup_time(locked_task.order, orders[j], m)
+                    model.add(
+                        ends[j][m_idx] + setup_before_locked <= locked_task.start_mins
+                    ).only_enforce_if(before_locked)
+                    model.add(
+                        starts[j][m_idx] >= locked_task.end_mins + setup_after_locked
+                    ).only_enforce_if(after_locked)
             for fw in m.forbidden_calendar:
                 maintenance_interval = model.new_fixed_size_interval_var(
                     fw.start_mins,
@@ -1402,6 +1446,11 @@ class AdvancedMedicalAPS:
 
         # ─── 目标函数 ───
         tardiness_terms = []
+        late_order_terms = []
+        needs_late_order_terms = (
+            self.solver_quality_policy["phase1_late_order_penalty"] > 0
+            or self.solver_quality_policy["max_late_order_count"] is not None
+        )
         for idx in range(n):
             o = orders[idx]
             w_i = self._tardiness_weight(o)
@@ -1421,9 +1470,23 @@ class AdvancedMedicalAPS:
                 model.add(weighted == t_var * w_i).only_enforce_if(p)
                 model.add(weighted == 0).only_enforce_if(p.negated())
                 tardiness_terms.append(weighted)
+                if needs_late_order_terms:
+                    late = model.new_bool_var(f'late_{idx}_{m_idx}')
+                    model.add(t_var >= 1).only_enforce_if(late)
+                    model.add(t_var == 0).only_enforce_if(late.negated())
+                    model.add(late <= p)
+                    late_order_terms.append(late)
 
         total_tardiness = model.new_int_var(0, H * 100 * n, 'total_tardiness')
         model.add(total_tardiness == sum(tardiness_terms))
+        total_late_orders = None
+        if needs_late_order_terms:
+            total_late_orders = model.new_int_var(0, n, 'total_late_orders')
+            model.add(total_late_orders == sum(late_order_terms))
+        if self.solver_quality_policy["max_late_order_count"] is not None and total_late_orders is not None:
+            model.add(total_late_orders <= self.solver_quality_policy["max_late_order_count"])
+        if self.solver_quality_policy["max_weighted_tardiness"] is not None:
+            model.add(total_tardiness <= self.solver_quality_policy["max_weighted_tardiness"])
 
         # --- 加入左靠齐（Left-Packing）软性惩罚，防止任务漂浮产生空白间隙 ---
         start_terms = []
@@ -1443,18 +1506,38 @@ class AdvancedMedicalAPS:
         )
 
         if phase == 1:
+            late_penalty_term = 0
+            if total_late_orders is not None:
+                late_penalty_term = (
+                    total_late_orders
+                    * self.solver_quality_policy["phase1_late_order_penalty"]
+                )
             # 第一阶段：主要目标最小化延期，次要目标尽量提早开工
-            model.minimize(total_tardiness * 10000 + candidate_rejection_cost + total_starts)
+            model.minimize(
+                total_tardiness * self.solver_quality_policy["phase1_tardiness_weight"]
+                + late_penalty_term
+                + candidate_rejection_cost
+                + total_starts
+            )
         else:
             # 第二阶段：锁死交期，最小化换产时间，次要目标尽量提早开工
             model.add(total_tardiness <= tardiness_bound)
             if setup_delay_vars:
                 total_setup = model.new_int_var(0, H * n, 'total_setup')
                 model.add(total_setup == sum(setup_delay_vars))
-                model.minimize(total_setup * 10000 + candidate_rejection_cost + total_starts)
+                model.minimize(
+                    total_setup * 10000
+                    + total_tardiness * self.solver_quality_policy["phase2_tardiness_weight"]
+                    + candidate_rejection_cost
+                    + total_starts
+                )
             else:
                 total_setup = model.new_int_var(0, 0, 'total_setup')
-                model.minimize(candidate_rejection_cost + total_starts)
+                model.minimize(
+                    total_tardiness * self.solver_quality_policy["phase2_tardiness_weight"]
+                    + candidate_rejection_cost
+                    + total_starts
+                )
 
         # ─── 求解 ───
         solver = cp_model.CpSolver()
@@ -1581,6 +1664,56 @@ class AdvancedMedicalAPS:
                 prev_order = o
 
         logger.info("解提取完成: %d 个任务已排程", len(result.tasks))
+
+    def _defer_late_candidates_after_solve(self, result: ScheduleResult) -> None:
+        limit = self.candidate_acceptance_policy.get("post_solve_late_defer_count", 0)
+        if limit <= 0:
+            return
+        late_candidates = [
+            task
+            for task in result.tasks
+            if self._is_optional_candidate(task.order)
+            and task.end_mins > task.order.due_date_mins
+        ]
+        if not late_candidates:
+            return
+        late_candidates.sort(
+            key=lambda task: (
+                task.end_mins - task.order.due_date_mins,
+                task.order.order_id,
+            ),
+            reverse=True,
+        )
+        deferred = late_candidates[:limit]
+        deferred_ids = {task.order.order_id for task in deferred}
+        result.tasks = [
+            task for task in result.tasks if task.order.order_id not in deferred_ids
+        ]
+        for task in deferred:
+            result.deferred_orders.append({
+                "order_id": task.order.order_id,
+                "planning_bucket": getattr(task.order, "planning_bucket", "candidate"),
+                "reason": "candidate_late_post_solve_deferred",
+                "deferred_reason_code": "candidate_late_post_solve_deferred",
+                "message": "Late candidate order was deferred by the configured post-solve acceptance policy.",
+            })
+        self._recompute_task_sequences(result)
+
+    def _recompute_task_sequences(self, result: ScheduleResult) -> None:
+        tasks_by_machine: Dict[str, List[ScheduledTask]] = {}
+        for task in result.tasks:
+            tasks_by_machine.setdefault(task.machine.machine_id, []).append(task)
+        result.machine_sequences = {}
+        for machine_tasks in tasks_by_machine.values():
+            machine_tasks.sort(key=lambda task: (task.start_mins, task.end_mins, task.order.order_id))
+            prev_order = None
+            for seq, task in enumerate(machine_tasks):
+                task.sequence_index = seq
+                task.setup_time = self.setup_calc.calculate_setup_time(prev_order, task.order, task.machine)
+                task.setup_detail = self.setup_calc.calculate_setup_detail(prev_order, task.order, task.machine)
+                task.scrap_kg = self.setup_calc.calculate_scrap_weight(prev_order, task.order, task.machine)
+                result.machine_sequences.setdefault(task.machine.machine_id, []).append(task)
+                prev_order = task.order
 
     def _validate_result(
         self,

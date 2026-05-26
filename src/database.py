@@ -370,6 +370,11 @@ class DatabaseManager:
                     continuous_run_limit_mins           INTEGER NOT NULL DEFAULT 4320,
                     continuous_run_enforcement_mode     VARCHAR(30) NOT NULL DEFAULT 'publish_blocker',
                     phase2_feasible_tardiness_tolerance_mins INTEGER NOT NULL DEFAULT 0,
+                    solver_phase1_tardiness_weight      INTEGER NOT NULL DEFAULT 10000,
+                    solver_phase1_late_order_penalty    INTEGER NOT NULL DEFAULT 0,
+                    solver_phase2_tardiness_weight      INTEGER NOT NULL DEFAULT 0,
+                    solver_max_late_order_count         INTEGER,
+                    solver_max_weighted_tardiness       INTEGER,
                     solver_profile                      VARCHAR(30) NOT NULL DEFAULT 'standard',
                     solver_time_limit_seconds           DOUBLE PRECISION NOT NULL DEFAULT 120,
                     solver_relative_gap_limit           DOUBLE PRECISION NOT NULL DEFAULT 0,
@@ -385,6 +390,7 @@ class DatabaseManager:
                     candidate_reject_penalty            INTEGER NOT NULL DEFAULT 10000000,
                     candidate_max_deferred_count        INTEGER,
                     candidate_min_acceptance_ratio      DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    candidate_post_solve_late_defer_count INTEGER NOT NULL DEFAULT 0,
                     arc_pruning_enabled                 BOOLEAN NOT NULL DEFAULT FALSE,
                     arc_pruning_max_setup_mins          INTEGER NOT NULL DEFAULT 0,
                     arc_pruning_top_k_per_order         INTEGER NOT NULL DEFAULT 0,
@@ -581,6 +587,7 @@ class DatabaseManager:
         fallback_setup_mgr: Optional[SetupMatricesManager] = None,
         order_ids: Optional[List[str]] = None,
         order_statuses: Optional[Tuple[str, ...]] = None,
+        ensure_rule_schema: bool = True,
     ) -> Tuple[
         List[BlownFilmMachineModel],
         List[ProductionOrderModel],
@@ -592,7 +599,8 @@ class DatabaseManager:
         setup_mgr = fallback_setup_mgr or SetupMatricesManager.empty_rules()
 
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            self._ensure_rule_enablement_schema(cur)
+            if ensure_rule_schema:
+                self._ensure_rule_enablement_schema(cur)
             policy = self._load_schedule_policy(cur)
             recipes_map = self._load_recipes_map(cur)
             if policy.get("setup_rules_enabled", True):
@@ -639,6 +647,11 @@ class DatabaseManager:
                 ADD COLUMN IF NOT EXISTS continuous_run_limit_mins INTEGER NOT NULL DEFAULT 4320,
                 ADD COLUMN IF NOT EXISTS continuous_run_enforcement_mode VARCHAR(30) NOT NULL DEFAULT 'publish_blocker',
                 ADD COLUMN IF NOT EXISTS phase2_feasible_tardiness_tolerance_mins INTEGER NOT NULL DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS solver_phase1_tardiness_weight INTEGER NOT NULL DEFAULT 10000,
+                ADD COLUMN IF NOT EXISTS solver_phase1_late_order_penalty INTEGER NOT NULL DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS solver_phase2_tardiness_weight INTEGER NOT NULL DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS solver_max_late_order_count INTEGER,
+                ADD COLUMN IF NOT EXISTS solver_max_weighted_tardiness INTEGER,
                 ADD COLUMN IF NOT EXISTS solver_profile VARCHAR(30) NOT NULL DEFAULT 'standard',
                 ADD COLUMN IF NOT EXISTS solver_time_limit_seconds DOUBLE PRECISION NOT NULL DEFAULT 120,
                 ADD COLUMN IF NOT EXISTS solver_relative_gap_limit DOUBLE PRECISION NOT NULL DEFAULT 0,
@@ -654,6 +667,7 @@ class DatabaseManager:
                 ADD COLUMN IF NOT EXISTS candidate_reject_penalty INTEGER NOT NULL DEFAULT 10000000,
                 ADD COLUMN IF NOT EXISTS candidate_max_deferred_count INTEGER,
                 ADD COLUMN IF NOT EXISTS candidate_min_acceptance_ratio DOUBLE PRECISION NOT NULL DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS candidate_post_solve_late_defer_count INTEGER NOT NULL DEFAULT 0,
                 ADD COLUMN IF NOT EXISTS arc_pruning_enabled BOOLEAN NOT NULL DEFAULT FALSE,
                 ADD COLUMN IF NOT EXISTS arc_pruning_max_setup_mins INTEGER NOT NULL DEFAULT 0,
                 ADD COLUMN IF NOT EXISTS arc_pruning_top_k_per_order INTEGER NOT NULL DEFAULT 0,
@@ -683,6 +697,9 @@ class DatabaseManager:
                     machine_capability_constraint_enabled, due_date_optimization_enabled,
                     continuous_run_limit_mins, continuous_run_enforcement_mode,
                     phase2_feasible_tardiness_tolerance_mins,
+                    solver_phase1_tardiness_weight, solver_phase1_late_order_penalty,
+                    solver_phase2_tardiness_weight, solver_max_late_order_count,
+                    solver_max_weighted_tardiness,
                     solver_profile, solver_time_limit_seconds, solver_relative_gap_limit,
                     solver_random_seed, solver_num_workers, solver_log_search_progress,
                     planning_must_schedule_horizon_days, planning_candidate_horizon_days,
@@ -690,7 +707,7 @@ class DatabaseManager:
                     planning_force_must_order_classes, planning_force_must_customer_classes,
                     planning_scarce_machine_threshold,
                     candidate_reject_penalty, candidate_max_deferred_count,
-                    candidate_min_acceptance_ratio,
+                    candidate_min_acceptance_ratio, candidate_post_solve_late_defer_count,
                     arc_pruning_enabled, arc_pruning_max_setup_mins,
                     arc_pruning_top_k_per_order,
                     arc_pruning_same_material_family_top_k,
@@ -720,6 +737,11 @@ class DatabaseManager:
             "continuous_run_limit_mins": 4320,
             "continuous_run_enforcement_mode": "publish_blocker",
             "phase2_feasible_tardiness_tolerance_mins": 0,
+            "solver_phase1_tardiness_weight": 10_000,
+            "solver_phase1_late_order_penalty": 0,
+            "solver_phase2_tardiness_weight": 0,
+            "solver_max_late_order_count": None,
+            "solver_max_weighted_tardiness": None,
             "solver_profile": "standard",
             "solver_time_limit_seconds": 120.0,
             "solver_relative_gap_limit": 0.0,
@@ -735,6 +757,7 @@ class DatabaseManager:
             "candidate_reject_penalty": 10_000_000,
             "candidate_max_deferred_count": None,
             "candidate_min_acceptance_ratio": 0.0,
+            "candidate_post_solve_late_defer_count": 0,
             "arc_pruning_enabled": False,
             "arc_pruning_max_setup_mins": 0,
             "arc_pruning_top_k_per_order": 0,

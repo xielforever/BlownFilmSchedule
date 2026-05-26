@@ -61,8 +61,17 @@ class TestSolverBenchmark(unittest.TestCase):
             "max_wall_time_seconds": 10.0,
             "solver_time_limit_seconds": 9.5,
             "solver_phase1_time_budget_ratio": 0.5,
+            "solver_phase1_tardiness_weight": 10000,
+            "solver_phase1_late_order_penalty": 0,
+            "solver_phase2_tardiness_weight": 0,
+            "solver_max_late_order_count": None,
+            "solver_max_weighted_tardiness": None,
             "max_gap": None,
             "min_scheduled_ratio": 0.0,
+            "candidate_reject_penalty": 10000000,
+            "candidate_max_deferred_count": None,
+            "candidate_min_acceptance_ratio": 0.0,
+            "candidate_post_solve_late_defer_count": 0,
             "max_late_order_count": None,
             "max_weighted_tardiness": None,
             "max_total_setup_time_mins": None,
@@ -116,6 +125,12 @@ class TestSolverBenchmark(unittest.TestCase):
             "required_count": 0,
             "disabled_count": 0,
         })
+        self.assertEqual(case["candidate_acceptance_policy"], {
+            "reject_penalty": 10000000,
+            "max_deferred_count": None,
+            "min_acceptance_ratio": 0.0,
+            "post_solve_late_defer_count": 0,
+        })
         self.assertIsInstance(case["machine_load"], dict)
 
     def test_benchmark_case_fails_when_scheduled_ratio_is_below_threshold(self):
@@ -165,6 +180,15 @@ class TestSolverBenchmark(unittest.TestCase):
                 "--max-wall-time-seconds", "10",
                 "--solver-time-limit-seconds", "6",
                 "--solver-phase1-time-budget-ratio", "0.4",
+                "--solver-phase1-tardiness-weight", "8000",
+                "--solver-phase1-late-order-penalty", "600",
+                "--solver-phase2-tardiness-weight", "250",
+                "--solver-max-late-order-count", "4",
+                "--solver-max-weighted-tardiness", "900",
+                "--candidate-reject-penalty", "500",
+                "--candidate-max-deferred-count", "2",
+                "--candidate-min-acceptance-ratio", "0.25",
+                "--candidate-post-solve-late-defer-count", "1",
                 "--max-late-order-count", "5",
                 "--max-weighted-tardiness", "1000",
                 "--max-total-setup-time-mins", "1000",
@@ -180,8 +204,26 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertEqual(summary["cases"][0]["quality_thresholds"]["max_total_setup_time_mins"], 1000)
         self.assertEqual(summary["cases"][0]["solver_profile_policy"]["time_limit_seconds"], 6)
         self.assertEqual(summary["cases"][0]["solver_profile_policy"]["phase1_time_budget_ratio"], 0.4)
+        self.assertEqual(summary["cases"][0]["solver_quality_policy"]["phase1_tardiness_weight"], 8000)
+        self.assertEqual(summary["cases"][0]["solver_quality_policy"]["phase1_late_order_penalty"], 600)
+        self.assertEqual(summary["cases"][0]["solver_quality_policy"]["phase2_tardiness_weight"], 250)
+        self.assertEqual(summary["cases"][0]["solver_quality_policy"]["max_late_order_count"], 4)
+        self.assertEqual(summary["cases"][0]["solver_quality_policy"]["max_weighted_tardiness"], 900)
         self.assertEqual(summary["case_configs"][0]["solver_time_limit_seconds"], 6)
         self.assertEqual(summary["case_configs"][0]["solver_phase1_time_budget_ratio"], 0.4)
+        self.assertEqual(summary["case_configs"][0]["solver_phase1_tardiness_weight"], 8000)
+        self.assertEqual(summary["case_configs"][0]["solver_phase1_late_order_penalty"], 600)
+        self.assertEqual(summary["case_configs"][0]["solver_phase2_tardiness_weight"], 250)
+        self.assertEqual(summary["case_configs"][0]["solver_max_late_order_count"], 4)
+        self.assertEqual(summary["case_configs"][0]["solver_max_weighted_tardiness"], 900)
+        self.assertEqual(summary["cases"][0]["candidate_acceptance_policy"]["reject_penalty"], 500)
+        self.assertEqual(summary["cases"][0]["candidate_acceptance_policy"]["max_deferred_count"], 2)
+        self.assertEqual(summary["cases"][0]["candidate_acceptance_policy"]["min_acceptance_ratio"], 0.25)
+        self.assertEqual(summary["cases"][0]["candidate_acceptance_policy"]["post_solve_late_defer_count"], 1)
+        self.assertEqual(summary["case_configs"][0]["candidate_reject_penalty"], 500)
+        self.assertEqual(summary["case_configs"][0]["candidate_max_deferred_count"], 2)
+        self.assertEqual(summary["case_configs"][0]["candidate_min_acceptance_ratio"], 0.25)
+        self.assertEqual(summary["case_configs"][0]["candidate_post_solve_late_defer_count"], 1)
         self.assertIn("status", summary)
 
     def test_benchmark_command_can_compare_multiple_profiles(self):
@@ -268,6 +310,62 @@ class TestSolverBenchmark(unittest.TestCase):
         self.assertEqual(case["solver_profile_policy"]["time_limit_seconds"], 6)
         self.assertEqual(case["solver_profile_policy"]["phase1_time_budget_ratio"], 0.4)
         self.assertEqual(case["profile_acceptance_policy"]["max_wall_time_seconds"], 10)
+
+    def test_benchmark_records_configurable_candidate_acceptance_policy(self):
+        summary = run_benchmark_suite([
+            BenchmarkCase(
+                name="candidate-quality",
+                order_count=5,
+                machine_count=1,
+                max_wall_time_seconds=10,
+                candidate_reject_penalty=250,
+                candidate_max_deferred_count=1,
+                candidate_min_acceptance_ratio=0.5,
+                candidate_post_solve_late_defer_count=2,
+            ),
+        ])
+
+        case = summary["cases"][0]
+        self.assertEqual(case["candidate_acceptance_policy"], {
+            "reject_penalty": 250,
+            "max_deferred_count": 1,
+            "min_acceptance_ratio": 0.5,
+            "post_solve_late_defer_count": 2,
+        })
+        self.assertEqual(summary["case_configs"][0]["candidate_reject_penalty"], 250)
+        self.assertEqual(summary["case_configs"][0]["candidate_max_deferred_count"], 1)
+        self.assertEqual(summary["case_configs"][0]["candidate_min_acceptance_ratio"], 0.5)
+        self.assertEqual(summary["case_configs"][0]["candidate_post_solve_late_defer_count"], 2)
+
+    def test_benchmark_records_configurable_solver_quality_policy(self):
+        summary = run_benchmark_suite([
+            BenchmarkCase(
+                name="quality-policy",
+                order_count=3,
+                machine_count=1,
+                max_wall_time_seconds=10,
+                solver_phase1_tardiness_weight=7000,
+                solver_phase1_late_order_penalty=900,
+                solver_phase2_tardiness_weight=300,
+                solver_max_late_order_count=2,
+                solver_max_weighted_tardiness=800,
+            ),
+        ])
+
+        case = summary["cases"][0]
+        self.assertEqual(case["solver_quality_policy"], {
+            "phase2_feasible_tardiness_tolerance_mins": 0,
+            "phase1_tardiness_weight": 7000,
+            "phase1_late_order_penalty": 900,
+            "phase2_tardiness_weight": 300,
+            "max_late_order_count": 2,
+            "max_weighted_tardiness": 800,
+        })
+        self.assertEqual(summary["case_configs"][0]["solver_phase1_tardiness_weight"], 7000)
+        self.assertEqual(summary["case_configs"][0]["solver_phase1_late_order_penalty"], 900)
+        self.assertEqual(summary["case_configs"][0]["solver_phase2_tardiness_weight"], 300)
+        self.assertEqual(summary["case_configs"][0]["solver_max_late_order_count"], 2)
+        self.assertEqual(summary["case_configs"][0]["solver_max_weighted_tardiness"], 800)
 
     def test_benchmark_command_uses_sprint5_baseline_case_contract(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -621,6 +621,42 @@ test.describe.serial('schedule workbench closed loop', () => {
     await expect(page.getByTestId('workbench-status')).toBeVisible();
   });
 
+  test('records manual adjustment and surfaces lock and impact evidence', async ({ page, request }) => {
+    const detail = await findDraft(request, item => (item.scheduled_orders || []).length > 0, 8);
+    test.skip(!detail, 'no pending order subset produced scheduled tasks');
+    const scheduledOrderId = detail.scheduled_orders[0].order_id;
+    const scheduledTask = detail.tasks.find(task => task.order_id === scheduledOrderId);
+    expect(scheduledTask).toBeTruthy();
+    const adjustment = await apiJson(request, 'post', `/api/schedule/preplans/${detail.run.run_id}/adjustments`, {
+      data: {
+        order_id: scheduledTask.order_id,
+        machine_id: scheduledTask.machine_id,
+        start_time: scheduledTask.start_time,
+        end_time: scheduledTask.end_time,
+        sequence_index: scheduledTask.sequence_index,
+        reason_code: 'OTHER',
+        reason_text: 'E2E valid adjustment impact check',
+      },
+      timeout: 60_000,
+    });
+    expect(adjustment.ok()).toBeTruthy();
+
+    await openWorkbench(page);
+    await expect(page.getByTestId('workbench-active-preplan-summary')).toContainText(`#${detail.run.run_id}`);
+    await ensureManualAdjustmentEnabled(page);
+    await openDraftVersion(page, detail.run.run_id);
+    await page.getByTestId('workbench-order-tab-scheduled').click();
+    const scheduledRow = page.getByTestId(`workbench-plan-order-${testIdPart(scheduledOrderId)}`);
+    await expect(scheduledRow).toBeVisible();
+    await scheduledRow.click();
+    await expect(page.getByTestId('workbench-locked-task-summary')).toBeVisible();
+    await expect(page.getByTestId('workbench-adjustment-impact-summary')).toBeVisible();
+    await expect(page.getByTestId('workbench-adjustment-reason-summary')).toContainText('E2E valid adjustment impact check');
+    const updated = await detailForRun(request, detail.run.run_id);
+    expect(updated.adjustment_impact_summary.adjustment_count).toBeGreaterThan(0);
+    expect(updated.locked_task_summary.locked_task_count).toBeGreaterThan(0);
+  });
+
   test('blocks publishing invalid drafts in UI and API', async ({ page, request }) => {
     const draft = await findDraft(
       request,

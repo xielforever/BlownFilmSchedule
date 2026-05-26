@@ -166,6 +166,11 @@ class ScheduleSettingsPayload(BaseModel):
     continuous_run_limit_mins: Optional[int] = None
     continuous_run_enforcement_mode: Optional[str] = None
     phase2_feasible_tardiness_tolerance_mins: Optional[int] = None
+    solver_phase1_tardiness_weight: Optional[int] = None
+    solver_phase1_late_order_penalty: Optional[int] = None
+    solver_phase2_tardiness_weight: Optional[int] = None
+    solver_max_late_order_count: Optional[int] = None
+    solver_max_weighted_tardiness: Optional[int] = None
     solver_profile: Optional[str] = None
     solver_time_limit_seconds: Optional[float] = None
     solver_relative_gap_limit: Optional[float] = None
@@ -181,6 +186,7 @@ class ScheduleSettingsPayload(BaseModel):
     candidate_reject_penalty: Optional[int] = None
     candidate_max_deferred_count: Optional[int] = None
     candidate_min_acceptance_ratio: Optional[float] = None
+    candidate_post_solve_late_defer_count: Optional[int] = None
     arc_pruning_enabled: Optional[bool] = None
     arc_pruning_max_setup_mins: Optional[int] = None
     arc_pruning_top_k_per_order: Optional[int] = None
@@ -228,6 +234,11 @@ POLICY_VALUE_KEYS = (
     "continuous_run_limit_mins",
     "continuous_run_enforcement_mode",
     "phase2_feasible_tardiness_tolerance_mins",
+    "solver_phase1_tardiness_weight",
+    "solver_phase1_late_order_penalty",
+    "solver_phase2_tardiness_weight",
+    "solver_max_late_order_count",
+    "solver_max_weighted_tardiness",
     "solver_profile",
     "solver_time_limit_seconds",
     "solver_relative_gap_limit",
@@ -243,6 +254,7 @@ POLICY_VALUE_KEYS = (
     "candidate_reject_penalty",
     "candidate_max_deferred_count",
     "candidate_min_acceptance_ratio",
+    "candidate_post_solve_late_defer_count",
     "arc_pruning_enabled",
     "arc_pruning_max_setup_mins",
     "arc_pruning_top_k_per_order",
@@ -278,6 +290,11 @@ POLICY_DEFAULTS = {
     "continuous_run_limit_mins": CONTINUOUS_RUN_LIMIT_MINUTES,
     "continuous_run_enforcement_mode": "publish_blocker",
     "phase2_feasible_tardiness_tolerance_mins": 0,
+    "solver_phase1_tardiness_weight": 10_000,
+    "solver_phase1_late_order_penalty": 0,
+    "solver_phase2_tardiness_weight": 0,
+    "solver_max_late_order_count": None,
+    "solver_max_weighted_tardiness": None,
     "solver_profile": "standard",
     "solver_time_limit_seconds": 120.0,
     "solver_relative_gap_limit": 0.0,
@@ -293,6 +310,7 @@ POLICY_DEFAULTS = {
     "candidate_reject_penalty": 10_000_000,
     "candidate_max_deferred_count": None,
     "candidate_min_acceptance_ratio": 0.0,
+    "candidate_post_solve_late_defer_count": 0,
     "arc_pruning_enabled": False,
     "arc_pruning_max_setup_mins": 0,
     "arc_pruning_top_k_per_order": 0,
@@ -412,6 +430,11 @@ def _ensure_planning_schema_locked(db):
             continuous_run_limit_mins           INTEGER NOT NULL DEFAULT 4320,
             continuous_run_enforcement_mode     VARCHAR(30) NOT NULL DEFAULT 'publish_blocker',
             phase2_feasible_tardiness_tolerance_mins INTEGER NOT NULL DEFAULT 0,
+            solver_phase1_tardiness_weight      INTEGER NOT NULL DEFAULT 10000,
+            solver_phase1_late_order_penalty    INTEGER NOT NULL DEFAULT 0,
+            solver_phase2_tardiness_weight      INTEGER NOT NULL DEFAULT 0,
+            solver_max_late_order_count         INTEGER,
+            solver_max_weighted_tardiness       INTEGER,
             solver_profile                      VARCHAR(30) NOT NULL DEFAULT 'standard',
             solver_time_limit_seconds           DOUBLE PRECISION NOT NULL DEFAULT 120,
             solver_relative_gap_limit           DOUBLE PRECISION NOT NULL DEFAULT 0,
@@ -427,6 +450,7 @@ def _ensure_planning_schema_locked(db):
             candidate_reject_penalty            INTEGER NOT NULL DEFAULT 10000000,
             candidate_max_deferred_count        INTEGER,
             candidate_min_acceptance_ratio      DOUBLE PRECISION NOT NULL DEFAULT 0,
+            candidate_post_solve_late_defer_count INTEGER NOT NULL DEFAULT 0,
             arc_pruning_enabled                 BOOLEAN NOT NULL DEFAULT FALSE,
             arc_pruning_max_setup_mins          INTEGER NOT NULL DEFAULT 0,
             arc_pruning_top_k_per_order         INTEGER NOT NULL DEFAULT 0,
@@ -460,6 +484,11 @@ def _ensure_planning_schema_locked(db):
             ADD COLUMN IF NOT EXISTS continuous_run_limit_mins INTEGER NOT NULL DEFAULT 4320,
             ADD COLUMN IF NOT EXISTS continuous_run_enforcement_mode VARCHAR(30) NOT NULL DEFAULT 'publish_blocker',
             ADD COLUMN IF NOT EXISTS phase2_feasible_tardiness_tolerance_mins INTEGER NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS solver_phase1_tardiness_weight INTEGER NOT NULL DEFAULT 10000,
+            ADD COLUMN IF NOT EXISTS solver_phase1_late_order_penalty INTEGER NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS solver_phase2_tardiness_weight INTEGER NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS solver_max_late_order_count INTEGER,
+            ADD COLUMN IF NOT EXISTS solver_max_weighted_tardiness INTEGER,
             ADD COLUMN IF NOT EXISTS solver_profile VARCHAR(30) NOT NULL DEFAULT 'standard',
             ADD COLUMN IF NOT EXISTS solver_time_limit_seconds DOUBLE PRECISION NOT NULL DEFAULT 120,
             ADD COLUMN IF NOT EXISTS solver_relative_gap_limit DOUBLE PRECISION NOT NULL DEFAULT 0,
@@ -475,6 +504,7 @@ def _ensure_planning_schema_locked(db):
             ADD COLUMN IF NOT EXISTS candidate_reject_penalty INTEGER NOT NULL DEFAULT 10000000,
             ADD COLUMN IF NOT EXISTS candidate_max_deferred_count INTEGER,
             ADD COLUMN IF NOT EXISTS candidate_min_acceptance_ratio DOUBLE PRECISION NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS candidate_post_solve_late_defer_count INTEGER NOT NULL DEFAULT 0,
             ADD COLUMN IF NOT EXISTS arc_pruning_enabled BOOLEAN NOT NULL DEFAULT FALSE,
             ADD COLUMN IF NOT EXISTS arc_pruning_max_setup_mins INTEGER NOT NULL DEFAULT 0,
             ADD COLUMN IF NOT EXISTS arc_pruning_top_k_per_order INTEGER NOT NULL DEFAULT 0,
@@ -622,6 +652,9 @@ def _get_schedule_settings(db):
             cleanroom_constraint_enabled, machine_capability_constraint_enabled,
             due_date_optimization_enabled, continuous_run_limit_mins,
             continuous_run_enforcement_mode, phase2_feasible_tardiness_tolerance_mins,
+            solver_phase1_tardiness_weight, solver_phase1_late_order_penalty,
+            solver_phase2_tardiness_weight, solver_max_late_order_count,
+            solver_max_weighted_tardiness,
             solver_profile, solver_time_limit_seconds, solver_relative_gap_limit,
             solver_random_seed, solver_num_workers, solver_log_search_progress,
             planning_must_schedule_horizon_days, planning_candidate_horizon_days,
@@ -629,7 +662,7 @@ def _get_schedule_settings(db):
             planning_force_must_order_classes, planning_force_must_customer_classes,
             planning_scarce_machine_threshold,
             candidate_reject_penalty, candidate_max_deferred_count,
-            candidate_min_acceptance_ratio,
+            candidate_min_acceptance_ratio, candidate_post_solve_late_defer_count,
             arc_pruning_enabled, arc_pruning_max_setup_mins,
             arc_pruning_top_k_per_order,
             arc_pruning_same_material_family_top_k,
@@ -726,6 +759,19 @@ def _policy_snapshot(settings: dict, enabled_rule_counts: dict | None = None) ->
             "phase2_feasible_tardiness_tolerance_mins": int(
                 settings.get("phase2_feasible_tardiness_tolerance_mins") or 0
             ),
+            "phase1_tardiness_weight": max(1, int(settings.get("solver_phase1_tardiness_weight") or 10_000)),
+            "phase1_late_order_penalty": max(0, int(settings.get("solver_phase1_late_order_penalty") or 0)),
+            "phase2_tardiness_weight": max(0, int(settings.get("solver_phase2_tardiness_weight") or 0)),
+            "max_late_order_count": (
+                None
+                if settings.get("solver_max_late_order_count") is None
+                else max(0, int(settings.get("solver_max_late_order_count")))
+            ),
+            "max_weighted_tardiness": (
+                None
+                if settings.get("solver_max_weighted_tardiness") is None
+                else max(0, int(settings.get("solver_max_weighted_tardiness")))
+            ),
         },
         "solver_profile": {
             "profile": str(settings.get("solver_profile") or "standard"),
@@ -759,6 +805,10 @@ def _policy_snapshot(settings: dict, enabled_rule_counts: dict | None = None) ->
             "reject_penalty": int(settings.get("candidate_reject_penalty") or 10_000_000),
             "max_deferred_count": _candidate_max_deferred_count(settings),
             "min_acceptance_ratio": _candidate_min_acceptance_ratio(settings),
+            "post_solve_late_defer_count": max(
+                0,
+                int(settings.get("candidate_post_solve_late_defer_count") or 0),
+            ),
         },
         "arc_pruning": {
             "enabled": bool(settings.get("arc_pruning_enabled", False)),
@@ -869,6 +919,19 @@ def _build_scheduler(setup_mgr, settings: dict) -> AdvancedMedicalAPS:
             "phase2_feasible_tardiness_tolerance_mins": int(
                 settings.get("phase2_feasible_tardiness_tolerance_mins") or 0
             ),
+            "phase1_tardiness_weight": max(1, int(settings.get("solver_phase1_tardiness_weight") or 10_000)),
+            "phase1_late_order_penalty": max(0, int(settings.get("solver_phase1_late_order_penalty") or 0)),
+            "phase2_tardiness_weight": max(0, int(settings.get("solver_phase2_tardiness_weight") or 0)),
+            "max_late_order_count": (
+                None
+                if settings.get("solver_max_late_order_count") is None
+                else max(0, int(settings.get("solver_max_late_order_count")))
+            ),
+            "max_weighted_tardiness": (
+                None
+                if settings.get("solver_max_weighted_tardiness") is None
+                else max(0, int(settings.get("solver_max_weighted_tardiness")))
+            ),
         },
         solver_profile_policy={
             "profile": str(settings.get("solver_profile") or "standard"),
@@ -882,6 +945,10 @@ def _build_scheduler(setup_mgr, settings: dict) -> AdvancedMedicalAPS:
             "reject_penalty": int(settings.get("candidate_reject_penalty") or 10_000_000),
             "max_deferred_count": _candidate_max_deferred_count(settings),
             "min_acceptance_ratio": _candidate_min_acceptance_ratio(settings),
+            "post_solve_late_defer_count": max(
+                0,
+                int(settings.get("candidate_post_solve_late_defer_count") or 0),
+            ),
         },
         arc_pruning_policy={
             "enabled": bool(settings.get("arc_pruning_enabled", False)),
@@ -1374,6 +1441,7 @@ def _locked_task_rows_to_solver_inputs(rows, orders, machines) -> list[Scheduled
         if machine is None:
             continue
         order = orders_by_id.get(row.get("order_id")) or _locked_external_order_from_row(row)
+        started = bool(row.get("started_at")) or str(row.get("queue_status") or "").upper() == "IN_PRODUCTION"
         locked_tasks.append(ScheduledTask(
             order,
             machine,
@@ -1382,8 +1450,8 @@ def _locked_task_rows_to_solver_inputs(rows, orders, machines) -> list[Scheduled
             int(row.get("setup_time_mins") or 0),
             float(row.get("scrap_kg") or 0),
             int(row.get("sequence_index") or 0),
-            manual_lock_machine=bool(row.get("manual_lock_machine")),
-            manual_lock_time=bool(row.get("manual_lock_time")),
+            manual_lock_machine=started or bool(row.get("manual_lock_machine")),
+            manual_lock_time=started or bool(row.get("manual_lock_time")),
         ))
     return locked_tasks
 
@@ -1394,17 +1462,23 @@ def _load_preplan_locked_tasks(cur, orders, machines) -> list[ScheduledTask]:
             t.order_id, t.machine_id, t.start_mins, t.end_mins,
             t.setup_time_mins, t.scrap_kg, t.sequence_index,
             t.manual_lock_machine, t.manual_lock_time,
+            q.queue_status, q.started_at,
             o.product_type, o.target_width, o.target_thickness,
             o.total_quantity_kg, o.cleanroom_req, o.order_class,
             o.corona_req, o.core_size_inch,
             COALESCE(c.customer_class, 'STANDARD') AS customer_class
         FROM scheduled_tasks t
         JOIN schedule_runs r ON r.run_id=t.run_id
+        LEFT JOIN manufacturing_queue q ON q.scheduled_task_id=t.id
         LEFT JOIN production_orders o ON o.order_id=t.order_id
         LEFT JOIN customers c ON c.customer_id=o.customer_id
         WHERE COALESCE(r.lifecycle_status, 'CONFIRMED') IN ('VALIDATED', 'CONFIRMED')
-          AND (COALESCE(t.manual_lock_machine, FALSE)=TRUE
-               OR COALESCE(t.manual_lock_time, FALSE)=TRUE)
+          AND (
+              COALESCE(t.manual_lock_machine, FALSE)=TRUE
+              OR COALESCE(t.manual_lock_time, FALSE)=TRUE
+              OR COALESCE(q.queue_status, '')='IN_PRODUCTION'
+              OR q.started_at IS NOT NULL
+          )
         ORDER BY t.order_id, r.run_id DESC, t.id DESC
     """)
     return _locked_task_rows_to_solver_inputs(cur.fetchall(), orders, machines)
@@ -2428,6 +2502,7 @@ def _calculate_candidate_setup_start(
     with DatabaseManager() as manager:
         machines, orders, _, setup_mgr = manager.load_master_data(
             order_statuses=("PENDING", "SCHEDULED"),
+            ensure_rule_schema=False,
         )
         machine_map = {machine.machine_id: machine for machine in machines}
         order_map = {order.order_id: order for order in orders}
@@ -2487,6 +2562,7 @@ def _recalculate_machine_setup_fields(db, run_id: int, machine_ids: list[str]):
     with DatabaseManager() as manager:
         machines, orders, _, setup_mgr = manager.load_master_data(
             order_statuses=("PENDING", "SCHEDULED"),
+            ensure_rule_schema=False,
         )
     machine_map = {machine.machine_id: machine for machine in machines}
     order_map = {order.order_id: order for order in orders}
@@ -3896,9 +3972,19 @@ def update_schedule_settings(
         elif key == "continuous_run_limit_mins":
             assignments.append(f"{key}=%s")
             params.append(max(1, int(value)))
-        elif key == "phase2_feasible_tardiness_tolerance_mins":
+        elif key in {
+            "phase2_feasible_tardiness_tolerance_mins",
+            "solver_phase1_late_order_penalty",
+            "solver_phase2_tardiness_weight",
+            "solver_max_late_order_count",
+            "solver_max_weighted_tardiness",
+            "candidate_post_solve_late_defer_count",
+        }:
             assignments.append(f"{key}=%s")
-            params.append(max(0, int(value)))
+            params.append(None if value is None else max(0, int(value)))
+        elif key == "solver_phase1_tardiness_weight":
+            assignments.append(f"{key}=%s")
+            params.append(max(1, int(value)))
         elif key == "solver_profile":
             profile = str(value or "standard")
             if profile not in {"fast", "standard", "deep"}:

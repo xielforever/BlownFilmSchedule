@@ -26,6 +26,11 @@ test('buildSchedulePolicyPayload includes solver, bucket, screening and review s
     due_date_optimization_enabled: true,
     continuous_run_limit_mins: 4320,
     phase2_feasible_tardiness_tolerance_mins: 30,
+    solver_phase1_tardiness_weight: 10000,
+    solver_phase1_late_order_penalty: 500,
+    solver_phase2_tardiness_weight: 1000,
+    solver_max_late_order_count: 83,
+    solver_max_weighted_tardiness: 879599,
     solver_time_limit_seconds: 45,
     solver_relative_gap_limit: 0.05,
     solver_random_seed: 11,
@@ -39,6 +44,7 @@ test('buildSchedulePolicyPayload includes solver, bucket, screening and review s
     candidate_reject_penalty: 5000,
     candidate_max_deferred_count: 3,
     candidate_min_acceptance_ratio: 0.75,
+    candidate_post_solve_late_defer_count: 7,
     arc_pruning_max_setup_mins: 180,
     arc_pruning_top_k_per_order: 4,
     arc_pruning_same_material_family_top_k: 2,
@@ -60,8 +66,13 @@ test('buildSchedulePolicyPayload includes solver, bucket, screening and review s
 
   assert.equal(payload.change_reason, '业务策略调优');
   assert.equal(payload.solver_time_limit_seconds, 45);
+  assert.equal(payload.solver_phase1_late_order_penalty, 500);
+  assert.equal(payload.solver_phase2_tardiness_weight, 1000);
+  assert.equal(payload.solver_max_late_order_count, 83);
+  assert.equal(payload.solver_max_weighted_tardiness, 879599);
   assert.equal(payload.candidate_max_deferred_count, 3);
   assert.equal(payload.candidate_min_acceptance_ratio, 0.75);
+  assert.equal(payload.candidate_post_solve_late_defer_count, 7);
   assert.equal(payload.arc_pruning_same_material_family_top_k, 2);
   assert.equal(payload.arc_pruning_same_cleanroom_top_k, 2);
   assert.equal(payload.arc_pruning_due_window_mins, 1440);

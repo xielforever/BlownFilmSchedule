@@ -342,6 +342,11 @@ class TestSchedulePolicySettings(unittest.TestCase):
             },
             solver_quality_policy={
                 "phase2_feasible_tardiness_tolerance_mins": 20,
+                "phase1_tardiness_weight": 10000,
+                "phase1_late_order_penalty": 0,
+                "phase2_tardiness_weight": 0,
+                "max_late_order_count": None,
+                "max_weighted_tardiness": None,
             },
             solver_profile_policy={
                 "profile": "fast",
@@ -355,6 +360,7 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "reject_penalty": 1234,
                 "max_deferred_count": 2,
                 "min_acceptance_ratio": 0.5,
+                "post_solve_late_defer_count": 0,
             },
             arc_pruning_policy={
                 "enabled": True,
@@ -1169,6 +1175,60 @@ class TestSchedulePolicySettings(unittest.TestCase):
         self.assertFalse(locked_tasks[0].manual_lock_time)
         self.assertEqual(locked_tasks[1].order.product_type, "LOCKED_EXTERNAL")
         self.assertTrue(locked_tasks[1].manual_lock_time)
+
+    def test_in_production_queue_rows_become_machine_and_time_locked_inputs(self):
+        order = ProductionOrderModel(
+            order_id="ORD-STARTED-API",
+            product_type="Film-A",
+            target_width=520,
+            target_thickness=35,
+            total_quantity_kg=1200,
+            cleanroom_req="Class_10K",
+            customer_class="STANDARD",
+            order_class="NORMAL",
+            corona_req=False,
+            core_size_inch=3,
+            due_date_mins=1440,
+            recipe_materials=["L1", "L2", "L3"],
+        )
+        machine = BlownFilmMachineModel(
+            machine_id="LINE-A",
+            name="LINE-A",
+            cleanroom_level="Class_10K",
+            layer_structure=5,
+            die_diameter_mm=300,
+            min_width=100,
+            max_width=1500,
+            min_thickness=20,
+            max_thickness=80,
+            hourly_output_kg=600,
+            max_slitting_lanes=4,
+        )
+
+        locked_tasks = schedule_router._locked_task_rows_to_solver_inputs(
+            [
+                {
+                    "order_id": "ORD-STARTED-API",
+                    "machine_id": "LINE-A",
+                    "start_mins": 120,
+                    "end_mins": 240,
+                    "setup_time_mins": 30,
+                    "scrap_kg": 2,
+                    "sequence_index": 3,
+                    "manual_lock_machine": False,
+                    "manual_lock_time": False,
+                    "queue_status": "IN_PRODUCTION",
+                    "started_at": datetime(2026, 5, 23, 8, 0),
+                },
+            ],
+            orders=[order],
+            machines=[machine],
+        )
+
+        self.assertEqual(len(locked_tasks), 1)
+        self.assertEqual(locked_tasks[0].order.order_id, "ORD-STARTED-API")
+        self.assertTrue(locked_tasks[0].manual_lock_machine)
+        self.assertTrue(locked_tasks[0].manual_lock_time)
 
     def test_manual_adjustment_impact_summarizes_move_cost(self):
         impact = schedule_router._manual_adjustment_impact(

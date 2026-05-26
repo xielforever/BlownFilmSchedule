@@ -56,8 +56,17 @@ class BenchmarkCase:
     max_wall_time_seconds: float = 120.0
     solver_time_limit_seconds: float | None = None
     solver_phase1_time_budget_ratio: float | None = None
+    solver_phase1_tardiness_weight: int = 10_000
+    solver_phase1_late_order_penalty: int = 0
+    solver_phase2_tardiness_weight: int = 0
+    solver_max_late_order_count: int | None = None
+    solver_max_weighted_tardiness: int | None = None
     max_gap: float | None = None
     min_scheduled_ratio: float = 0.0
+    candidate_reject_penalty: int = 10_000_000
+    candidate_max_deferred_count: int | None = None
+    candidate_min_acceptance_ratio: float = 0.0
+    candidate_post_solve_late_defer_count: int = 0
     max_late_order_count: int | None = None
     max_weighted_tardiness: int | None = None
     max_total_setup_time_mins: int | None = None
@@ -96,8 +105,17 @@ def _case_config(case: BenchmarkCase) -> dict:
         "max_wall_time_seconds": case.max_wall_time_seconds,
         "solver_time_limit_seconds": _solver_time_limit_seconds(case),
         "solver_phase1_time_budget_ratio": _solver_phase1_time_budget_ratio(case),
+        "solver_phase1_tardiness_weight": _solver_phase1_tardiness_weight(case),
+        "solver_phase1_late_order_penalty": _solver_phase1_late_order_penalty(case),
+        "solver_phase2_tardiness_weight": _solver_phase2_tardiness_weight(case),
+        "solver_max_late_order_count": _solver_max_late_order_count(case),
+        "solver_max_weighted_tardiness": _solver_max_weighted_tardiness(case),
         "max_gap": case.max_gap,
         "min_scheduled_ratio": case.min_scheduled_ratio,
+        "candidate_reject_penalty": _candidate_reject_penalty(case),
+        "candidate_max_deferred_count": _candidate_max_deferred_count(case),
+        "candidate_min_acceptance_ratio": _candidate_min_acceptance_ratio(case),
+        "candidate_post_solve_late_defer_count": _candidate_post_solve_late_defer_count(case),
         "max_late_order_count": case.max_late_order_count,
         "max_weighted_tardiness": case.max_weighted_tardiness,
         "max_total_setup_time_mins": case.max_total_setup_time_mins,
@@ -137,6 +155,33 @@ def _profile_acceptance_policy(case: BenchmarkCase) -> dict:
     }
 
 
+def _candidate_reject_penalty(case: BenchmarkCase) -> int:
+    return max(0, int(case.candidate_reject_penalty))
+
+
+def _candidate_max_deferred_count(case: BenchmarkCase) -> int | None:
+    if case.candidate_max_deferred_count is None:
+        return None
+    return max(0, int(case.candidate_max_deferred_count))
+
+
+def _candidate_min_acceptance_ratio(case: BenchmarkCase) -> float:
+    return min(1.0, max(0.0, float(case.candidate_min_acceptance_ratio)))
+
+
+def _candidate_post_solve_late_defer_count(case: BenchmarkCase) -> int:
+    return max(0, int(case.candidate_post_solve_late_defer_count))
+
+
+def _candidate_acceptance_policy(case: BenchmarkCase) -> dict:
+    return {
+        "reject_penalty": _candidate_reject_penalty(case),
+        "max_deferred_count": _candidate_max_deferred_count(case),
+        "min_acceptance_ratio": _candidate_min_acceptance_ratio(case),
+        "post_solve_late_defer_count": _candidate_post_solve_late_defer_count(case),
+    }
+
+
 def _solver_time_limit_seconds(case: BenchmarkCase) -> float:
     if case.solver_time_limit_seconds is not None:
         return max(0.1, float(case.solver_time_limit_seconds))
@@ -147,6 +192,30 @@ def _solver_phase1_time_budget_ratio(case: BenchmarkCase) -> float:
     if case.solver_phase1_time_budget_ratio is not None:
         return min(0.95, max(0.05, float(case.solver_phase1_time_budget_ratio)))
     return 0.5
+
+
+def _solver_phase1_tardiness_weight(case: BenchmarkCase) -> int:
+    return max(1, int(case.solver_phase1_tardiness_weight))
+
+
+def _solver_phase1_late_order_penalty(case: BenchmarkCase) -> int:
+    return max(0, int(case.solver_phase1_late_order_penalty))
+
+
+def _solver_phase2_tardiness_weight(case: BenchmarkCase) -> int:
+    return max(0, int(case.solver_phase2_tardiness_weight))
+
+
+def _solver_max_late_order_count(case: BenchmarkCase) -> int | None:
+    if case.solver_max_late_order_count is None:
+        return None
+    return max(0, int(case.solver_max_late_order_count))
+
+
+def _solver_max_weighted_tardiness(case: BenchmarkCase) -> int | None:
+    if case.solver_max_weighted_tardiness is None:
+        return None
+    return max(0, int(case.solver_max_weighted_tardiness))
 
 
 def _make_machine(index: int) -> BlownFilmMachineModel:
@@ -272,6 +341,7 @@ def _deferred_reason_counts(deferred_orders) -> dict[str, int]:
 def run_benchmark_case(case: BenchmarkCase) -> dict:
     orders, machines, setup_mgr = build_benchmark_dataset(case)
     profile_acceptance_policy = _profile_acceptance_policy(case)
+    candidate_acceptance_policy = _candidate_acceptance_policy(case)
     solver_profile_policy = {
         "profile": case.profile,
         "time_limit_seconds": _solver_time_limit_seconds(case),
@@ -281,10 +351,19 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
         "num_workers": 8,
         "log_search_progress": False,
     }
+    solver_quality_policy = {
+        "phase2_feasible_tardiness_tolerance_mins": 0,
+        "phase1_tardiness_weight": _solver_phase1_tardiness_weight(case),
+        "phase1_late_order_penalty": _solver_phase1_late_order_penalty(case),
+        "phase2_tardiness_weight": _solver_phase2_tardiness_weight(case),
+        "max_late_order_count": _solver_max_late_order_count(case),
+        "max_weighted_tardiness": _solver_max_weighted_tardiness(case),
+    }
     aps = AdvancedMedicalAPS(
         setup_mgr,
         solver_profile_policy=solver_profile_policy,
-        candidate_acceptance_policy={"reject_penalty": 10_000_000},
+        solver_quality_policy=solver_quality_policy,
+        candidate_acceptance_policy=candidate_acceptance_policy,
         arc_pruning_policy={
             "enabled": case.arc_pruning_enabled,
             "max_setup_time_mins": case.arc_pruning_max_setup_mins,
@@ -380,6 +459,8 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
             "max_pruning_setup_time_delta_mins": case.max_pruning_setup_time_delta_mins,
         },
         "profile_acceptance_policy": profile_acceptance_policy,
+        "solver_quality_policy": solver_quality_policy,
+        "candidate_acceptance_policy": candidate_acceptance_policy,
         "solver_profile_policy": solver_profile_policy,
         "arc_pruning_policy": {
             "enabled": case.arc_pruning_enabled,
@@ -821,11 +902,34 @@ def _common_case_options(args, profile: str, count: int) -> dict:
             if args.solver_phase1_time_budget_ratio is None
             else min(0.95, max(0.05, float(args.solver_phase1_time_budget_ratio)))
         ),
+        "solver_phase1_tardiness_weight": max(1, int(args.solver_phase1_tardiness_weight)),
+        "solver_phase1_late_order_penalty": max(0, int(args.solver_phase1_late_order_penalty)),
+        "solver_phase2_tardiness_weight": max(0, int(args.solver_phase2_tardiness_weight)),
+        "solver_max_late_order_count": (
+            None if args.solver_max_late_order_count is None else max(0, int(args.solver_max_late_order_count))
+        ),
+        "solver_max_weighted_tardiness": (
+            None if args.solver_max_weighted_tardiness is None else max(0, int(args.solver_max_weighted_tardiness))
+        ),
         "max_gap": defaults["max_gap"] if args.max_gap is None else args.max_gap,
         "min_scheduled_ratio": (
             defaults["min_scheduled_ratio"]
             if args.min_scheduled_ratio is None
             else max(0.0, float(args.min_scheduled_ratio))
+        ),
+        "candidate_reject_penalty": max(0, int(args.candidate_reject_penalty)),
+        "candidate_max_deferred_count": (
+            None
+            if args.candidate_max_deferred_count is None
+            else max(0, int(args.candidate_max_deferred_count))
+        ),
+        "candidate_min_acceptance_ratio": min(
+            1.0,
+            max(0.0, float(args.candidate_min_acceptance_ratio)),
+        ),
+        "candidate_post_solve_late_defer_count": max(
+            0,
+            int(args.candidate_post_solve_late_defer_count),
         ),
         "max_late_order_count": (
             None if args.max_late_order_count is None else max(0, int(args.max_late_order_count))
@@ -889,8 +993,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-wall-time-seconds", type=float, default=None)
     parser.add_argument("--solver-time-limit-seconds", type=float, default=None)
     parser.add_argument("--solver-phase1-time-budget-ratio", type=float, default=None)
+    parser.add_argument("--solver-phase1-tardiness-weight", type=int, default=10_000)
+    parser.add_argument("--solver-phase1-late-order-penalty", type=int, default=0)
+    parser.add_argument("--solver-phase2-tardiness-weight", type=int, default=0)
+    parser.add_argument("--solver-max-late-order-count", type=int, default=None)
+    parser.add_argument("--solver-max-weighted-tardiness", type=int, default=None)
     parser.add_argument("--max-gap", type=float, default=None)
     parser.add_argument("--min-scheduled-ratio", type=float, default=None)
+    parser.add_argument("--candidate-reject-penalty", type=int, default=10_000_000)
+    parser.add_argument("--candidate-max-deferred-count", type=int, default=None)
+    parser.add_argument("--candidate-min-acceptance-ratio", type=float, default=0.0)
+    parser.add_argument("--candidate-post-solve-late-defer-count", type=int, default=0)
     parser.add_argument("--max-late-order-count", type=int, default=None)
     parser.add_argument("--max-weighted-tardiness", type=int, default=None)
     parser.add_argument("--max-total-setup-time-mins", type=int, default=None)

@@ -377,6 +377,64 @@ class TestSchedulerSequencing(unittest.TestCase):
         overlaps_locked = task.start_mins < locked_task.end_mins and task.end_mins > locked_task.start_mins
         self.assertFalse(overlaps_locked)
 
+    def test_external_locked_task_reserves_setup_gap_for_remaining_tasks(self):
+        external_order = _make_order("ORD-EXTERNAL-SETUP")
+        order = _make_order("ORD-AFTER-EXTERNAL-SETUP")
+        machine = _make_machine()
+        locked_task = ScheduledTask(
+            external_order,
+            machine,
+            start_mins=120,
+            end_mins=240,
+            setup_time=0,
+            scrap_kg=0,
+            sequence_index=0,
+        )
+        aps = AdvancedMedicalAPS(_make_setup_mgr())
+
+        result = aps.run([order], [machine], locked_tasks=[locked_task])
+
+        self.assertIn(result.status, {"OPTIMAL", "FEASIBLE"})
+        task = result.tasks[0]
+        setup_after_external = aps.setup_calc.calculate_setup_time(external_order, order, machine)
+        setup_before_external = aps.setup_calc.calculate_setup_time(order, external_order, machine)
+        before_with_setup = task.end_mins + setup_before_external <= locked_task.start_mins
+        after_with_setup = task.start_mins >= locked_task.end_mins + setup_after_external
+        self.assertTrue(
+            before_with_setup or after_with_setup,
+            f"external locked task did not reserve setup gap: task={task.start_mins}-{task.end_mins}, "
+            f"locked={locked_task.start_mins}-{locked_task.end_mins}",
+        )
+
+    def test_locked_early_shift_replan_keeps_urgent_insert_off_locked_window(self):
+        locked_order = _make_order("ORD-EARLY-LOCKED", dueDateMins=800)
+        urgent = _make_order("ORD-URGENT-INSERT", orderClass="URGENT", dueDateMins=420)
+        normal = _make_order("ORD-NORMAL-REMAINING", dueDateMins=900)
+        machine = _make_machine()
+        locked_task = ScheduledTask(
+            locked_order,
+            machine,
+            start_mins=120,
+            end_mins=180,
+            setup_time=120,
+            scrap_kg=0,
+            sequence_index=0,
+            manual_lock_machine=True,
+            manual_lock_time=True,
+        )
+        aps = AdvancedMedicalAPS(_make_setup_mgr())
+
+        result = aps.run([locked_order, urgent, normal], [machine], locked_tasks=[locked_task])
+
+        self.assertIn(result.status, {"OPTIMAL", "FEASIBLE"})
+        by_order = {task.order.order_id: task for task in result.tasks}
+        self.assertEqual(by_order["ORD-EARLY-LOCKED"].start_mins, 120)
+        self.assertEqual(by_order["ORD-EARLY-LOCKED"].end_mins, 180)
+        for order_id in ["ORD-URGENT-INSERT", "ORD-NORMAL-REMAINING"]:
+            task = by_order[order_id]
+            overlaps_locked = task.start_mins < locked_task.end_mins and task.end_mins > locked_task.start_mins
+            self.assertFalse(overlaps_locked, f"{order_id} overlapped locked early-shift task")
+
     def test_solver_metrics_record_locked_task_counts(self):
         locked_order = _make_order("ORD-LOCKED-METRIC")
         external_order = _make_order("ORD-EXTERNAL-METRIC")
@@ -524,6 +582,73 @@ class TestSchedulerSequencing(unittest.TestCase):
         self.assertEqual(aps._phase2_tardiness_bound(120, "FEASIBLE"), 150)
         self.assertEqual(aps._phase2_tardiness_bound(120, "UNKNOWN"), 150)
 
+    def test_solver_quality_policy_normalizes_phase2_tardiness_weight(self):
+        aps = AdvancedMedicalAPS(
+            _make_setup_mgr(),
+            solver_quality_policy={
+                "phase2_feasible_tardiness_tolerance_mins": 30,
+                "phase2_tardiness_weight": 250,
+                "phase1_tardiness_weight": 8000,
+                "phase1_late_order_penalty": 500,
+                "max_late_order_count": 3,
+                "max_weighted_tardiness": 1200,
+                "post_solve_late_candidate_defer_count": 2,
+            },
+        )
+
+        self.assertEqual(aps.solver_quality_policy["phase2_tardiness_weight"], 250)
+        self.assertEqual(aps.solver_quality_policy["phase1_tardiness_weight"], 8000)
+        self.assertEqual(aps.solver_quality_policy["phase1_late_order_penalty"], 500)
+        self.assertEqual(aps.solver_quality_policy["max_late_order_count"], 3)
+        self.assertEqual(aps.solver_quality_policy["max_weighted_tardiness"], 1200)
+        self.assertEqual(aps.candidate_acceptance_policy["post_solve_late_defer_count"], 0)
+
+        fallback = AdvancedMedicalAPS(
+            _make_setup_mgr(),
+            solver_quality_policy={
+                "phase2_tardiness_weight": -1,
+                "phase1_tardiness_weight": -1,
+                "phase1_late_order_penalty": -1,
+                "max_late_order_count": -1,
+                "max_weighted_tardiness": -1,
+            },
+        )
+
+        self.assertEqual(fallback.solver_quality_policy["phase2_tardiness_weight"], 0)
+        self.assertEqual(fallback.solver_quality_policy["phase1_tardiness_weight"], 10000)
+        self.assertEqual(fallback.solver_quality_policy["phase1_late_order_penalty"], 0)
+        self.assertIsNone(fallback.solver_quality_policy["max_late_order_count"])
+        self.assertIsNone(fallback.solver_quality_policy["max_weighted_tardiness"])
+
+    def test_model_size_records_solver_quality_policy(self):
+        orders = [_make_order("ORD-QUALITY-POLICY")]
+        machine = _make_machine()
+        aps = AdvancedMedicalAPS(
+            _make_setup_mgr(),
+            solver_quality_policy={
+                "phase2_feasible_tardiness_tolerance_mins": 15,
+                "phase2_tardiness_weight": 125,
+                "phase1_tardiness_weight": 9000,
+                "phase1_late_order_penalty": 700,
+                "max_late_order_count": 2,
+                "max_weighted_tardiness": 1000,
+            },
+        )
+
+        result = aps.run(orders, [machine])
+
+        self.assertEqual(
+            result.solver_metrics["model_size"]["solver_quality_policy"],
+            {
+                "phase2_feasible_tardiness_tolerance_mins": 15,
+                "phase2_tardiness_weight": 125,
+                "phase1_tardiness_weight": 9000,
+                "phase1_late_order_penalty": 700,
+                "max_late_order_count": 2,
+                "max_weighted_tardiness": 1000,
+            },
+        )
+
     def test_candidate_order_can_be_deferred_without_invalidating_schedule(self):
         must = _make_order("ORD-MUST")
         candidate = _make_order(
@@ -633,6 +758,7 @@ class TestSchedulerSequencing(unittest.TestCase):
                 "reject_penalty": 123,
                 "max_deferred_count": 1,
                 "min_acceptance_ratio": 0.5,
+                "post_solve_late_defer_count": 2,
             },
         )
 
@@ -644,8 +770,33 @@ class TestSchedulerSequencing(unittest.TestCase):
                 "reject_penalty": 123,
                 "max_deferred_count": 1,
                 "min_acceptance_ratio": 0.5,
+                "post_solve_late_defer_count": 2,
             },
         )
+
+    def test_post_solve_late_candidate_defer_removes_late_candidate(self):
+        must = _make_order("ORD-MUST-POST-DEFER")
+        candidate = _make_order(
+            "ORD-CANDIDATE-POST-DEFER",
+            planningBucket="candidate",
+            dueDateMins=1,
+        )
+        machine = _make_machine()
+        aps = AdvancedMedicalAPS(
+            _make_setup_mgr(),
+            candidate_acceptance_policy={
+                "reject_penalty": 10000000,
+                "max_deferred_count": 0,
+                "post_solve_late_defer_count": 1,
+            },
+        )
+
+        result = aps.run([must, candidate], [machine])
+
+        self.assertIn(result.status, {"OPTIMAL", "FEASIBLE", "PARTIAL", "UNPUBLISHABLE"})
+        self.assertNotIn("ORD-CANDIDATE-POST-DEFER", {task.order.order_id for task in result.tasks})
+        self.assertEqual(result.deferred_orders[-1]["order_id"], "ORD-CANDIDATE-POST-DEFER")
+        self.assertEqual(result.deferred_orders[-1]["reason"], "candidate_late_post_solve_deferred")
 
     def test_solver_profile_policy_sets_cp_sat_parameters(self):
         aps = AdvancedMedicalAPS(
