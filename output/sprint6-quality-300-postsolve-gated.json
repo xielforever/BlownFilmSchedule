@@ -1,0 +1,325 @@
+{
+  "schema_version": "solver-benchmark-v1",
+  "generated_at": "2026-05-26T03:30:50Z",
+  "status": "PASS",
+  "case_count": 1,
+  "passed_count": 1,
+  "failed_count": 0,
+  "case_configs": [
+    {
+      "name": "fast-300",
+      "order_count": 300,
+      "machine_count": 4,
+      "profile": "fast",
+      "max_wall_time_seconds": 130.0,
+      "solver_time_limit_seconds": 114.0,
+      "solver_phase1_time_budget_ratio": 0.5,
+      "solver_phase1_tardiness_weight": 10000,
+      "solver_phase1_late_order_penalty": 0,
+      "solver_phase2_tardiness_weight": 1000,
+      "solver_max_late_order_count": null,
+      "solver_max_weighted_tardiness": null,
+      "max_gap": null,
+      "min_scheduled_ratio": 0.976,
+      "candidate_reject_penalty": 10000000,
+      "candidate_max_deferred_count": 0,
+      "candidate_min_acceptance_ratio": 0.0,
+      "candidate_post_solve_late_defer_count": 7,
+      "max_late_order_count": 83,
+      "max_weighted_tardiness": 879599,
+      "max_total_setup_time_mins": null,
+      "max_pruning_late_order_delta": null,
+      "max_pruning_weighted_tardiness_delta": null,
+      "max_pruning_setup_time_delta_mins": null,
+      "profile_acceptance_policy": {
+        "profile": "fast",
+        "max_wall_time_seconds": 130.0,
+        "max_gap": null,
+        "min_scheduled_ratio": 0.976,
+        "max_late_order_count": 83,
+        "max_weighted_tardiness": 879599,
+        "max_total_setup_time_mins": null
+      },
+      "arc_pruning_enabled": true,
+      "arc_pruning_max_setup_mins": 999,
+      "arc_pruning_top_k_per_order": 32,
+      "arc_pruning_same_material_family_top_k": 16,
+      "arc_pruning_same_cleanroom_top_k": 16,
+      "arc_pruning_due_window_mins": 4320,
+      "arc_pruning_due_window_top_k": 16
+    }
+  ],
+  "cases": [
+    {
+      "name": "fast-300",
+      "order_count": 300,
+      "machine_count": 4,
+      "profile": "fast",
+      "comparison_group": null,
+      "comparison_variant": null,
+      "solver_status": "UNPUBLISHABLE",
+      "passed": true,
+      "scheduled_order_count": 293,
+      "deferred_order_count": 7,
+      "deferred_reason_counts": {
+        "candidate_late_post_solve_deferred": 7
+      },
+      "blocked_order_count": 0,
+      "scheduled_ratio": 0.9766666666666667,
+      "min_scheduled_ratio": 0.976,
+      "wall_time_seconds": 114.2104223,
+      "gap": 0.9998500299940012,
+      "late_order_count": 77,
+      "weighted_tardiness": 757100,
+      "total_setup_time_mins": 9150,
+      "cleaning_diagnostics": {
+        "required_count": 4,
+        "disabled_count": 0
+      },
+      "quality_thresholds": {
+        "max_late_order_count": 83,
+        "max_weighted_tardiness": 879599,
+        "max_total_setup_time_mins": null,
+        "max_pruning_late_order_delta": null,
+        "max_pruning_weighted_tardiness_delta": null,
+        "max_pruning_setup_time_delta_mins": null
+      },
+      "profile_acceptance_policy": {
+        "profile": "fast",
+        "max_wall_time_seconds": 130.0,
+        "max_gap": null,
+        "min_scheduled_ratio": 0.976,
+        "max_late_order_count": 83,
+        "max_weighted_tardiness": 879599,
+        "max_total_setup_time_mins": null
+      },
+      "solver_quality_policy": {
+        "phase2_feasible_tardiness_tolerance_mins": 0,
+        "phase1_tardiness_weight": 10000,
+        "phase1_late_order_penalty": 0,
+        "phase2_tardiness_weight": 1000,
+        "max_late_order_count": null,
+        "max_weighted_tardiness": null
+      },
+      "candidate_acceptance_policy": {
+        "reject_penalty": 10000000,
+        "max_deferred_count": 0,
+        "min_acceptance_ratio": 0.0,
+        "post_solve_late_defer_count": 7
+      },
+      "solver_profile_policy": {
+        "profile": "fast",
+        "time_limit_seconds": 114.0,
+        "phase1_time_budget_ratio": 0.5,
+        "relative_gap_limit": 0.0,
+        "random_seed": 0,
+        "num_workers": 8,
+        "log_search_progress": false
+      },
+      "arc_pruning_policy": {
+        "enabled": true,
+        "max_setup_time_mins": 999,
+        "top_k_per_order": 32,
+        "same_material_family_top_k": 16,
+        "same_cleanroom_top_k": 16,
+        "due_window_mins": 4320,
+        "due_window_top_k": 16
+      },
+      "failed_checks": [],
+      "machine_load": {
+        "LINE-B02": {
+          "task_count": 76,
+          "production_mins": 4560,
+          "setup_mins": 2370
+        },
+        "LINE-B04": {
+          "task_count": 77,
+          "production_mins": 4620,
+          "setup_mins": 2400
+        },
+        "LINE-B01": {
+          "task_count": 77,
+          "production_mins": 4620,
+          "setup_mins": 2400
+        },
+        "LINE-B03": {
+          "task_count": 63,
+          "production_mins": 3780,
+          "setup_mins": 1980
+        }
+      },
+      "baseline_metrics": {
+        "solver_status": "UNPUBLISHABLE",
+        "wall_time_seconds": 114.2104223,
+        "gap": 0.9998500299940012,
+        "late_order_count": 77,
+        "weighted_tardiness": 757100,
+        "total_setup_time_mins": 9150,
+        "cleaning_diagnostics": {
+          "required_count": 4,
+          "disabled_count": 0
+        },
+        "machine_load": {
+          "LINE-B02": {
+            "task_count": 76,
+            "production_mins": 4560,
+            "setup_mins": 2370
+          },
+          "LINE-B04": {
+            "task_count": 77,
+            "production_mins": 4620,
+            "setup_mins": 2400
+          },
+          "LINE-B01": {
+            "task_count": 77,
+            "production_mins": 4620,
+            "setup_mins": 2400
+          },
+          "LINE-B03": {
+            "task_count": 63,
+            "production_mins": 3780,
+            "setup_mins": 1980
+          }
+        }
+      },
+      "phase_metrics": {
+        "phase_1": {
+          "phase": 1,
+          "status": "FEASIBLE",
+          "objective": 1000200,
+          "best_bound": 150.0,
+          "gap": 0.9998500299940012,
+          "branches": 155484,
+          "conflicts": 135,
+          "wall_time": 57.181708300000004
+        },
+        "phase_2": {
+          "phase": 2,
+          "status": "FEASIBLE",
+          "objective": 9360,
+          "best_bound": 90900000.0,
+          "gap": 9710.538461538461,
+          "branches": 161092,
+          "conflicts": 3263,
+          "wall_time": 57.028714,
+          "tardiness_bound": 1000200,
+          "phase1_status_basis": "FEASIBLE",
+          "tardiness_bound_source": "phase1_feasible_with_configured_tolerance",
+          "configured_tardiness_tolerance_mins": 0
+        }
+      },
+      "model_size": {
+        "order_count": 300,
+        "machine_count": 4,
+        "assignment_count": 1200,
+        "optional_candidate_count": 60,
+        "eligible_orders_per_machine": {
+          "LINE-B01": 300,
+          "LINE-B02": 300,
+          "LINE-B03": 300,
+          "LINE-B04": 300
+        },
+        "machine_model_sizes": {
+          "LINE-B01": {
+            "eligible_order_count": 300,
+            "assignment_count": 300,
+            "optional_candidate_count": 60,
+            "arc_count": 5984,
+            "pruned_arc_count": 84617,
+            "setup_cache_size": 90000
+          },
+          "LINE-B02": {
+            "eligible_order_count": 300,
+            "assignment_count": 300,
+            "optional_candidate_count": 60,
+            "arc_count": 5984,
+            "pruned_arc_count": 84617,
+            "setup_cache_size": 90000
+          },
+          "LINE-B03": {
+            "eligible_order_count": 300,
+            "assignment_count": 300,
+            "optional_candidate_count": 60,
+            "arc_count": 5984,
+            "pruned_arc_count": 84617,
+            "setup_cache_size": 90000
+          },
+          "LINE-B04": {
+            "eligible_order_count": 300,
+            "assignment_count": 300,
+            "optional_candidate_count": 60,
+            "arc_count": 5984,
+            "pruned_arc_count": 84617,
+            "setup_cache_size": 90000
+          }
+        },
+        "arc_count": 23936,
+        "pruned_arc_count": 338468,
+        "setup_cache_size": 360000,
+        "solver_quality_policy": {
+          "phase2_feasible_tardiness_tolerance_mins": 0,
+          "phase1_tardiness_weight": 10000,
+          "phase1_late_order_penalty": 0,
+          "phase2_tardiness_weight": 1000,
+          "max_late_order_count": null,
+          "max_weighted_tardiness": null
+        },
+        "candidate_acceptance_policy": {
+          "reject_penalty": 10000000,
+          "max_deferred_count": 0,
+          "min_acceptance_ratio": 0.0,
+          "post_solve_late_defer_count": 7
+        },
+        "arc_pruning_policy": {
+          "enabled": true,
+          "max_setup_time_mins": 999,
+          "top_k_per_order": 32,
+          "same_material_family_top_k": 16,
+          "same_cleanroom_top_k": 16,
+          "due_window_mins": 4320,
+          "due_window_top_k": 16
+        },
+        "locked_order_count": 0,
+        "external_locked_interval_count": 0
+      }
+    }
+  ],
+  "profile_acceptance": {
+    "fast": {
+      "case_count": 1,
+      "passed_count": 1,
+      "failed_count": 0,
+      "acceptance_policy": {
+        "profile": "fast",
+        "max_wall_time_seconds": 130.0,
+        "max_gap": null,
+        "min_scheduled_ratio": 0.976,
+        "max_late_order_count": 83,
+        "max_weighted_tardiness": 879599,
+        "max_total_setup_time_mins": null
+      },
+      "max_wall_time_seconds": 114.2104223,
+      "max_gap": 0.9998500299940012,
+      "min_scheduled_ratio": 0.9766666666666667,
+      "deferred_reason_counts": {
+        "candidate_late_post_solve_deferred": 7
+      },
+      "failed_checks": []
+    }
+  },
+  "arc_pruning_comparisons": [],
+  "scale_acceptance": {
+    "300": {
+      "order_count": 300,
+      "case_count": 1,
+      "passed_count": 1,
+      "failed_count": 0,
+      "comparison_count": 0,
+      "max_wall_time_seconds": 114.2104223,
+      "min_scheduled_ratio": 0.9766666666666667,
+      "max_arc_count": 23936,
+      "max_pruned_arc_count": 338468,
+      "failed_checks": []
+    }
+  }
+}
