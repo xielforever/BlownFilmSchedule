@@ -371,6 +371,18 @@ class TestSchedulePolicySettings(unittest.TestCase):
                 "due_window_mins": 1440,
                 "due_window_top_k": 4,
             },
+            tardiness_weights={
+                "vip_urgent": 100,
+                "high": 50,
+                "normal": 10,
+                "sample": 80,
+            },
+            scrap_weights={
+                "material_change": 25.0,
+                "same_material": 5.0,
+                "width_change": 15.0,
+                "thickness_change": 10.0,
+            },
         )
 
     def test_policy_snapshot_captures_continuous_run_strategy(self):

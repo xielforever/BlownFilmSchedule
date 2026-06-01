@@ -86,8 +86,9 @@ class ScheduleResult:
 class SetupCalculator:
     """换产耗时与废料守恒精算器"""
 
-    def __init__(self, setup_mgr: SetupMatricesManager):
+    def __init__(self, setup_mgr: SetupMatricesManager, scrap_weights: Optional[Dict] = None):
         self.mgr = setup_mgr
+        self.scrap_weights = scrap_weights
 
     def calculate_setup_time(
         self,
@@ -293,26 +294,28 @@ class SetupCalculator:
             elif not self.mgr.scrap_defaults_enabled:
                 scrap += 0
             elif m_from[l] != m_to[l]:
-                scrap += SCRAP_PER_LAYER_MATERIAL_CHANGE_KG
+                scrap += self.scrap_weights.get("material_change", SCRAP_PER_LAYER_MATERIAL_CHANGE_KG) if self.scrap_weights else SCRAP_PER_LAYER_MATERIAL_CHANGE_KG
             else:
-                scrap += SCRAP_PER_LAYER_SAME_MATERIAL_KG
+                scrap += self.scrap_weights.get("same_material", SCRAP_PER_LAYER_SAME_MATERIAL_KG) if self.scrap_weights else SCRAP_PER_LAYER_SAME_MATERIAL_KG
 
         # 2. 幅宽调机废料
         if w_from != w_to:
             configured_scrap = self.mgr.get_width_change_scrap(w_to - w_from)
+            default_w_scrap = self.scrap_weights.get("width_change", SCRAP_WIDTH_CHANGE_KG) if self.scrap_weights else SCRAP_WIDTH_CHANGE_KG
             scrap += (
                 configured_scrap
                 if configured_scrap is not None
-                else (SCRAP_WIDTH_CHANGE_KG if self.mgr.scrap_defaults_enabled else 0)
+                else (default_w_scrap if self.mgr.scrap_defaults_enabled else 0)
             )
 
         # 3. 厚度调机废料
         if t_from != t_to:
             configured_scrap = self.mgr.get_thickness_change_scrap(t_to - t_from)
+            default_t_scrap = self.scrap_weights.get("thickness_change", SCRAP_THICKNESS_CHANGE_KG) if self.scrap_weights else SCRAP_THICKNESS_CHANGE_KG
             scrap += (
                 configured_scrap
                 if configured_scrap is not None
-                else (SCRAP_THICKNESS_CHANGE_KG if self.mgr.scrap_defaults_enabled else 0)
+                else (default_t_scrap if self.mgr.scrap_defaults_enabled else 0)
             )
 
         return scrap
@@ -330,9 +333,13 @@ class AdvancedMedicalAPS:
         solver_profile_policy: Optional[Dict] = None,
         candidate_acceptance_policy: Optional[Dict] = None,
         arc_pruning_policy: Optional[Dict] = None,
+        tardiness_weights: Optional[Dict] = None,
+        scrap_weights: Optional[Dict] = None,
     ):
-        self.setup_calc = SetupCalculator(setup_mgr)
+        self.setup_calc = SetupCalculator(setup_mgr, scrap_weights)
         self.setup_mgr = setup_mgr
+        self.tardiness_weights = tardiness_weights
+        self.scrap_weights = scrap_weights
         self.continuous_run_policy = self._normalize_continuous_run_policy(continuous_run_policy)
         self.solver_quality_policy = self._normalize_solver_quality_policy(solver_quality_policy)
         self.solver_profile_policy = self._normalize_solver_profile_policy(solver_profile_policy)
@@ -581,10 +588,19 @@ class AdvancedMedicalAPS:
             return best_tardiness
         return best_tardiness + self.solver_quality_policy["phase2_feasible_tardiness_tolerance_mins"]
 
-    @staticmethod
-    def _tardiness_weight(order: ProductionOrderModel) -> int:
+    def _tardiness_weight(self, order: ProductionOrderModel) -> int:
         if order.priority_override is not None:
             return max(0, int(order.priority_override))
+        if self.tardiness_weights:
+            c = order.customer_class
+            o = order.order_class
+            if o == "SAMPLE":
+                return self.tardiness_weights.get("sample", 80)
+            if c == "VIP" and o == "URGENT":
+                return self.tardiness_weights.get("vip_urgent", 100)
+            if c == "VIP" or o == "URGENT":
+                return self.tardiness_weights.get("high", 50)
+            return self.tardiness_weights.get("normal", 10)
         return get_tardiness_weight(order.customer_class, order.order_class)
 
     def _precompute_setup_times(

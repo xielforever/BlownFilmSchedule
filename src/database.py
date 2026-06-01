@@ -407,6 +407,19 @@ class DatabaseManager:
                     manual_adjust_review_delay_threshold_mins INTEGER NOT NULL DEFAULT 0,
                     manual_adjust_review_setup_threshold_mins INTEGER NOT NULL DEFAULT 0,
                     manual_adjust_review_tardiness_threshold_mins INTEGER NOT NULL DEFAULT 0,
+                    tardiness_weight_vip_urgent          INTEGER NOT NULL DEFAULT 100,
+                    tardiness_weight_high                INTEGER NOT NULL DEFAULT 50,
+                    tardiness_weight_normal              INTEGER NOT NULL DEFAULT 10,
+                    tardiness_weight_sample              INTEGER NOT NULL DEFAULT 80,
+                    scrap_per_layer_material_change_kg   NUMERIC(6,2) NOT NULL DEFAULT 25.00,
+                    scrap_per_layer_same_material_kg     NUMERIC(6,2) NOT NULL DEFAULT 5.00,
+                    scrap_width_change_kg                NUMERIC(6,2) NOT NULL DEFAULT 15.00,
+                    scrap_thickness_change_kg            NUMERIC(6,2) NOT NULL DEFAULT 10.00,
+                    mandatory_cleaning_duration_minutes  INTEGER NOT NULL DEFAULT 90,
+                    weekly_disinfection_enabled          BOOLEAN NOT NULL DEFAULT TRUE,
+                    weekly_disinfection_day              INTEGER NOT NULL DEFAULT 7,
+                    weekly_disinfection_start_time       VARCHAR(10) NOT NULL DEFAULT '08:00',
+                    weekly_disinfection_duration_mins    INTEGER NOT NULL DEFAULT 280,
                     policy_version                      INTEGER NOT NULL DEFAULT 1,
                     updated_by                          VARCHAR(50),
                     change_reason                       TEXT,
@@ -423,7 +436,20 @@ class DatabaseManager:
                     ADD COLUMN IF NOT EXISTS due_date_optimization_enabled BOOLEAN NOT NULL DEFAULT TRUE,
                     ADD COLUMN IF NOT EXISTS policy_version INTEGER NOT NULL DEFAULT 1,
                     ADD COLUMN IF NOT EXISTS updated_by VARCHAR(50),
-                    ADD COLUMN IF NOT EXISTS change_reason TEXT
+                    ADD COLUMN IF NOT EXISTS change_reason TEXT,
+                    ADD COLUMN IF NOT EXISTS tardiness_weight_vip_urgent INTEGER NOT NULL DEFAULT 100,
+                    ADD COLUMN IF NOT EXISTS tardiness_weight_high INTEGER NOT NULL DEFAULT 50,
+                    ADD COLUMN IF NOT EXISTS tardiness_weight_normal INTEGER NOT NULL DEFAULT 10,
+                    ADD COLUMN IF NOT EXISTS tardiness_weight_sample INTEGER NOT NULL DEFAULT 80,
+                    ADD COLUMN IF NOT EXISTS scrap_per_layer_material_change_kg NUMERIC(6,2) NOT NULL DEFAULT 25.00,
+                    ADD COLUMN IF NOT EXISTS scrap_per_layer_same_material_kg NUMERIC(6,2) NOT NULL DEFAULT 5.00,
+                    ADD COLUMN IF NOT EXISTS scrap_width_change_kg NUMERIC(6,2) NOT NULL DEFAULT 15.00,
+                    ADD COLUMN IF NOT EXISTS scrap_thickness_change_kg NUMERIC(6,2) NOT NULL DEFAULT 10.00,
+                    ADD COLUMN IF NOT EXISTS mandatory_cleaning_duration_minutes INTEGER NOT NULL DEFAULT 90,
+                    ADD COLUMN IF NOT EXISTS weekly_disinfection_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    ADD COLUMN IF NOT EXISTS weekly_disinfection_day INTEGER NOT NULL DEFAULT 7,
+                    ADD COLUMN IF NOT EXISTS weekly_disinfection_start_time VARCHAR(10) NOT NULL DEFAULT '08:00',
+                    ADD COLUMN IF NOT EXISTS weekly_disinfection_duration_mins INTEGER NOT NULL DEFAULT 280
             """)
             cur.execute("""
                 INSERT INTO schedule_settings (id)
@@ -611,6 +637,7 @@ class DatabaseManager:
                 cur,
                 base,
                 maintenance_enabled=policy.get("maintenance_constraint_enabled", True),
+                policy=policy,
             )
             orders = self._load_orders_from_db(
                 cur,
@@ -884,6 +911,7 @@ class DatabaseManager:
         cur,
         base: datetime.datetime,
         maintenance_enabled: bool = True,
+        policy: Optional[dict] = None,
     ) -> List[BlownFilmMachineModel]:
         cur.execute("""
             SELECT m.*, s.current_material_lanes, s.current_width,
@@ -921,8 +949,41 @@ class DatabaseManager:
                     reason=r["reason"] or "Maintenance",
                 ))
 
+        # Get weekly disinfection settings from policy
+        p = policy or {}
+        weekly_dis_enabled = bool(p.get("weekly_disinfection_enabled", True))
+        weekly_dis_day = int(p.get("weekly_disinfection_day", 7))
+        weekly_dis_start = str(p.get("weekly_disinfection_start_time", "08:00"))
+        weekly_dis_duration = int(p.get("weekly_disinfection_duration_mins", 280))
+        
+        weekly_windows = []
+        if weekly_dis_enabled:
+            try:
+                parts = weekly_dis_start.split(":")
+                start_hour = int(parts[0])
+                start_min = int(parts[1])
+            except Exception:
+                start_hour = 8
+                start_min = 0
+            for d_offset in range(-7, 42):
+                target_day = base.date() + datetime.timedelta(days=d_offset)
+                if target_day.isoweekday() == weekly_dis_day:
+                    dt_start = datetime.datetime.combine(target_day, datetime.time(start_hour, start_min))
+                    delta = dt_start - base
+                    start_mins = int(delta.total_seconds() / 60.0)
+                    end_mins = start_mins + weekly_dis_duration
+                    if end_mins >= 0 and start_mins <= 44640:
+                        weekly_windows.append(ForbiddenWindow(
+                            start_mins=start_mins,
+                            end_mins=end_mins,
+                            reason="洁净车间每周固定微生物消杀与空载测试"
+                        ))
+
         machines = []
         for r in machine_rows:
+            machine_calendar = list(calendar_by_machine.get(r["machine_id"], []))
+            machine_calendar.extend(weekly_windows)
+            
             machines.append(BlownFilmMachineModel(
                 machine_id=r["machine_id"],
                 name=r["name"],
@@ -941,7 +1002,7 @@ class DatabaseManager:
                 initial_corona=bool(r["current_corona"]) if r["current_corona"] is not None else False,
                 initial_core_size=int(r["current_core_size"] or 3),
                 initial_continuous_run_mins=int(r["continuous_run_mins"] or 0),
-                forbidden_calendar=calendar_by_machine.get(r["machine_id"], []),
+                forbidden_calendar=machine_calendar,
             ))
         return machines
 

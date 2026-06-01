@@ -5,7 +5,7 @@ export const booleanPolicyGroups = [
   },
   {
     title: '排程约束与优化',
-    keys: ['material_constraint_enabled', 'maintenance_constraint_enabled', 'setup_rules_enabled', 'cleanroom_constraint_enabled', 'machine_capability_constraint_enabled', 'due_date_optimization_enabled'],
+    keys: ['material_constraint_enabled', 'maintenance_constraint_enabled', 'setup_rules_enabled', 'cleanroom_constraint_enabled', 'machine_capability_constraint_enabled', 'due_date_optimization_enabled', 'weekly_disinfection_enabled'],
   },
 ];
 
@@ -60,6 +60,32 @@ export const numericPolicyFieldGroups = [
       'manual_adjust_review_tardiness_threshold_mins',
     ],
   },
+  {
+    title: '交期延误惩罚权重',
+    keys: [
+      'tardiness_weight_vip_urgent',
+      'tardiness_weight_high',
+      'tardiness_weight_normal',
+      'tardiness_weight_sample',
+    ],
+  },
+  {
+    title: '调机换料废料常数 (kg)',
+    keys: [
+      'scrap_per_layer_material_change_kg',
+      'scrap_per_layer_same_material_kg',
+      'scrap_width_change_kg',
+      'scrap_thickness_change_kg',
+    ],
+  },
+  {
+    title: '清洗消杀周期与策略',
+    keys: [
+      'mandatory_cleaning_duration_minutes',
+      'weekly_disinfection_day',
+      'weekly_disinfection_duration_mins',
+    ],
+  },
 ];
 
 export const listPolicyFields = [
@@ -86,6 +112,10 @@ export const listPolicyFields = [
   {
     key: 'screening_required_positive_order_fields',
     placeholder: 'due_date_mins, target_width, total_quantity_kg',
+  },
+  {
+    key: 'weekly_disinfection_start_time',
+    placeholder: '08:00',
   },
 ];
 
@@ -127,6 +157,19 @@ auditKeyLabels.planning_material_ready_horizon_days = '物料齐套窗口';
 auditKeyLabels.planning_force_must_order_classes = '强制必排订单等级';
 auditKeyLabels.planning_force_must_customer_classes = '强制必排客户等级';
 auditKeyLabels.planning_scarce_machine_threshold = '稀缺机台阈值';
+auditKeyLabels.tardiness_weight_vip_urgent = 'VIP急单交期惩罚权重';
+auditKeyLabels.tardiness_weight_high = '普通高优先级惩罚权重';
+auditKeyLabels.tardiness_weight_normal = '普通标准订单惩罚权重';
+auditKeyLabels.tardiness_weight_sample = '临床样品订单惩罚权重';
+auditKeyLabels.scrap_per_layer_material_change_kg = '多层单层换料废料';
+auditKeyLabels.scrap_per_layer_same_material_kg = '同料换批次单层废料';
+auditKeyLabels.scrap_width_change_kg = '幅宽调机废料基准';
+auditKeyLabels.scrap_thickness_change_kg = '厚度调机废料基准';
+auditKeyLabels.mandatory_cleaning_duration_minutes = '深度清洗消杀时间';
+auditKeyLabels.weekly_disinfection_enabled = '周消杀日历启用';
+auditKeyLabels.weekly_disinfection_day = '周消杀星期几';
+auditKeyLabels.weekly_disinfection_start_time = '周消杀开始时间';
+auditKeyLabels.weekly_disinfection_duration_mins = '周消杀持续时长';
 
 export const policyFieldRuleClasses = {
   auto_release_enabled: 'experimental',
@@ -182,6 +225,19 @@ policyFieldRuleClasses.planning_material_ready_horizon_days = 'soft';
 policyFieldRuleClasses.planning_force_must_order_classes = 'soft';
 policyFieldRuleClasses.planning_force_must_customer_classes = 'soft';
 policyFieldRuleClasses.planning_scarce_machine_threshold = 'soft';
+policyFieldRuleClasses.tardiness_weight_vip_urgent = 'soft';
+policyFieldRuleClasses.tardiness_weight_high = 'soft';
+policyFieldRuleClasses.tardiness_weight_normal = 'soft';
+policyFieldRuleClasses.tardiness_weight_sample = 'soft';
+policyFieldRuleClasses.scrap_per_layer_material_change_kg = 'soft';
+policyFieldRuleClasses.scrap_per_layer_same_material_kg = 'soft';
+policyFieldRuleClasses.scrap_width_change_kg = 'soft';
+policyFieldRuleClasses.scrap_thickness_change_kg = 'soft';
+policyFieldRuleClasses.mandatory_cleaning_duration_minutes = 'hard';
+policyFieldRuleClasses.weekly_disinfection_enabled = 'hard';
+policyFieldRuleClasses.weekly_disinfection_day = 'hard';
+policyFieldRuleClasses.weekly_disinfection_start_time = 'hard';
+policyFieldRuleClasses.weekly_disinfection_duration_mins = 'hard';
 
 export const adminOnlyDisablePolicyKeys = [
   'material_constraint_enabled',

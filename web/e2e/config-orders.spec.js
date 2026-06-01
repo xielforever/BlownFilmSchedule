@@ -80,7 +80,7 @@ test.describe.serial('config order entry flow', () => {
     await page.getByTestId('config-order-create-quantity').fill('1200');
     await page.getByTestId('config-order-create-cleanroom').selectOption('Class_100K');
     await page.getByTestId('config-order-create-class').selectOption('NORMAL');
-    await page.getByTestId('config-order-create-due').fill('2026-06-01T08:00');
+    await page.getByTestId('config-order-create-due').fill('2026-05-25T08:00');
     await page.getByTestId('config-order-create-reason').fill('E2E 创建订单');
     await page.getByTestId('config-order-create-submit').click();
 
@@ -100,6 +100,11 @@ test.describe.serial('config order entry flow', () => {
 
     await page.goto('/workbench');
     await expect(page.getByTestId('workbench-main-workspace')).toBeVisible();
+    await expect(page.getByTestId('workbench-main-workspace')).toHaveAttribute('data-loading', 'false');
+
+    await page.getByTestId('workbench-stage-order_pool').click();
+    await expect(page.getByTestId('workbench-order-pool-browser')).toBeVisible();
+
     const poolToggle = page.getByTestId('workbench-order-pool-toggle');
     if (await poolToggle.isVisible().catch(() => false)) {
       const expanded = await poolToggle.getAttribute('aria-expanded');
@@ -123,7 +128,7 @@ test.describe.serial('config order entry flow', () => {
         total_quantity_kg: 1200,
         cleanroom_req: 'Class_100K',
         order_class: 'NORMAL',
-        due_date: '2026-06-01T08:00:00',
+        due_date: '2026-05-25T08:00:00',
         reason_code: 'E2E_SETUP',
         reason_text: 'E2E setup',
       },

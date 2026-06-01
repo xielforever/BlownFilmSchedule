@@ -1129,7 +1129,7 @@ def list_orders(
             LIMIT 1
         ) latest_action ON TRUE
         {where}
-        ORDER BY o.due_date
+        ORDER BY o.due_date, o.order_id
         LIMIT %s OFFSET %s
     """, params + [size, offset])
     items = []

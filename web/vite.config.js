@@ -11,4 +11,19 @@ export default defineConfig({
       '/api': apiTarget,
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('echarts') || id.includes('zrender')) {
+              return 'echarts';
+            }
+            return 'vendor';
+          }
+        }
+      }
+    }
+  }
 })
+

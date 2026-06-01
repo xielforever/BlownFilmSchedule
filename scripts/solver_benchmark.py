@@ -386,7 +386,7 @@ def run_benchmark_case(case: BenchmarkCase) -> dict:
     late_order_count = sum(1 for task in result.tasks if task.end_mins > task.order.due_date_mins)
     weighted_tardiness = sum(
         max(0, task.end_mins - task.order.due_date_mins)
-        * AdvancedMedicalAPS._tardiness_weight(task.order)
+        * aps._tardiness_weight(task.order)
         for task in result.tasks
     )
     total_setup_time_mins = sum(max(0, task.setup_time) for task in result.tasks)

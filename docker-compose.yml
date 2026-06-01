@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  # 1. 生产数据库容器 (PostgreSQL)
+  db:
+    image: postgres:15-alpine
+    container_name: aps-postgres-uat
+    restart: always
+    environment:
+      POSTGRES_DB: ap
+      POSTGRES_USER: ap_user
+      POSTGRES_PASSWORD: uat_secure_password_123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ap_user -d ap"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. 后端算法与 FastAPI 服务容器
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aps-backend-uat
+    restart: always
+    environment:
+      - APS_DB_HOST=db
+      - APS_DB_PORT=5432
+      - APS_DB_NAME=ap
+      - APS_DB_USER=ap_user
+      - APS_DB_PASSWORD=uat_secure_password_123
+      - APS_JWT_SECRET=uat_jwt_secret_token_change_in_prod
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./input:/app/input
+
+  # 3. 前端大屏与 Nginx 反向代理容器
+  frontend:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: aps-frontend-uat
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+    driver: local

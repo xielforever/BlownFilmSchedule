@@ -177,6 +177,19 @@ const policySettingLabels = {
   manual_adjust_review_delay_threshold_mins: '人工调整延期复核阈值',
   manual_adjust_review_setup_threshold_mins: '人工调整换产复核阈值',
   manual_adjust_review_tardiness_threshold_mins: '人工调整迟交复核阈值',
+  tardiness_weight_vip_urgent: 'VIP急单交期惩罚权重',
+  tardiness_weight_high: '普通高优先级惩罚权重',
+  tardiness_weight_normal: '普通标准订单惩罚权重',
+  tardiness_weight_sample: '临床样品订单惩罚权重',
+  scrap_per_layer_material_change_kg: '多层单层换料废料(kg)',
+  scrap_per_layer_same_material_kg: '同料换批次单层废料(kg)',
+  scrap_width_change_kg: '幅宽调机废料基准(kg)',
+  scrap_thickness_change_kg: '厚度调机废料基准(kg)',
+  mandatory_cleaning_duration_minutes: '设备消杀清洗时长(分钟)',
+  weekly_disinfection_enabled: '启用每周固定消杀禁排日历',
+  weekly_disinfection_day: '每周消杀星期几(1=一, 7=日)',
+  weekly_disinfection_start_time: '每周消杀开始时间(HH:MM)',
+  weekly_disinfection_duration_mins: '每周消杀持续时长(分钟)',
 };
 policySettingLabels.planning_material_ready_horizon_days = '物料齐套窗口(天)';
 policySettingLabels.planning_force_must_order_classes = '强制必排订单等级';
@@ -194,6 +207,7 @@ const policySettingDescriptions = {
   cleanroom_constraint_enabled: '关闭后不按洁净等级筛选候选机台。',
   machine_capability_constraint_enabled: '关闭后放宽幅宽、厚度和层数边界，仅用于诊断。',
   due_date_optimization_enabled: '关闭后不以交期权重作为优先优化目标。',
+  weekly_disinfection_enabled: '启用后，排程引擎将自动为所有机台应用每周固定周消杀停机禁排窗口。',
 };
 const policyGroups = booleanPolicyGroups;
 
@@ -1709,7 +1723,15 @@ async function loadAllOrders() {
     page += 1;
   }
 
-  return items;
+  const uniqueItems = [];
+  const seen = new Set();
+  for (const item of items) {
+    if (!seen.has(item.order_id)) {
+      seen.add(item.order_id);
+      uniqueItems.push(item);
+    }
+  }
+  return uniqueItems;
 }
 
 export default function ConfigPage() {

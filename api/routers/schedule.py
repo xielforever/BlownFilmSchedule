@@ -203,6 +203,19 @@ class ScheduleSettingsPayload(BaseModel):
     manual_adjust_review_delay_threshold_mins: Optional[int] = None
     manual_adjust_review_setup_threshold_mins: Optional[int] = None
     manual_adjust_review_tardiness_threshold_mins: Optional[int] = None
+    tardiness_weight_vip_urgent: Optional[int] = None
+    tardiness_weight_high: Optional[int] = None
+    tardiness_weight_normal: Optional[int] = None
+    tardiness_weight_sample: Optional[int] = None
+    scrap_per_layer_material_change_kg: Optional[float] = None
+    scrap_per_layer_same_material_kg: Optional[float] = None
+    scrap_width_change_kg: Optional[float] = None
+    scrap_thickness_change_kg: Optional[float] = None
+    mandatory_cleaning_duration_minutes: Optional[int] = None
+    weekly_disinfection_enabled: Optional[bool] = None
+    weekly_disinfection_day: Optional[int] = None
+    weekly_disinfection_start_time: Optional[str] = None
+    weekly_disinfection_duration_mins: Optional[int] = None
     change_reason: Optional[str] = None
 
 
@@ -271,6 +284,19 @@ POLICY_VALUE_KEYS = (
     "manual_adjust_review_delay_threshold_mins",
     "manual_adjust_review_setup_threshold_mins",
     "manual_adjust_review_tardiness_threshold_mins",
+    "tardiness_weight_vip_urgent",
+    "tardiness_weight_high",
+    "tardiness_weight_normal",
+    "tardiness_weight_sample",
+    "scrap_per_layer_material_change_kg",
+    "scrap_per_layer_same_material_kg",
+    "scrap_width_change_kg",
+    "scrap_thickness_change_kg",
+    "mandatory_cleaning_duration_minutes",
+    "weekly_disinfection_enabled",
+    "weekly_disinfection_day",
+    "weekly_disinfection_start_time",
+    "weekly_disinfection_duration_mins",
 )
 
 
@@ -327,6 +353,19 @@ POLICY_DEFAULTS = {
     "manual_adjust_review_delay_threshold_mins": 0,
     "manual_adjust_review_setup_threshold_mins": 0,
     "manual_adjust_review_tardiness_threshold_mins": 0,
+    "tardiness_weight_vip_urgent": 100,
+    "tardiness_weight_high": 50,
+    "tardiness_weight_normal": 10,
+    "tardiness_weight_sample": 80,
+    "scrap_per_layer_material_change_kg": 25.0,
+    "scrap_per_layer_same_material_kg": 5.0,
+    "scrap_width_change_kg": 15.0,
+    "scrap_thickness_change_kg": 10.0,
+    "mandatory_cleaning_duration_minutes": 90,
+    "weekly_disinfection_enabled": True,
+    "weekly_disinfection_day": 7,
+    "weekly_disinfection_start_time": "08:00",
+    "weekly_disinfection_duration_mins": 280,
 }
 
 
@@ -885,9 +924,15 @@ def _policy_snapshot_validation_item(saved: dict | None, current: dict | None) -
 
 
 def _continuous_run_policy(settings: dict, setup_mgr) -> dict[str, Any]:
+    settings_cleaning_mins = settings.get("mandatory_cleaning_duration_minutes")
+    setup_cleaning_mins = getattr(setup_mgr, "continuous_run_cleaning_time", 0)
+    if setup_cleaning_mins and (settings_cleaning_mins is None or settings_cleaning_mins == 90):
+        cleaning_mins = setup_cleaning_mins
+    else:
+        cleaning_mins = settings_cleaning_mins if settings_cleaning_mins is not None else 90
     return {
         "limit_mins": int(settings.get("continuous_run_limit_mins") or CONTINUOUS_RUN_LIMIT_MINUTES),
-        "cleaning_mins": int(getattr(setup_mgr, "continuous_run_cleaning_time", 0) or 0),
+        "cleaning_mins": int(cleaning_mins),
         "enforcement_mode": str(settings.get("continuous_run_enforcement_mode") or "publish_blocker"),
     }
 
@@ -912,6 +957,18 @@ def _order_screening_policy(settings: dict) -> dict[str, Any]:
 
 
 def _build_scheduler(setup_mgr, settings: dict) -> AdvancedMedicalAPS:
+    tardiness_weights = {
+        "vip_urgent": int(settings.get("tardiness_weight_vip_urgent", 100)),
+        "high": int(settings.get("tardiness_weight_high", 50)),
+        "normal": int(settings.get("tardiness_weight_normal", 10)),
+        "sample": int(settings.get("tardiness_weight_sample", 80)),
+    }
+    scrap_weights = {
+        "material_change": float(settings.get("scrap_per_layer_material_change_kg", 25.0)),
+        "same_material": float(settings.get("scrap_per_layer_same_material_kg", 5.0)),
+        "width_change": float(settings.get("scrap_width_change_kg", 15.0)),
+        "thickness_change": float(settings.get("scrap_thickness_change_kg", 10.0)),
+    }
     return AdvancedMedicalAPS(
         setup_mgr,
         continuous_run_policy=_continuous_run_policy(settings, setup_mgr),
@@ -959,6 +1016,8 @@ def _build_scheduler(setup_mgr, settings: dict) -> AdvancedMedicalAPS:
             "due_window_mins": int(settings.get("arc_pruning_due_window_mins") or 0),
             "due_window_top_k": int(settings.get("arc_pruning_due_window_top_k") or 0),
         },
+        tardiness_weights=tardiness_weights,
+        scrap_weights=scrap_weights,
     )
 
 

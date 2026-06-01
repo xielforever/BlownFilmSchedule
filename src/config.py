@@ -73,13 +73,14 @@ OUTPUT_SCHEDULE_CSV = "output/schedule_result.csv"
 OUTPUT_MATERIAL_CORRECTION_CSV = "output/material_correction.csv"
 OUTPUT_SCHEDULE_REPORT_MD = "output/schedule_report.md"
 
-# ─── 数据库连接 ─────────────────────────────────────────────
+import os
+
 DATABASE_CONFIG = {
-    "host": "127.0.0.1",
-    "port": 5432,
-    "database": "ap",
-    "username": "ap_user",
-    "password": "123456",
+    "host": os.getenv("APS_DB_HOST", "127.0.0.1"),
+    "port": int(os.getenv("APS_DB_PORT", "5432")),
+    "database": os.getenv("APS_DB_NAME", "ap"),
+    "username": os.getenv("APS_DB_USER", "ap_user"),
+    "password": os.getenv("APS_DB_PASSWORD", "123456"),
 }
 
 

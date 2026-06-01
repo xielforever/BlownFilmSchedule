@@ -100,13 +100,6 @@ async function restoreWorkbenchSettings(request) {
   });
 }
 
-async function pendingOrders(request, limit = 60) {
-  const response = await apiJson(request, 'get', '/api/orders', {
-    params: { status: 'PENDING', page: 1, size: limit },
-  });
-  expect(response.ok()).toBeTruthy();
-  return (await response.json()).items || [];
-}
 
 async function pendingReadyOrders(request, limit = 60) {
   const response = await apiJson(request, 'get', '/api/orders', {
@@ -455,6 +448,7 @@ test.describe.serial('schedule workbench closed loop', () => {
     }
 
     await openWorkbench(page);
+    await openOrderPoolIfCollapsed(page);
     await page.getByTestId('workbench-search').fill(prefix);
     await expect(page.getByTestId('workbench-order-pool-pagination')).toBeVisible();
     await expect(page.getByTestId('workbench-order-pool-page-info')).toContainText('1 / 2');
