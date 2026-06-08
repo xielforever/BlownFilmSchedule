@@ -5,6 +5,7 @@
 **Generated:** 2026-05-24  
 **Estimated Complexity:** Medium  
 **Target Surface:** `/workbench`, `/login`, schedule preplan APIs  
+**Current Status:** verified as of 2026-06-08; see Completion Evidence and verification commands near the end of this document.
 **Goal:** 修复浏览器实测发现的阻塞缺陷，并把排程工作台从“计划员/管理员混合页面”收敛成一线排程工人可以稳定使用的生产排程闭环。
 
 ---

@@ -1,134 +1,135 @@
-# 医疗 PE 薄膜吹膜机 APS 智能排程系统
+# Medical PE Blown Film Machine APS Intelligent Scheduling System
+
+[English](README.md) | [中文](README_CN.md)
 
 ![APS Dashboard Mockup](./aps_dashboard_mockup.png)
 
-本项目是一个专门针对**医疗级包装材料（如输液袋膜、无菌器械透气膜等）**的多层共挤吹膜机组研发的 **Advanced Planning and Scheduling (APS)** 高级计划与排程系统。
+This project is an **Advanced Planning and Scheduling (APS)** system specifically developed for **medical-grade packaging materials** (such as infusion bag films, sterile instrument breathable films, etc.) using multi-layer co-extrusion blown film machines.
 
-系统核心基于 **Google OR-Tools CP-SAT (全整数约束规划)** 求解器，前端采用 **React + Vite + ECharts** 提供工业级深色大屏可视化展示，后端采用 **FastAPI + PostgreSQL** 提供高性能的数据支撑与并行计算调度。
-
----
-
-## 🌟 核心业务痛点与算法特性
-
-吹膜机（特别是多层共挤机型）的生产具有极强的连续性和高昂的换产成本，传统手工排程往往顾此失彼。本系统通过数字大脑完美解决了以下痛点：
-
-1. **多重物理硬约束过滤**：
-   * 洁净室等级校验（如 `Class_10K` 订单不能排到 `Class_100K` 机台）。
-   * 幅宽、厚度物理上下界匹配。
-   * 多层共挤配方（3层/5层）校验。
-   
-2. **极端的换产计价（Setup Times）**：
-   * **最大值耗时（Max）**：多螺杆清洗与材质切换是并行执行的，耗时取决于最慢的“一口锅”。
-   * **实物累加损耗（Sum）**：每一次清场造成的原料废料（Scrap）进行精准重量累加。
-   * **方向性惩罚**：幅宽“窄变宽”极快，但“宽切窄”极易塌卷，存在方向性时间差惩罚。
-
-3. **合规维保日历红线**：
-   * 严格规避每周固定时间段的 GMP 级别设备微生物消杀与空载测试（如：每周日禁止排产）。
-   * 算法具备提前量预判，绝不会让订单执行跨越维保红线。
-
-4. **物料到货等待（等料真空期）**：
-   * 即使机台闲置，也会严格依据 `materialAvailableMins` 进行安全等料，模拟真实的供应链延迟。
-
-5. **分层多目标求解（Lexicographical Optimization）**：
-   * **阶段一**：全力保障交期（VIP / 紧急订单绝对不可逾期），算出最低延期惩罚分数。
-   * **阶段二**：在不打破交期分数的前提下，极度压榨合并产能，将换产物理时间压到最短，**彻底根绝算法因为“交期罚款分太高”导致的盲目乱调机（数值淹没）问题**。
+The system's core is built on **Google OR-Tools CP-SAT (Full Integer Constraint Programming)** solver, with **React + Vite + ECharts** on the frontend providing industrial-grade dark-theme large-screen visualization, and **FastAPI + PostgreSQL** on the backend delivering high-performance data support and parallel computation scheduling.
 
 ---
 
-## 📁 目录架构
+## 🌟 Core Business Challenges & Algorithm Features
+
+Blown film machines (especially multi-layer co-extrusion types) have extremely strong continuity requirements and high changeover costs. Traditional manual scheduling often falls short. This system perfectly solves the following challenges through a digital brain:
+
+1. **Multiple Physical Hard Constraint Filtering**:
+   * Cleanroom level verification (e.g., `Class_10K` orders cannot be scheduled on `Class_100K` machines).
+   * Width and thickness physical upper/lower bound matching.
+   * Multi-layer co-extrusion formula (3-layer/5-layer) verification.
+
+2. **Extreme Changeover Cost (Setup Times)**:
+   * **Maximum Duration (Max)**: Multi-screw cleaning and material switching are executed in parallel, with duration depending on the slowest "pot".
+   * **Cumulative Scrap Loss (Sum)**: Each cleaning event's raw material waste (Scrap) is precisely accumulated by weight.
+   * **Directional Penalty**: Width change from narrow to wide is extremely fast, but wide to narrow easily causes roll collapse, resulting in directional time penalties.
+
+3. **Compliant Maintenance Calendar Red Line**:
+   * Strictly avoids fixed weekly time slots for GMP-level equipment microbial sterilization and no-load tests (e.g., no production on Sundays).
+   * The algorithm has advance prediction capability, ensuring orders never cross the maintenance red line.
+
+4. **Material Arrival Wait Time (Material Vacuum Period)**:
+   * Even if a machine is idle, strict adherence to `materialAvailableMins` for safe material waiting, simulating real supply chain delays.
+
+5. **Hierarchical Multi-Objective Solving (Lexicographical Optimization)**:
+   * **Phase One**: Prioritize delivery commitments (VIP/emergency orders must never be late), calculating the minimum delay penalty score.
+   * **Phase Two**: Without breaking delivery scores, aggressively compress production capacity, minimizing changeover physical time to the shortest. **This completely eradicates the problem of the algorithm blindly adjusting machines due to "high delivery penalty scores" (numerical overflow).**
+
+---
+
+## 📁 Directory Architecture
 
 ```text
-├── api/                  # FastAPI 接口定义层 (REST APIs)
-│   ├── main.py           # API 服务器入口
-│   └── routers/          # 路由分组 (如 dashboard.py, schedule.py)
-├── db/                   # 数据库脚本
-│   └── init_schema.sql   # PostgreSQL 初始化建表 DDL (15张核心业务表)
-├── input/                # 数据输入目录
-│   └── 吹膜机排程数据.xlsx # 车间主数据源 (机器、订单、配方表、矩阵)
-├── output/               # 排程算法离线输出结果目录 (CSV, JSON, ASCII Gantt)
-├── src/                  # APS 核心调度算法层
-│   ├── config.py         # 全局配置管理
-│   ├── data_ingestion.py # Pandas 数据清洗、补丁注入、转换管道
-│   ├── database.py       # DB 持久化模块
-│   ├── models.py         # 内存业务对象模型定义
-│   ├── scheduler.py      # OR-Tools 排程计算大脑核心类
-│   └── setup_matrices.py # 换产矩阵、GMP 清场矩阵预处理
-├── tests/                # 单元测试与边界测试脚本
-├── web/                  # 前端大屏可视化系统 (React + Vite)
+├── api/                  # FastAPI interface definition layer (REST APIs)
+│   ├── main.py           # API server entry point
+│   └── routers/          # Route groups (e.g., dashboard.py, schedule.py)
+├── db/                   # Database scripts
+│   └── init_schema.sql   # PostgreSQL initialization DDL (15 core business tables)
+├── input/                # Data input directory
+│   └── 吹膜机排程数据.xlsx # Workshop master data source (machines, orders, formula tables, matrices)
+├── output/               # Offline scheduling output directory (CSV, JSON, ASCII Gantt)
+├── src/                  # APS core scheduling algorithm layer
+│   ├── config.py         # Global configuration management
+│   ├── data_ingestion.py # Pandas data cleaning, patch injection, transformation pipeline
+│   ├── database.py       # DB persistence module
+│   ├── models.py         # In-memory business object model definitions
+│   ├── scheduler.py      # OR-Tools scheduling computation brain core class
+│   └── setup_matrices.py # Changeover matrices, GMP cleaning matrix preprocessing
+├── tests/                # Unit tests and boundary test scripts
+├── web/                  # Frontend large-screen visualization system (React + Vite)
 │   ├── src/
-│   │   ├── api/          # Axios 接口封装
-│   │   ├── components/   # 可复用组件 (Layout 导航栏等)
-│   │   ├── pages/        # 页面 (Dashboard, GanttPage, LoginPage等)
-│   │   └── index.css     # 全局样式主题变量
-├── main.py               # 本地命令行调度引擎入口
-└── generate_orders.py    # (开发工具) 极限边界订单压力测试生成器
+│   │   ├── api/          # Axios API wrappers
+│   │   ├── components/   # Reusable components (Layout navigation bar, etc.)
+│   │   ├── pages/        # Pages (Dashboard, GanttPage, LoginPage, etc.)
+│   │   └── index.css     # Global style theme variables
+├── main.py               # Local command-line scheduling engine entry point
+└── generate_orders.py    # (Dev tool) Extreme boundary order stress test generator
 ```
 
 ---
 
-## 🚀 快速启动指南
+## 🚀 Quick Start Guide
 
-### 1. 环境准备
-* **Python**: 3.9+ 
+### 1. Environment Preparation
+* **Python**: 3.9+
 * **Node.js**: 18+
 * **PostgreSQL**: 14+
 
-配置数据库连接（可在 `src/config.py` 中修改或使用默认参数 `localhost:5432`，账号 `postgres` / `postgres`，库名 `blownfilm_aps`）。
+Configure database connection (can be modified in `src/config.py` or use default parameters `localhost:5432`, account `postgres` / `postgres`, database name `blownfilm_aps`).
 
-### 2. 后端服务与数据库初始化
-安装 Python 依赖：
+### 2. Backend Service & Database Initialization
+Install Python dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-**第一次运行：初始化数据库结构并生成调度方案**
+**First Run: Initialize database structure and generate scheduling plan**
 ```bash
 python main.py --init-db --save-db
 ```
-*(这会自动读取 `input/` 下的 Excel，构建表结构，执行 OR-Tools 排程计算，最后持久化至数据库)*
+*(This will automatically read Excel files from `input/`, build table structures, execute OR-Tools scheduling calculations, and finally persist to the database)*
 
-**启动 FastAPI 后端服务**
+**Start FastAPI Backend Service**
 ```bash
 uvicorn api.main:app --reload --port 8000
 ```
-*(API 文档地址: http://127.0.0.1:8000/docs)*
+*(API documentation: http://127.0.0.1:8000/docs)*
 
-### 3. 启动前端可视化系统
+### 3. Start Frontend Visualization System
 ```bash
 cd web
 npm install
 npm run dev
 ```
 
-打开浏览器访问 `http://localhost:3000`。
-* 默认内置体验账号：`admin` / 密码：`admin123`
+Open browser and visit `http://localhost:3000`.
+* Default built-in demo account: `admin` / Password: `admin123`
 
 ---
 
-## 🛠️ 测试与进阶
+## 🛠️ Testing & Advanced Usage
 
-如果您觉得初始 32 笔订单不够“壮观”，我们提供了一个**极限边界压榨工具**，它可以瞬间产生 200 笔符合机器物理上下界的紧急挤压测试单：
+If you feel the initial 32 orders aren't "impressive" enough, we provide an **extreme boundary stress testing tool** that can instantly generate 200 urgent test orders conforming to machine physical upper/lower bounds:
 ```bash
 python generate_orders.py
 python main.py --save-db
 ```
-刷新大屏页面，即可观赏上万小时被精算得极其致密的工业级甘特图大盘！
+Refresh the large-screen page to witness tens of thousands of hours of industrial-grade Gantt chart dashboards with extremely dense calculations!
 
-### 使用当前订单数据运行
+### Running with Current Order Data
 
-排程入口现在以数据库中的当前订单、机台、配方和约束为准，不再提供内置演示数据切换脚本。
-通过 Config 页面调整订单或机台后，可以直接用数据库数据生成新的 active run：
+The scheduling entry now uses current orders, machines, formulas, and constraints from the database as the standard. Built-in demo data switching scripts are no longer provided.
+After adjusting orders or machines through the Config page, you can directly use database data to generate a new active run:
 
 ```bash
 python main.py --source db --save-db --triggered-by local
 ```
 
-Dashboard 的 Run Schedule 使用同一条数据库排程路径。运行前请确认待排订单处于
-`PENDING` 或 `SCHEDULED`，可用机台处于 `ACTIVE`。
+Dashboard's Run Schedule uses the same database scheduling path. Before running, please confirm that orders to be scheduled are in `PENDING` or `SCHEDULED` status, and available machines are in `ACTIVE` status.
 
-更完整的真实数据排程检查见 `docs/real_data_scheduling.md`。
+For more complete real data scheduling checks, see `docs/real_data_scheduling.md`.
 
 ---
 
-## 📝 贡献与许可
-由医疗薄膜包装调度团队内部研发。禁止未经授权的外部开源。
+## 📝 Contributing & License
+Internally developed by the medical film packaging scheduling team. Unauthorized external open-sourcing is prohibited.

@@ -2,6 +2,29 @@
 
 **Generated**: 2026-05-24
 **Estimated Complexity**: High
+**Current Status**: verified for current goal scope through Sprint 6 as of 2026-06-08.
+
+## Implementation Evidence
+
+The current implementation covers the practical scope defined by this plan:
+
+- Strategy settings, policy snapshots, input snapshots, stale validation, and publish blockers are implemented in the preplan flow.
+- Order intake screening separates `ready`, `risk`, and `blocked` orders before solver input selection.
+- Candidate/deferred order buckets, blocked-order explanations, and workbench review surfaces are available through backend-owned contract fields.
+- Solver model telemetry, configurable business arc pruning, and benchmark pass/fail reporting are available through `scripts/solver_benchmark.py` and `output/sprint6-quality-300-postsolve-gated.md`.
+- Manual locking and local re-optimization are covered by locked task inputs, external locked intervals, setup-gap protection, worker-facing locked-task summaries, and adjustment impact summaries.
+
+Verification evidence includes:
+
+- `tests/test_scheduler_validation.py` locked-task and external locked-interval cases.
+- `tests/test_policy_settings.py` policy, locked input conversion, and adjustment impact summary cases.
+- `tests/test_order_screening.py` order pool screening cases.
+- `tests/test_preplan_order_buckets.py` backend-owned order bucket cases.
+- `tests/test_output_formatter.py` locked-task and adjustment impact report output cases.
+- `web/src/pages/workbenchViewModel.test.js` worker-facing locked-task and adjustment impact display cases.
+- `output/sprint6-quality-300-postsolve-gated.md` 300-order benchmark acceptance evidence.
+
+Any additional solver research after this point should start as a new goal with an explicit benchmark target, instead of extending this plan indefinitely.
 
 ## Overview
 

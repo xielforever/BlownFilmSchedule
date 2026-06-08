@@ -1,6 +1,10 @@
 # Root Cause Guidance TODO
 
-**Updated**: 2026-05-20
+**Updated**: 2026-06-08
+
+## Closure Decision
+
+Phases 1-4 are complete and remain the current production baseline for root-cause guidance. Phase 5 is intentionally deferred as a future what-if capability, not a blocker for closing the current scheduling workbench and solver-governance project.
 
 ## Phase 1: Structured Diagnostics Core
 
@@ -39,8 +43,10 @@
 - [x] Browser-smoke Dashboard and Gantt with current database data.
 - [x] Export Markdown schedule report with order exceptions and plant-wide root-cause analysis.
 
-## Phase 5: Later What-If
+## Phase 5: Deferred What-If Enhancement
 
 - [ ] Add non-persistent what-if API for single-order or single-machine changes.
 - [ ] Compare current diagnostics with what-if impact.
 - [ ] Keep all what-if actions as recommendations, not automatic edits.
+
+**Status**: deferred. Reopen this as a separate goal when the product needs interactive scenario simulation.
