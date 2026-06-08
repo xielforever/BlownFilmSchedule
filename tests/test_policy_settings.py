@@ -1544,6 +1544,60 @@ class TestSchedulePolicySettings(unittest.TestCase):
             },
         ])
 
+    def test_order_what_if_changes_apply_without_mutating_source_order(self):
+        order = ProductionOrderModel(
+            order_id="ORD-WHATIF",
+            product_type="INFUSION_FILM",
+            target_width=800,
+            target_thickness=80,
+            total_quantity_kg=1000,
+            cleanroom_req="Class_100K",
+            customer_class="STANDARD",
+            order_class="NORMAL",
+            corona_req=False,
+            core_size_inch=3,
+            due_date_mins=1440,
+            material_available_mins=0,
+            recipe_materials=["PE", "PE", "PE"],
+        )
+
+        changed, status, fields = schedule_router._apply_order_what_if_changes(
+            order,
+            "PENDING",
+            {
+                "target_width": 1200,
+                "cleanroom_req": "Class_10K",
+                "status": "released",
+            },
+        )
+
+        self.assertEqual(order.target_width, 800)
+        self.assertEqual(changed.target_width, 1200)
+        self.assertEqual(changed.cleanroom_req, "Class_10K")
+        self.assertEqual(status, "RELEASED")
+        self.assertEqual(fields, ["target_width", "cleanroom_req", "status"])
+
+    def test_order_what_if_impact_reports_direction_and_preplan_gate(self):
+        impact = schedule_router._screening_impact(
+            {
+                "screening_status": "blocked",
+                "business_bucket": "blocked_machine_capability",
+                "code": "no_eligible_machine",
+            },
+            {
+                "screening_status": "ready",
+                "business_bucket": "ready",
+                "code": None,
+            },
+        )
+
+        self.assertTrue(impact["screening_status_changed"])
+        self.assertTrue(impact["business_bucket_changed"])
+        self.assertTrue(impact["code_changed"])
+        self.assertEqual(impact["direction"], "improved")
+        self.assertFalse(impact["can_enter_preplan_before"])
+        self.assertTrue(impact["can_enter_preplan_after"])
+
 
 if __name__ == "__main__":
     unittest.main()

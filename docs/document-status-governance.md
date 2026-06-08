@@ -40,7 +40,7 @@ The register is intentionally separate from each plan. Individual plans can keep
 | docs/order-flow-closed-loop-goal-plan.md | verified | document lists P0/P1 acceptance cases completed and verification commands |
 | docs/real_data_scheduling.md | active | operational guide for current database scheduling checks |
 | docs/root-cause-guidance-plan.md | superseded | root-cause implementation tracked by `docs/root-cause-guidance-todo.md` |
-| docs/root-cause-guidance-todo.md | archived | phases 1-4 are complete; phase 5 is explicitly deferred as future what-if enhancement in the document |
+| docs/root-cause-guidance-todo.md | verified | phases 1-5 complete; what-if evidence in `POST /api/schedule/what-if/order`, `tests/test_policy_settings.py`, and `tests/test_api.py` |
 | docs/solver-optimization-business-plan.md | verified | Sprint 6 evidence in `output/sprint6-quality-300-postsolve-gated.md`; locked-task, policy, screening, benchmark, and workbench evidence listed in the document |
 | docs/workbench-interaction-cleanup-goal-plan.md | verified | document execution status says P0/P1/P2 verified on 2026-05-23 |
 | docs/workbench-p1-p2-todo-validation-plan.md | verified | final verification section lists pytest, lint, build, e2e, and browser smoke |
@@ -50,7 +50,7 @@ The register is intentionally separate from each plan. Individual plans can keep
 ## Closure Audit 2026-06-08
 
 - Project-plan documents that previously looked open have been reclassified based on tracked evidence, not chat memory.
-- `docs/root-cause-guidance-todo.md` is archived because the remaining what-if work is a separate future product capability.
+- `docs/root-cause-guidance-todo.md` is verified because the remaining what-if work has been implemented for single-order screening diagnostics.
 - `docs/solver-optimization-business-plan.md` is verified for the current goal scope through Sprint 6. Further solver research should start as a new goal with a new benchmark target.
 - `docs/workbench-worker-qa-hardening-goal-plan.md` is verified because its Definition of Done and completion evidence are already recorded.
 - `docs/real_data_scheduling.md` remains active as an operational guide, not an unfinished implementation plan.

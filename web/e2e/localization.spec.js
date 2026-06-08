@@ -21,7 +21,7 @@ test('uses Chinese labels for gantt navigation and page headings', async ({ page
   await login(request, page);
 
   await page.goto('/dashboard');
-  await expect(page.getByRole('link', { name: '甘特图' })).toBeVisible();
+  await expect(page.locator('.sidebar-nav a[href="/gantt"]')).toContainText('甘特图');
   await expect(page.getByRole('heading', { name: '交互式甘特图' })).toBeVisible();
   await expect(page.getByRole('link', { name: '打开完整甘特图' })).toBeVisible();
 

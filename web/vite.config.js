@@ -12,6 +12,7 @@ export default defineConfig({
     },
   },
   build: {
+    chunkSizeWarningLimit: 1200,
     rollupOptions: {
       output: {
         manualChunks(id) {
@@ -19,7 +20,22 @@ export default defineConfig({
             if (id.includes('echarts') || id.includes('zrender')) {
               return 'echarts';
             }
+            if (id.includes('react') || id.includes('react-router-dom')) {
+              return 'react-vendor';
+            }
             return 'vendor';
+          }
+          if (id.includes('/src/pages/ScheduleWorkbench')) {
+            return 'page-workbench';
+          }
+          if (id.includes('/src/pages/Dashboard')) {
+            return 'page-dashboard';
+          }
+          if (id.includes('/src/pages/GanttPage')) {
+            return 'page-gantt';
+          }
+          if (id.includes('/src/pages/ConfigPage')) {
+            return 'page-config';
           }
         }
       }

@@ -44,6 +44,14 @@ npm run e2e -- login.spec.js smoke-routes.spec.js localization.spec.js config-po
 npm run e2e -- workbench.spec.js
 ```
 
+For full local delivery acceptance from the repository root, use:
+
+```bash
+python scripts/run_acceptance.py
+```
+
+The script starts temporary FastAPI and Vite services, runs backend tests, frontend unit tests, HTTP contract tests, and Playwright checks, then shuts the services down.
+
 The workbench is the primary production-user surface. UI changes should preserve the worker-focused flow: screen orders first, create a draft, review blockers, validate, then publish only when the backend allows it.
 
 ---
@@ -70,5 +78,13 @@ npm run build
 npm run e2e -- login.spec.js smoke-routes.spec.js localization.spec.js config-policy.spec.js
 npm run e2e -- workbench.spec.js
 ```
+
+完整本地交付验收可以在仓库根目录运行：
+
+```bash
+python scripts/run_acceptance.py
+```
+
+该脚本会临时启动 FastAPI 与 Vite，依次执行后端测试、前端单元测试、HTTP 契约测试和 Playwright 验收，结束后自动关闭服务。
 
 工作台是一线排程用户的主界面。改动前端时，应保持“先筛订单、再建草案、复核阻断、校验发布”的业务顺序，发布判断以后台返回为准。

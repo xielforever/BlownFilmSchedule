@@ -4,7 +4,7 @@
 
 ## Closure Decision
 
-Phases 1-4 are complete and remain the current production baseline for root-cause guidance. Phase 5 is intentionally deferred as a future what-if capability, not a blocker for closing the current scheduling workbench and solver-governance project.
+Phases 1-5 are complete for the current root-cause guidance scope. Phase 5 is implemented as a non-persistent single-order screening what-if API, which is enough to compare current diagnostics with proposed order changes without editing production data.
 
 ## Phase 1: Structured Diagnostics Core
 
@@ -43,10 +43,10 @@ Phases 1-4 are complete and remain the current production baseline for root-caus
 - [x] Browser-smoke Dashboard and Gantt with current database data.
 - [x] Export Markdown schedule report with order exceptions and plant-wide root-cause analysis.
 
-## Phase 5: Deferred What-If Enhancement
+## Phase 5: What-If Enhancement
 
-- [ ] Add non-persistent what-if API for single-order or single-machine changes.
-- [ ] Compare current diagnostics with what-if impact.
-- [ ] Keep all what-if actions as recommendations, not automatic edits.
+- [x] Add non-persistent what-if API for single-order changes.
+- [x] Compare current diagnostics with what-if impact.
+- [x] Keep all what-if actions as recommendations, not automatic edits.
 
-**Status**: deferred. Reopen this as a separate goal when the product needs interactive scenario simulation.
+**Status**: implemented. Evidence: `POST /api/schedule/what-if/order`, `tests/test_policy_settings.py`, `tests/test_api.py`, and the acceptance script HTTP test path.

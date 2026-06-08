@@ -127,6 +127,39 @@ class TestHttpApiSmoke(unittest.TestCase):
         response.raise_for_status()
         self.assertIsInstance(response.json(), list)
 
+    def test_order_what_if_contract(self):
+        orders = requests.get(
+            f"{self.base_url}/api/orders",
+            headers=self.headers,
+            params={"page": 1, "size": 1},
+            timeout=10,
+        )
+        orders.raise_for_status()
+        items = orders.json().get("items", [])
+        if not items:
+            self.skipTest("no orders available for what-if contract test")
+
+        order_id = items[0]["order_id"]
+        response = requests.post(
+            f"{self.base_url}/api/schedule/what-if/order",
+            headers=self.headers,
+            json={
+                "order_id": order_id,
+                "changes": {"target_width": 99999},
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+        self.assertFalse(data["persistent"])
+        self.assertEqual(data["mode"], "order_screening")
+        self.assertEqual(data["order_id"], order_id)
+        self.assertIn("current", data)
+        self.assertIn("what_if", data)
+        self.assertIn("impact", data)
+        self.assertIn("target_width", data["changed_fields"])
+        self.assertEqual(data["what_if"]["screening_status"], "blocked")
+
 
 if __name__ == "__main__":
     unittest.main()

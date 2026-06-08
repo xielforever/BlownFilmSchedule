@@ -129,6 +129,16 @@ Dashboard's Run Schedule uses the same database scheduling path. Before running,
 
 For more complete real data scheduling checks, see `docs/real_data_scheduling.md`.
 
+### Full Local Acceptance
+
+Run the complete local acceptance path from the repository root:
+
+```bash
+python scripts/run_acceptance.py
+```
+
+This starts temporary FastAPI and Vite services, runs backend tests, frontend unit tests, HTTP contract tests, and Playwright workbench checks, then stops the temporary services.
+
 ---
 
 ## 📝 Contributing & License

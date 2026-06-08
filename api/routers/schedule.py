@@ -1,4 +1,5 @@
 """Schedule, run history, and Gantt API."""
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -21,6 +22,8 @@ from api.deps import get_db
 from api.routers.orders import (
     _ensure_order_screening_override_schema,
     _ensure_order_screening_schema,
+    _screening_machine_from_row,
+    _screening_order_from_row,
     _mark_order_screening_cache_stale,
 )
 from src.config import BASELINE_TIME, CONTINUOUS_RUN_LIMIT_MINUTES
@@ -413,6 +416,26 @@ class CancelPreplanPayload(BaseModel):
 class QueueStatusUpdatePayload(BaseModel):
     queue_status: str
     reason: str = ""
+
+
+class OrderWhatIfChanges(BaseModel):
+    target_width: Optional[int] = Field(default=None, gt=0)
+    target_thickness: Optional[int] = Field(default=None, gt=0)
+    total_quantity_kg: Optional[int] = Field(default=None, gt=0)
+    cleanroom_req: Optional[str] = None
+    customer_class: Optional[str] = None
+    order_class: Optional[str] = None
+    corona_req: Optional[bool] = None
+    core_size_inch: Optional[int] = Field(default=None, gt=0)
+    due_date: Optional[datetime] = None
+    material_available_time: Optional[datetime] = None
+    priority_override: Optional[int] = None
+    status: Optional[str] = None
+
+
+class OrderWhatIfPayload(BaseModel):
+    order_id: str
+    changes: OrderWhatIfChanges
 
 
 def _ensure_planning_schema(db):
@@ -953,6 +976,158 @@ def _order_screening_policy(settings: dict) -> dict[str, Any]:
             settings,
             "screening_required_positive_order_fields",
         ),
+    }
+
+
+def _datetime_to_baseline_mins(value: datetime | None) -> int:
+    if value is None:
+        return 0
+    base = datetime.strptime(BASELINE_TIME, "%Y-%m-%d %H:%M")
+    return int((_as_naive(value) - base).total_seconds() / 60)
+
+
+def _apply_order_what_if_changes(
+    order: ProductionOrderModel,
+    status: str,
+    changes: dict[str, Any],
+) -> tuple[ProductionOrderModel, str, list[str]]:
+    updates: dict[str, Any] = {}
+    changed_fields: list[str] = []
+    next_status = status
+
+    field_map = {
+        "target_width": "target_width",
+        "target_thickness": "target_thickness",
+        "total_quantity_kg": "total_quantity_kg",
+        "cleanroom_req": "cleanroom_req",
+        "customer_class": "customer_class",
+        "order_class": "order_class",
+        "corona_req": "corona_req",
+        "core_size_inch": "core_size_inch",
+        "priority_override": "priority_override",
+    }
+    for payload_field, model_field in field_map.items():
+        if payload_field not in changes:
+            continue
+        value = changes[payload_field]
+        if value != getattr(order, model_field):
+            updates[model_field] = value
+            changed_fields.append(payload_field)
+
+    if "due_date" in changes:
+        due_mins = _datetime_to_baseline_mins(changes["due_date"])
+        if due_mins != order.due_date_mins:
+            updates["due_date_mins"] = due_mins
+            changed_fields.append("due_date")
+    if "material_available_time" in changes:
+        material_mins = _datetime_to_baseline_mins(changes["material_available_time"])
+        if material_mins != order.material_available_mins:
+            updates["material_available_mins"] = material_mins
+            changed_fields.append("material_available_time")
+    if "status" in changes:
+        candidate_status = str(changes["status"]).strip().upper()
+        if candidate_status and candidate_status != status:
+            next_status = candidate_status
+            changed_fields.append("status")
+
+    return replace(order, **updates), next_status, changed_fields
+
+
+def _screen_single_order_for_what_if(
+    order: ProductionOrderModel,
+    machines,
+    *,
+    status: str,
+    product_exists: bool,
+    screening_policy: dict[str, Any],
+    scope: str,
+) -> dict[str, Any]:
+    result = screen_orders(
+        [order],
+        machines,
+        status_by_order_id={order.order_id: status},
+        product_exists_by_order_id={order.order_id: product_exists},
+        scope=scope,
+        screening_policy=screening_policy,
+    )
+    item = (result.get("items") or [{}])[0]
+    item["summary"] = result.get("summary") or {}
+    return item
+
+
+def _screening_impact(current: dict[str, Any], what_if: dict[str, Any]) -> dict[str, Any]:
+    before_status = current.get("screening_status")
+    after_status = what_if.get("screening_status")
+    before_bucket = current.get("business_bucket")
+    after_bucket = what_if.get("business_bucket")
+    before_code = current.get("code")
+    after_code = what_if.get("code")
+    rank = {"blocked": 0, "risk": 1, "ready": 2}
+    before_rank = rank.get(before_status, -1)
+    after_rank = rank.get(after_status, -1)
+    if after_rank > before_rank:
+        direction = "improved"
+    elif after_rank < before_rank:
+        direction = "regressed"
+    else:
+        direction = "unchanged"
+    return {
+        "screening_status_changed": before_status != after_status,
+        "business_bucket_changed": before_bucket != after_bucket,
+        "code_changed": before_code != after_code,
+        "before_status": before_status,
+        "after_status": after_status,
+        "before_business_bucket": before_bucket,
+        "after_business_bucket": after_bucket,
+        "before_code": before_code,
+        "after_code": after_code,
+        "direction": direction,
+        "can_enter_preplan_before": before_status in {"ready", "risk"},
+        "can_enter_preplan_after": after_status in {"ready", "risk"},
+    }
+
+
+def _load_order_what_if_context(db, order_id: str) -> dict[str, Any]:
+    cur = db.cursor()
+    cur.execute("""
+        SELECT o.*, COALESCE(c.customer_class, 'STANDARD') AS customer_class,
+            (p.product_type IS NOT NULL) AS product_exists,
+            COALESCE(recipe_layers.layers, 0) AS recipe_layers,
+            COALESCE(recipe_layers.materials, ARRAY[]::VARCHAR[]) AS recipe_materials
+        FROM production_orders o
+        LEFT JOIN customers c ON c.customer_id=o.customer_id
+        LEFT JOIN products p ON p.product_type=o.product_type
+        LEFT JOIN (
+            SELECT product_type,
+                COUNT(*) AS layers,
+                ARRAY_AGG(material_grade ORDER BY layer) AS materials
+            FROM recipes
+            GROUP BY product_type
+        ) recipe_layers ON recipe_layers.product_type=o.product_type
+        WHERE o.order_id=%s
+    """, (order_id,))
+    order_row = cur.fetchone()
+    if not order_row:
+        raise HTTPException(status_code=404, detail=f"订单不存在: {order_id}")
+
+    cur.execute("""
+        SELECT machine_id, name, cleanroom_level, layer_structure,
+            die_diameter_mm, min_width, max_width, min_thickness,
+            max_thickness, hourly_output_kg, max_slitting_lanes
+        FROM machines
+        WHERE status='ACTIVE'
+        ORDER BY machine_id
+    """)
+    machines = [_screening_machine_from_row(row) for row in cur.fetchall()]
+    settings = _get_schedule_settings(db)
+    return {
+        "order_row": order_row,
+        "order": _screening_order_from_row(order_row),
+        "machines": machines,
+        "screening_policy": _order_screening_policy(settings),
+        "policy_version": int(settings.get("policy_version") or 1),
+        "product_exists": bool(order_row.get("product_exists")),
+        "status": str(order_row.get("status") or "PENDING").upper(),
     }
 
 
@@ -4002,6 +4177,56 @@ def get_schedule_diagnostics(
         "run_id": run_id,
         "diagnostics": diagnostics,
         "counts": _diagnostic_counts(diagnostics),
+    }
+
+
+@router.post("/what-if/order")
+def preview_order_what_if(
+    payload: OrderWhatIfPayload,
+    db=Depends(get_db),
+    _=Depends(get_current_user),
+):
+    changes = payload.changes.model_dump(exclude_unset=True)
+    if not changes:
+        raise HTTPException(status_code=400, detail="至少提供一个订单字段用于 what-if 模拟。")
+
+    context = _load_order_what_if_context(db, payload.order_id)
+    current = _screen_single_order_for_what_if(
+        context["order"],
+        context["machines"],
+        status=context["status"],
+        product_exists=context["product_exists"],
+        screening_policy=context["screening_policy"],
+        scope="what_if_current",
+    )
+    hypothetical_order, hypothetical_status, changed_fields = _apply_order_what_if_changes(
+        context["order"],
+        context["status"],
+        changes,
+    )
+    if not changed_fields:
+        raise HTTPException(status_code=400, detail="what-if 字段与当前订单一致，未产生可比较变化。")
+
+    what_if = _screen_single_order_for_what_if(
+        hypothetical_order,
+        context["machines"],
+        status=hypothetical_status,
+        product_exists=context["product_exists"],
+        screening_policy=context["screening_policy"],
+        scope="what_if_hypothetical",
+    )
+    impact = _screening_impact(current, what_if)
+    return {
+        "mode": "order_screening",
+        "persistent": False,
+        "order_id": payload.order_id,
+        "policy_version": context["policy_version"],
+        "changed_fields": changed_fields,
+        "current": current,
+        "what_if": what_if,
+        "impact": impact,
+        "recommendations": what_if.get("recommendations") or [],
+        "message": "该 what-if 结果仅用于排程诊断预览，不会修改订单、草案或制造队列。",
     }
 
 

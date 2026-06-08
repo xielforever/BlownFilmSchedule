@@ -42,14 +42,19 @@ class TestPreplanDetailContract(unittest.TestCase):
             )
 
     def _pending_order_ids(self, limit=12):
-        response = requests.get(
-            f"{self.base_url}/api/orders",
+        response = requests.post(
+            f"{self.base_url}/api/orders/screening",
             headers=self.headers,
-            params={"status": "PENDING", "page": 1, "size": limit},
+            json={"scope": "pending"},
             timeout=10,
         )
         response.raise_for_status()
-        return [item["order_id"] for item in response.json().get("items", [])]
+        schedulable = [
+            item["order_id"]
+            for item in response.json().get("items", [])
+            if item.get("screening_status") in {"ready", "risk"}
+        ]
+        return schedulable[:limit]
 
     def test_preplan_detail_returns_authoritative_order_buckets(self):
         settings = requests.get(
