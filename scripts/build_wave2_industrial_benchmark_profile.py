@@ -31,6 +31,7 @@ from src.config import DATABASE_CONFIG
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_POLICY = ROOT / "data" / "wave2" / "industrial_benchmark_policy.json"
 DEFAULT_OUTPUT = ROOT / "output" / "wave2_industrial_benchmark_profile.json"
+UNKNOWN_POLYMER_FAMILIES = {"", "UNKNOWN", "OTHER", "UNCLASSIFIED", "N/A", "NA"}
 
 
 def _connect():
@@ -53,9 +54,19 @@ def _rows(cur, sql: str, params=None) -> list[dict[str, Any]]:
     return [dict(row) for row in cur.fetchall()]
 
 
+def _family(value: str | None) -> str:
+    return str(value or "UNKNOWN").strip().upper() or "UNKNOWN"
+
+
 def _recipe_family(layer_count: int, polymer_families: list[str], policy: dict[str, Any]) -> dict[str, Any]:
-    families = {str(x or "OTHER").upper() for x in polymer_families}
-    primary = families - {"TIE", "ADDITIVE", "OTHER"}
+    families = {_family(x) for x in polymer_families}
+    unknown = families.intersection(UNKNOWN_POLYMER_FAMILIES)
+    if unknown:
+        raise ValueError(
+            "Benchmark recipe classification requires explicit polymer_family for every layer; "
+            f"unknown families={sorted(unknown)}"
+        )
+    primary = families - {"TIE", "ADDITIVE"}
     for rule in policy["recipe_family_rules"]:
         if rule.get("contains_any_polymer_family"):
             if families.intersection({x.upper() for x in rule["contains_any_polymer_family"]}):
@@ -111,7 +122,7 @@ def collect_profile(conn, policy: dict[str, Any]) -> dict[str, Any]:
             cur,
             """
             SELECT rl.recipe_version_id, rl.layer_index, rl.material_grade,
-                   rl.ratio_pct, COALESCE(r.polymer_family, 'OTHER') AS polymer_family
+                   rl.ratio_pct, r.polymer_family
             FROM recipe_layers rl
             JOIN raw_materials r ON r.material_grade=rl.material_grade
             ORDER BY rl.recipe_version_id, rl.layer_index
@@ -150,19 +161,47 @@ def collect_profile(conn, policy: dict[str, Any]) -> dict[str, Any]:
 
     recipe_meta: dict[str, dict[str, Any]] = {}
     blocked_recipes = []
+    unknown_material_families: list[dict[str, Any]] = []
     for recipe in recipes:
         recipe_layers = layers_by_recipe.get(recipe["recipe_version_id"], [])
-        families = [row["polymer_family"] for row in recipe_layers]
-        family_rule = _recipe_family(int(recipe["layer_count"]), families, policy)
-        releasable = bool(recipe.get("structurally_releasable"))
+        normalized_families = [_family(row.get("polymer_family")) for row in recipe_layers]
+        unknown_layers = [
+            {
+                "layer_index": row["layer_index"],
+                "material_grade": row["material_grade"],
+                "polymer_family": row.get("polymer_family"),
+            }
+            for row in recipe_layers
+            if _family(row.get("polymer_family")) in UNKNOWN_POLYMER_FAMILIES
+        ]
+        structure_ok = bool(recipe.get("structurally_releasable"))
+        identity_ok = not unknown_layers
+        family_rule = None
+        if identity_ok:
+            family_rule = _recipe_family(int(recipe["layer_count"]), normalized_families, policy)
+        releasable = structure_ok and identity_ok
         recipe_meta[recipe["recipe_version_id"]] = {
             "recipe": recipe,
             "layers": recipe_layers,
-            "families": sorted(set(families)),
+            "families": sorted(set(normalized_families)),
             "family_rule": family_rule,
             "releasable": releasable,
         }
+        if unknown_layers:
+            unknown_material_families.extend(
+                {
+                    "recipe_version_id": recipe["recipe_version_id"],
+                    "product_type": recipe["product_type"],
+                    **item,
+                }
+                for item in unknown_layers
+            )
         if not releasable:
+            reasons = []
+            if not structure_ok:
+                reasons.append("recipe layer/ratio validation incomplete")
+            if unknown_layers:
+                reasons.append("one or more layer material polymer_family values are UNKNOWN/OTHER")
             blocked_recipes.append({
                 "recipe_version_id": recipe["recipe_version_id"],
                 "product_type": recipe["product_type"],
@@ -170,7 +209,8 @@ def collect_profile(conn, policy: dict[str, Any]) -> dict[str, Any]:
                 "layer_count": recipe["layer_count"],
                 "missing_ratio_count": recipe.get("missing_ratio_count"),
                 "ratio_total": str(recipe.get("ratio_total")) if recipe.get("ratio_total") is not None else None,
-                "reason": "Benchmark profile refuses to fabricate missing recipe ratios or layer structure.",
+                "unknown_material_layers": unknown_layers,
+                "reason": "; ".join(reasons),
             })
 
     pp_recipes = [
@@ -227,9 +267,9 @@ def collect_profile(conn, policy: dict[str, Any]) -> dict[str, Any]:
             "approved_by": policy["recipe_release_policy"]["approved_by"] if meta["releasable"] else None,
             "approved_at": policy["recipe_release_policy"]["approved_at"] if meta["releasable"] else None,
             "change_reason": (
-                f"SIMULATED benchmark release; family={rule['family']}; ratios preserved from runtime recipe master."
+                f"SIMULATED benchmark release; family={rule['family']}; ratios and material identity preserved from runtime master."
                 if meta["releasable"] else
-                "Not released: runtime recipe structure/ratio validation is incomplete."
+                "Not released: runtime recipe structure/ratio or material identity validation is incomplete."
             )
         })
 
@@ -403,7 +443,7 @@ def collect_profile(conn, policy: dict[str, Any]) -> dict[str, Any]:
     corona_required_orders = sum(1 for row in active_orders if row.get("corona_req"))
 
     return {
-        "contract_version": "2026-08-28-benchmark-profile-1",
+        "contract_version": "2026-08-28-benchmark-profile-2",
         "profile_class": "SIMULATED_WITH_OFFICIAL_ENVELOPE",
         "production_authority": False,
         "source": source,
@@ -418,11 +458,13 @@ def collect_profile(conn, policy: dict[str, Any]) -> dict[str, Any]:
         "inventory_release": inventory_rows,
         "benchmark_diagnostics": {
             "blocked_recipes": blocked_recipes,
+            "unknown_material_families": unknown_material_families,
             "active_orders_missing_recipe_version": active_order_recipe_missing,
             "corona_required_active_order_count": corona_required_orders,
             "water_quench_machine_ids": sorted(water_quench_machine_ids),
             "notes": [
                 "No missing recipe ratio is fabricated.",
+                "UNKNOWN/OTHER polymer family blocks benchmark recipe release until exact-grade identity is reviewed.",
                 "Exact manufacturer medical exclusion always wins over simulated benchmark approval.",
                 "Machine x Recipe rate is recipe-differentiated but remains simulated.",
                 "Apply with apply_wave2_plant_overrides.py; Wave 2 enforcement mode remains LEGACY."
@@ -433,6 +475,7 @@ def collect_profile(conn, policy: dict[str, Any]) -> dict[str, Any]:
             "recipe_versions": len(recipes),
             "benchmark_released_recipes": sum(1 for row in recipe_rows if row["apply"] and row["status"] == "RELEASED"),
             "blocked_recipe_count": len(blocked_recipes),
+            "unknown_material_family_count": len(unknown_material_families),
             "material_qualifications": len(material_rows),
             "machine_recipe_qualified_pairs": len(machine_recipe_rows),
             "machine_material_capabilities": len(machine_material_rows),
@@ -469,7 +512,7 @@ def main() -> int:
 
     print(json.dumps(profile["summary"], ensure_ascii=False, indent=2))
     if profile["benchmark_diagnostics"]["blocked_recipes"]:
-        print("WARNING: benchmark profile contains unreleased recipes due to incomplete layer/ratio master.")
+        print("WARNING: benchmark profile contains unreleased recipes due to incomplete ratio/identity master.")
     print(f"Wrote benchmark profile: {output}")
     return 0
 
