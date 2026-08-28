@@ -1,4 +1,4 @@
-"""Static safety contract for the Wave 2 additive domain migration.
+"""Static safety contract for the Wave 2 additive domain migrations.
 
 These tests do not require PostgreSQL. They prevent future edits from turning the
 migration into a destructive change or silently approving unverified medical data.
@@ -12,19 +12,30 @@ import unittest
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MIGRATION_PATH = os.path.join(
-    ROOT,
-    "db",
-    "migrations",
-    "20260828_wave2_domain_schema.sql",
-)
+MIGRATION_PATHS = [
+    os.path.join(
+        ROOT,
+        "db",
+        "migrations",
+        "20260828_wave2_domain_schema.sql",
+    ),
+    os.path.join(
+        ROOT,
+        "db",
+        "migrations",
+        "20260828_wave2_domain_schema_guardrails.sql",
+    ),
+]
 
 
 class TestWave2DomainSchemaContract(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        with open(MIGRATION_PATH, "r", encoding="utf-8") as handle:
-            cls.sql = handle.read()
+        parts = []
+        for path in MIGRATION_PATHS:
+            with open(path, "r", encoding="utf-8") as handle:
+                parts.append(handle.read())
+        cls.sql = "\n\n".join(parts)
         cls.sql_upper = cls.sql.upper()
 
     def test_migration_is_additive_only(self):
@@ -46,6 +57,7 @@ class TestWave2DomainSchemaContract(unittest.TestCase):
             self.sql_upper,
             r"DOMAIN_V2_ENFORCEMENT_MODE\s+VARCHAR\(20\)\s+NOT\s+NULL\s+DEFAULT\s+'LEGACY'",
         )
+        self.assertIn("'LEGACY', 'SHADOW', 'HARD'", self.sql)
 
     def test_legacy_recipe_backfill_is_not_released(self):
         self.assertIn("MIGRATED_UNVERIFIED", self.sql_upper)
@@ -97,6 +109,16 @@ class TestWave2DomainSchemaContract(unittest.TestCase):
         self.assertIn("SRC-SIM-LEGACY", self.sql)
         self.assertIn("Legacy 72h value. Not asserted as a universal ISO/FDA rule.", self.sql)
         self.assertIn("Legacy rule keyed by order urgency/class", self.sql)
+
+    def test_material_available_view_blocks_unreleased_and_expired_lots(self):
+        self.assertIn("mi.status = 'IN_STOCK'", self.sql)
+        self.assertIn("mi.release_status = 'RELEASED'", self.sql)
+        self.assertIn("mi.use_before_date > NOW()", self.sql)
+        self.assertIn("AS materially_usable", self.sql)
+        self.assertRegex(
+            self.sql,
+            r"CASE\s+WHEN[\s\S]*?release_status = 'RELEASED'[\s\S]*?THEN GREATEST",
+        )
 
     def test_required_v2_tables_exist_in_contract(self):
         required = {
