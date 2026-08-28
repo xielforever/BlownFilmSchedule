@@ -204,7 +204,7 @@ def _apply(cur, config: dict[str, Any]) -> dict[str, int]:
             INSERT INTO machine_material_capabilities
                 (machine_id, extruder_position, polymer_family, capability_status, source_id, valid_from, valid_to)
             VALUES (%s,%s,%s,%s,%s,%s,%s)
-            ON CONFLICT (machine_id, COALESCE(extruder_position, 0), polymer_family)
+            ON CONFLICT (machine_id, (COALESCE(extruder_position, 0)), polymer_family)
             DO UPDATE SET
                 capability_status=EXCLUDED.capability_status,
                 source_id=EXCLUDED.source_id,
