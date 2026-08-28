@@ -70,7 +70,6 @@ class TestWave2MasterDataPopulationContract(unittest.TestCase):
         aliases = {alias.casefold() for alias in le6600["exact_aliases"]}
         self.assertNotIn("borealis_le6601-ph", aliases)
         self.assertNotIn("bormed le6601-ph", aliases)
-
         watch = self.catalog["legacy_identity_watchlist"][0]
         self.assertIn("LE6601", " ".join(watch["exact_aliases"]))
         self.assertEqual(watch["action"], "KEEP_UNVERIFIED_NOT_ALIASED_TO_LE6600")
@@ -117,6 +116,15 @@ class TestWave2MasterDataPopulationContract(unittest.TestCase):
         self.assertIn("PLANT_MASTER", allowed_values)
         self.assertIn("SIMULATED", allowed_values)
 
+    def test_machine_extruder_override_is_explicit_and_does_not_invent_screw(self):
+        self.assertIn("ALLOWED_EXTRUDER_STATUS", self.override_script)
+        self.assertIn("INSERT INTO machine_extruders", self.override_script)
+        self.assertIn("Applied machine extruder requires extruder_position > 0", self.override_script)
+        row = self.override_example["machine_extruders"][0]
+        self.assertFalse(row["apply"])
+        self.assertGreater(row["extruder_position"], 0)
+        self.assertIsNone(row["screw_diameter_mm"])
+
     def test_machine_material_upsert_targets_expression_index(self):
         self.assertIn(
             "ON CONFLICT (machine_id, (COALESCE(extruder_position, 0)), polymer_family)",
@@ -131,9 +139,15 @@ class TestWave2MasterDataPopulationContract(unittest.TestCase):
         self.assertIn("v_recipe_version_validation", self.override_script)
         self.assertIn("Cannot RELEASE recipe", self.override_script)
 
+    def test_material_qualification_override_is_idempotent(self):
+        self.assertIn("INSERT INTO material_qualifications", self.override_script)
+        self.assertIn("WHERE NOT EXISTS", self.override_script)
+        self.assertIn("IS NOT DISTINCT FROM", self.override_script)
+
     def test_override_example_is_noop_by_default(self):
         collections = [
             "machines",
+            "machine_extruders",
             "machine_material_capabilities",
             "machine_feature_capabilities",
             "cleaning_validation_groups",
