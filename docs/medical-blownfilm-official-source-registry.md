@@ -142,6 +142,16 @@ The lower-priority source must never silently overwrite a validated higher-prior
 - APS use: supports PP water-quench medical-film archetype.
 - Important wording: `intended for evaluation` must not be converted to universal `APPROVED` automatically.
 
+### SRC-MAT-BORMED-LE6600PH
+
+- Manufacturer: Borealis
+- Grade: Bormed LE6600-PH
+- Current official medical-use statement: `Statement on Compliance to Regulations on Medical Use`, Edition 22, dated 2025-11-18.
+- URL: https://www.borealisgroup.com/storage/Datasheets/bormed/le6600-ph/LE6600-PH-PL_STAT-REG_WORLD-EN-V22-PLS_PHARM-48798-10006051.pdf
+- Published material references include European Pharmacopoeia monographs 3.1.3 and 3.1.4, USP `<87>`, USP `<88>` Class VI at 70 °C, USP `<661.1>`, and FDA Drug Master File DMF 027587.
+- Typical material reference used by this project: LDPE, MFR 1.5 g/10 min at 190 °C / 2.16 kg, density 0.919 g/cm³.
+- APS rule: this is strong manufacturer-level healthcare evidence, but still does **not** create a plant `APPROVED` qualification automatically.
+
 ### SRC-MAT-SABIC-PCGF0863
 
 - Manufacturer: SABIC
@@ -150,6 +160,15 @@ The lower-priority source must never silently overwrite a validated higher-prior
 - Published facts: healthcare HDPE, flexible packaging/pharmaceutical/device uses, density 964 kg/m³, MFR 8 g/10 min; official page references EP/USP compliance.
 - APS use: healthcare HDPE candidate material only after product-specific qualification.
 
+### Historical identity watch — Bormed LE6601-PH
+
+The legacy project/test data may contain forms such as `Borealis_LE6601-PH`.
+
+- `LE6601-PH` must **not** be silently renamed or aliased to `LE6600-PH`.
+- The 2026-08-28 review did not confirm a current Borealis official product page for LE6601-PH.
+- Historical third-party material databases still contain LE6601-PH and identify it as a historical/discontinued grade.
+- APS migration action: keep the exact legacy identity, mark it unverified until an approved historical supplier/TDS/plant record is supplied, and never inherit LE6600-PH evidence by name similarity.
+
 ## 5. Barrier / Tie / PA Technical References
 
 ### SRC-MAT-EVAL-F171B
@@ -157,6 +176,7 @@ The lower-priority source must never silently overwrite a validated higher-prior
 - Manufacturer: Kuraray
 - Grade: EVAL F171B EVOH
 - URL: https://eval.kuraray.com/en-emea/downloads/tds-eval-f171b/
+- Official TDS typical values: MFR 1.6 g/10 min at 190 °C / 2.16 kg, density 1.19 g/cm³, melting temperature 183 °C, and OTR 0.3 cm³·20µm/m²·day·atm at 20 °C / 65% RH.
 - Use: technical EVOH barrier reference.
 - Medical status rule: `TECHNICAL_REFERENCE` unless a product-specific healthcare/regulatory qualification source is added.
 
@@ -166,6 +186,7 @@ The lower-priority source must never silently overwrite a validated higher-prior
 - Grade: Plexar PX3236
 - URL: https://www.lyondellbasell.com/en/polymers/p/Plexar-PX3236/e105e830-491c-447f-b3c3-8babe86106ea
 - Published use: tie-layer resin for bonding dissimilar materials including PA and EVOH; blown/cast film/coextrusion use.
+- Typical reference: MFR 2.0 g/10 min at 190 °C / 2.16 kg and density 0.922 g/cm³.
 - Medical status rule: `TECHNICAL_REFERENCE` until qualified for the target healthcare structure.
 
 ### SRC-MAT-BASF-B36L
@@ -173,17 +194,18 @@ The lower-priority source must never silently overwrite a validated higher-prior
 - Manufacturer: BASF
 - Grade: Ultramid B36 L
 - URL: https://chemicals.basf.com/global/en/Monomers/polyamides-and-precursors
-- Published use: PA6 extrusion grade for blown film, casing and water-cooled film.
+- Published use: PA6 extrusion grade for blown film, casing and water-cooled film; BASF lists melting point 220 °C.
 - APS use: PA process/material capability reference.
 - Medical status rule: do not infer healthcare approval from film-process suitability.
+- Data rule: do not fabricate a single density/MFR value when the current official source only supports another property or a range.
 
 ## 6. Explicit Negative Control
 
-### SRC-MAT-EXACT5101-NEGATIVE
+### SRC-MAT-EXACT5101-EXCLUDE
 
 - Manufacturer: ExxonMobil
 - Grade: Exact 5101
-- Product family page: https://www.exxonmobilchemical.com/en/resources/product-data-sheets/polyethylene/exact-plastomers-film-packaging
+- Product family/data source: https://www.exxonmobilchemical.com/en/chemicals/webapi/dps/v1/datasheets/150000103377/0/en
 - Published blown-film use is technically suitable for packaging.
 - The product datasheet legal statement explicitly states that the product is not intended for medical applications.
 - APS rule: this grade is a useful negative-control test case and must be `EXCLUDED_MEDICAL` for medical-product scheduling.
@@ -224,3 +246,4 @@ model_version
 4. Cleanroom class, cleaning cadence, purge time, setup loss and production rate are plant-specific unless the cited source explicitly defines them for the exact resource/process.
 5. A plant SOP can legitimately override generic simulation values, but the source must be recorded.
 6. No hard constraint may be labeled `REGULATORY` unless a cited standard/regulation actually requires that constraint for the applicable product/process.
+7. Similar grade names are never identity evidence. `LE6601-PH` and `LE6600-PH` remain distinct until an authoritative source explicitly relates them.
