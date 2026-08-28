@@ -2,8 +2,8 @@
 
 This builds on audit_wave2_domain_coverage and checks the data paths Wave 3 will
 actually consume: recipe material requirements, explicit CORONA capability, machine
-material capability, known material identity, and at least one qualified Machine x
-Recipe rate for each released recipe used by an active order.
+extruder positions, machine material capability, known material identity, and at least
+one qualified Machine x Recipe rate for each released recipe used by an active order.
 """
 
 from __future__ import annotations
@@ -81,6 +81,29 @@ def collect_extended(conn) -> dict:
             FROM machine_feature_capabilities f
             JOIN machines m ON m.machine_id=f.machine_id
             WHERE m.status='ACTIVE' AND f.feature_code='CORONA'
+            """,
+        )
+        machine_extruder_positions = _scalar(
+            cur,
+            """
+            SELECT COUNT(*) AS n
+            FROM machine_extruders e
+            JOIN machines m ON m.machine_id=e.machine_id
+            WHERE m.status='ACTIVE' AND e.status IN ('ACTIVE','AVAILABLE')
+            """,
+        )
+        machines_with_incomplete_extruder_model = _scalar(
+            cur,
+            """
+            SELECT COUNT(*) AS n
+            FROM machines m
+            WHERE m.status='ACTIVE'
+              AND (
+                  SELECT COUNT(*)
+                  FROM machine_extruders e
+                  WHERE e.machine_id=m.machine_id
+                    AND e.status IN ('ACTIVE','AVAILABLE')
+              ) < m.layer_structure
             """,
         )
         machine_material_capabilities = _scalar(
@@ -165,6 +188,8 @@ def collect_extended(conn) -> dict:
         blockers.append("active_orders_missing_material_requirements")
     if active_machines and corona_explicit < active_machines:
         blockers.append("active_machines_missing_explicit_corona_capability")
+    if machines_with_incomplete_extruder_model:
+        blockers.append("active_machine_extruder_position_model_incomplete")
     if machine_material_capabilities == 0:
         blockers.append("no_qualified_machine_material_capability")
     if active_released_recipes and active_released_recipes_with_rate < active_released_recipes:
@@ -184,6 +209,8 @@ def collect_extended(conn) -> dict:
         "material_shortage_rows": shortage_rows,
         "active_machines": active_machines,
         "machines_with_explicit_corona_capability": corona_explicit,
+        "machine_extruder_positions": machine_extruder_positions,
+        "machines_with_incomplete_extruder_model": machines_with_incomplete_extruder_model,
         "qualified_machine_material_capability_rows": machine_material_capabilities,
         "active_released_recipes": active_released_recipes,
         "active_released_recipes_with_qualified_rate": active_released_recipes_with_rate,
@@ -195,7 +222,7 @@ def collect_extended(conn) -> dict:
         "blockers": sorted(set(blockers)),
         "note": (
             "Material shortage rows are valid scenario state and are reported, but shortage alone is not a data-completeness blocker. "
-            "UNKNOWN/OTHER polymer family is a master-data blocker, not a PE default."
+            "UNKNOWN/OTHER polymer family and incomplete extruder positions are master-data blockers."
         )
     }
     return base
