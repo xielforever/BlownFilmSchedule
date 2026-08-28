@@ -39,6 +39,9 @@ The register is intentionally separate from each plan. Individual plans can keep
 | docs/git-status-cleanup-goal-plan.md | archived | historical cleanup plan; execution results list commits `6371180`, `ee320cc`, `2b88ab0`, `118dab5` |
 | docs/medical-blownfilm-domain-gap-audit.md | active | Wave 1 repository/domain crosswalk; P0/P1/P2 gaps and implementation waves recorded on 2026-08-28 |
 | docs/medical-blownfilm-official-source-registry.md | active | official ISO/FDA/OEM/material source baseline and provenance rules recorded on 2026-08-28 |
+| docs/medical-blownfilm-wave2-target-domain-model.md | active | Wave 2 target aggregates, invariants, eligibility model and source-of-truth rules on `wave2-domain-schema` |
+| docs/medical-blownfilm-wave2-schema-compatibility-design.md | active | additive V2 schema, LEGACY/SHADOW/HARD migration and backfill design on `wave2-domain-schema` |
+| docs/medical-blownfilm-wave2-data-contract-crosswalk.md | active | legacy-to-V2 authority mapping, solver input and snapshot contracts on `wave2-domain-schema` |
 | docs/order-flow-closed-loop-goal-plan.md | verified | document lists P0/P1 acceptance cases completed and verification commands |
 | docs/real_data_scheduling.md | active | operational guide for current database scheduling checks |
 | docs/root-cause-guidance-plan.md | superseded | root-cause implementation tracked by `docs/root-cause-guidance-todo.md` |
@@ -62,6 +65,14 @@ The register is intentionally separate from each plan. Individual plans can keep
 - `docs/medical-blownfilm-official-source-registry.md` is the evidence baseline for future medical blown-film master-data and simulation changes.
 - `docs/medical-blownfilm-domain-gap-audit.md` opens a new domain-correctness goal without reopening the previously verified solver/workbench goal scope.
 - New implementation work should preserve the verified CP-SAT/workbench architecture while resolving the audit P0 items before expanding optimization scope.
+
+## Wave 2 Domain/Schema 2026-08-28
+
+- Work is isolated on branch `wave2-domain-schema` before any main-branch merge.
+- `docs/medical-blownfilm-wave2-target-domain-model.md` defines the target medical blown-film aggregates and hard domain invariants.
+- `docs/medical-blownfilm-wave2-schema-compatibility-design.md` defines an additive migration so current API/DB/solver paths remain compatible.
+- `docs/medical-blownfilm-wave2-data-contract-crosswalk.md` defines the exact authority switch from legacy fields to V2 fields.
+- Wave 2 documents remain `active` until additive schema/backfill implementation and consistency validation are completed; design completion alone is not marked `verified`.
 
 ## Validation
 
