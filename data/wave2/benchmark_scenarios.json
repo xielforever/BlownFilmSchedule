@@ -1,0 +1,156 @@
+{
+  "scenario_pack_version": "2026-08-28-v1",
+  "profile_class": "SIMULATED_WITH_OFFICIAL_ENVELOPE",
+  "purpose": "Deterministic domain scenarios for validating Wave 3 shadow/hard APS semantics. Expected outcomes are domain invariants, not optimizer objective scores.",
+  "scenarios": [
+    {
+      "id": "S01_BASELINE_FEASIBLE",
+      "priority": "P0",
+      "category": "baseline",
+      "mutation": "Use benchmark profile without additional disruption.",
+      "expected": [
+        "all active orders have explicit recipe_version_id",
+        "released recipes have complete ratios and known process route",
+        "every scheduled order-machine pair uses a QUALIFIED MachineRecipeCapability",
+        "no EXCLUDED_MEDICAL material is consumed"
+      ]
+    },
+    {
+      "id": "S02_MACHINE_RECIPE_RATE_DIFFERENTIATION",
+      "priority": "P0",
+      "category": "duration",
+      "mutation": "Compare the same order quantity on two eligible recipe families with different benchmark rate factors.",
+      "expected": [
+        "duration is calculated from Machine x Recipe standard_rate_kg_h",
+        "barrier recipe duration differs from PE mono/multilayer duration on the same machine baseline",
+        "legacy machine constant rate is reported only as comparison input"
+      ]
+    },
+    {
+      "id": "S03_CORONA_SCARCITY",
+      "priority": "P0",
+      "category": "feature_capability",
+      "mutation": "Select a corona-required order while at least one otherwise physically eligible machine has CORONA=false.",
+      "expected": [
+        "CORONA=false machine is excluded from the V2 eligible set",
+        "CORONA=true candidate machines remain eligible if all other constraints pass"
+      ]
+    },
+    {
+      "id": "S04_EXPLICIT_MEDICAL_EXCLUSION",
+      "priority": "P0",
+      "category": "material_qualification",
+      "mutation": "Construct a validation recipe/order referencing Exact 5101 or another grade with EXPLICITLY_EXCLUDED_MEDICAL evidence.",
+      "expected": [
+        "commercial medical order is BLOCKED",
+        "manufacturer negative evidence cannot be overridden by generic technical film capability",
+        "diagnostic identifies material qualification as the blocking dimension"
+      ]
+    },
+    {
+      "id": "S05_RECIPE_NOT_RELEASED",
+      "priority": "P0",
+      "category": "recipe_governance",
+      "mutation": "Use an order whose recipe remains MIGRATED_UNVERIFIED or has incomplete ratio validation.",
+      "expected": [
+        "commercial medical order is BLOCKED_MISSING_OR_UNRELEASED_RECIPE",
+        "no Standard_Med_LDPE fallback is used"
+      ]
+    },
+    {
+      "id": "S06_QC_HOLD_LOT",
+      "priority": "P0",
+      "category": "material_lot",
+      "mutation": "Set the only sufficient lot for one required grade to QC_HOLD while physical quantity remains positive.",
+      "expected": [
+        "v_material_lot_available returns zero usable quantity for the held lot",
+        "order material requirement reports shortage or no released supply",
+        "physical stock is not treated as APS-available stock"
+      ]
+    },
+    {
+      "id": "S07_COMPETING_LOT_RESERVATIONS",
+      "priority": "P0",
+      "category": "material_reservation",
+      "mutation": "Create two orders whose combined requirement exceeds released stock for the same grade.",
+      "expected": [
+        "active reservations cannot double-consume the same released lot quantity",
+        "at least one order is deferred/blocked or receives an explicit shortage diagnostic"
+      ]
+    },
+    {
+      "id": "S08_PROCESS_ROUTE_MISMATCH",
+      "priority": "P0",
+      "category": "process_route",
+      "mutation": "If a PP water-quench recipe exists, compare it against UPWARD_AIR machines; otherwise inject the scenario only in the extended PP benchmark pack.",
+      "expected": [
+        "UPWARD_AIR and DOWNWARD_WATER_QUENCH resources are not interchangeable",
+        "route mismatch is a hard eligibility failure"
+      ]
+    },
+    {
+      "id": "S09_LAYER_COUNT_TRANSITION_3_TO_5",
+      "priority": "P0",
+      "category": "setup",
+      "mutation": "Schedule a three-layer recipe followed by a five-layer recipe on a five-layer-capable line.",
+      "expected": [
+        "newly activated extruder positions are modeled as EMPTY -> MATERIAL transitions",
+        "setup time and startup scrap include the added positions",
+        "implementation must not truncate comparison with min(from_layers,to_layers)"
+      ]
+    },
+    {
+      "id": "S10_LAYER_COUNT_TRANSITION_5_TO_3",
+      "priority": "P0",
+      "category": "setup",
+      "mutation": "Schedule a five-layer recipe followed by a three-layer recipe.",
+      "expected": [
+        "deactivated positions are modeled as MATERIAL -> EMPTY transitions",
+        "cleaning/purge semantics remain explicit for removed layer positions"
+      ]
+    },
+    {
+      "id": "S11_MAINTENANCE_AND_BREAKDOWN",
+      "priority": "P0",
+      "category": "calendar_execution",
+      "mutation": "Insert maintenance and a runtime breakdown on a scarce eligible machine.",
+      "expected": [
+        "maintenance stays NoOverlap hard constraint",
+        "breakdown removes or shortens resource availability for replanning",
+        "locked/running work is not silently moved"
+      ]
+    },
+    {
+      "id": "S12_URGENT_INSERT_REPLAN",
+      "priority": "P1",
+      "category": "rolling_replan",
+      "mutation": "Add an urgent order after an initial plan exists.",
+      "expected": [
+        "running and frozen/locked tasks remain fixed",
+        "future unlocked tasks may move",
+        "Wave 3 shadow report records machine/start/sequence deltas versus prior plan"
+      ]
+    },
+    {
+      "id": "S13_PLAN_STABILITY",
+      "priority": "P1",
+      "category": "schedule_stability",
+      "mutation": "Add a low-impact order that does not require wholesale resequencing.",
+      "expected": [
+        "future stability objective can penalize unnecessary machine changes, start shifts and sequence changes",
+        "this scenario is observational in Wave 3 initial shadow phase and becomes an optimization acceptance test later"
+      ]
+    },
+    {
+      "id": "S14_RECIPE_REVISION",
+      "priority": "P1",
+      "category": "master_data_versioning",
+      "mutation": "Create a new recipe revision while an older released revision is referenced by an existing plan snapshot.",
+      "expected": [
+        "existing snapshot preserves the old recipe version identity",
+        "new orders bind only to the explicitly released revision",
+        "revision changes can mark affected drafts stale without mutating historical runs"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,167 @@
+{
+  "policy_version": "2026-08-28-benchmark-1",
+  "purpose": "Deterministic industrial benchmark assumptions for the existing BlownFilmSchedule plant. All plant-specific values generated from this policy are SIMULATED_WITH_OFFICIAL_ENVELOPE and are never production authority.",
+  "source": {
+    "source_id": "SRC-SIM-WAVE2-INDUSTRIAL-BENCHMARK",
+    "source_type": "SIMULATED",
+    "organization": "BlownFilmSchedule",
+    "title": "Wave 2 industrial benchmark plant profile",
+    "revision": "benchmark-1",
+    "confidence": "MEDIUM",
+    "metadata": {
+      "simulation_class": "SIMULATED_WITH_OFFICIAL_ENVELOPE",
+      "production_authority": false,
+      "official_source_registry": "docs/medical-blownfilm-official-source-registry.md"
+    }
+  },
+  "route_policy": {
+    "default_route": "UPWARD_AIR",
+    "pp_only_recipe_route": "DOWNWARD_WATER_QUENCH",
+    "allocate_water_quench_machines_only_if_pp_recipe_exists": true,
+    "max_water_quench_machine_count": 2,
+    "notes": "The existing project remains PE-first. PP water-quench resources are created only if the runtime recipe master actually contains PP-dominant recipes."
+  },
+  "cleanroom_compatibility": {
+    "Class_10K": {
+      "cleanroom_standard": "ISO_14644_SIMULATED_MAPPING",
+      "cleanroom_iso_class": 7
+    },
+    "Class_100K": {
+      "cleanroom_standard": "ISO_14644_SIMULATED_MAPPING",
+      "cleanroom_iso_class": 8
+    }
+  },
+  "recipe_family_rules": [
+    {
+      "family": "BARRIER_EVOH",
+      "contains_any_polymer_family": ["EVOH"],
+      "process_route": "UPWARD_AIR",
+      "cleaning_group": "BARRIER_EVOH",
+      "rate_factor": 0.72
+    },
+    {
+      "family": "BARRIER_PA",
+      "contains_any_polymer_family": ["PA6", "PA", "PA66"],
+      "process_route": "UPWARD_AIR",
+      "cleaning_group": "BARRIER_PA",
+      "rate_factor": 0.70
+    },
+    {
+      "family": "PP_WATER_QUENCH",
+      "all_primary_polymer_families_in": ["PP"],
+      "process_route": "DOWNWARD_WATER_QUENCH",
+      "cleaning_group": "PP_WATER_QUENCH",
+      "rate_factor": 0.90
+    },
+    {
+      "family": "PE_MULTILAYER",
+      "min_layer_count": 2,
+      "process_route": "UPWARD_AIR",
+      "cleaning_group": "GENERAL_MEDICAL_PE",
+      "rate_factor": 0.92
+    },
+    {
+      "family": "PE_MONO",
+      "max_layer_count": 1,
+      "process_route": "UPWARD_AIR",
+      "cleaning_group": "GENERAL_MEDICAL_PE",
+      "rate_factor": 1.00
+    }
+  ],
+  "rate_policy": {
+    "base": "legacy machines.hourly_output_kg",
+    "standard_rate_formula": "legacy_machine_rate * recipe_family.rate_factor",
+    "min_rate_factor": 0.90,
+    "max_rate_factor": 1.10,
+    "startup_rate_factor": 0.85,
+    "confidence": 0.75,
+    "quality_status": "BENCHMARK_VALIDATED",
+    "validation_protocol_id": "BENCH-W2-20260828",
+    "notes": "Legacy machine rate is used only as the benchmark machine baseline. Recipe factors create explicit Machine x Recipe differentiation; these are not OEM or plant-qualified production rates."
+  },
+  "feature_policy": {
+    "CORONA": {
+      "enabled_ratio_target": 0.70,
+      "selection": "deterministic_machine_order",
+      "notes": "Creates a scarce but non-singleton corona-capable resource pool for benchmark hard-constraint tests."
+    },
+    "IBC": {
+      "enabled_when_min_layers": 3
+    },
+    "AUTO_GAUGE": {
+      "enabled_ratio_target": 0.60,
+      "selection": "deterministic_machine_order"
+    },
+    "GRAVIMETRIC_DOSING": {
+      "enabled_when_min_layers": 3
+    }
+  },
+  "cleaning_groups": [
+    {"group_id": "GENERAL_MEDICAL_PE", "group_name": "General medical PE"},
+    {"group_id": "BARRIER_EVOH", "group_name": "EVOH barrier structure"},
+    {"group_id": "BARRIER_PA", "group_name": "PA barrier structure"},
+    {"group_id": "PP_WATER_QUENCH", "group_name": "PP water-quench structure"},
+    {"group_id": "TECHNICAL_TRIAL", "group_name": "Technical trial"}
+  ],
+  "cleaning_transition_minutes": {
+    "GENERAL_MEDICAL_PE": {
+      "GENERAL_MEDICAL_PE": 20,
+      "BARRIER_EVOH": 70,
+      "BARRIER_PA": 70,
+      "PP_WATER_QUENCH": 120,
+      "TECHNICAL_TRIAL": 90
+    },
+    "BARRIER_EVOH": {
+      "GENERAL_MEDICAL_PE": 70,
+      "BARRIER_EVOH": 30,
+      "BARRIER_PA": 80,
+      "PP_WATER_QUENCH": 110,
+      "TECHNICAL_TRIAL": 90
+    },
+    "BARRIER_PA": {
+      "GENERAL_MEDICAL_PE": 70,
+      "BARRIER_EVOH": 80,
+      "BARRIER_PA": 30,
+      "PP_WATER_QUENCH": 110,
+      "TECHNICAL_TRIAL": 90
+    },
+    "PP_WATER_QUENCH": {
+      "GENERAL_MEDICAL_PE": 120,
+      "BARRIER_EVOH": 110,
+      "BARRIER_PA": 110,
+      "PP_WATER_QUENCH": 20,
+      "TECHNICAL_TRIAL": 90
+    },
+    "TECHNICAL_TRIAL": {
+      "GENERAL_MEDICAL_PE": 90,
+      "BARRIER_EVOH": 90,
+      "BARRIER_PA": 90,
+      "PP_WATER_QUENCH": 90,
+      "TECHNICAL_TRIAL": 30
+    }
+  },
+  "cleaning_scrap_formula": "8 + 0.45 * change_time_mins",
+  "inventory_release_policy": {
+    "IN_STOCK": "RELEASED",
+    "RESERVED": "RELEASED",
+    "IN_TRANSIT": "QC_HOLD",
+    "DEPLETED": "RELEASED",
+    "explicit_medical_exclusion": "QC_HOLD"
+  },
+  "material_qualification_policy": {
+    "materials_used_by_benchmark_released_recipe": "APPROVED",
+    "explicit_manufacturer_medical_exclusion": "EXCLUDED_MEDICAL",
+    "source_type": "SIMULATED",
+    "approved_by": "wave2-benchmark-generator",
+    "approved_at": "2026-08-28T00:00:00Z",
+    "notes": "A benchmark APPROVED value means only that the synthetic plant model has qualified the material. It never upgrades manufacturer evidence into real plant approval."
+  },
+  "recipe_release_policy": {
+    "require_complete_layer_count": true,
+    "require_complete_ratio": true,
+    "require_ratio_sum_100": true,
+    "missing_ratio_action": "BLOCK_PROFILE_GENERATION_FOR_RECIPE",
+    "approved_by": "wave2-benchmark-generator",
+    "approved_at": "2026-08-28T00:00:00Z"
+  }
+}

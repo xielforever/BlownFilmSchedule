@@ -1,0 +1,42 @@
+{
+  "contract_version": "2026-08-28-material-identity-1",
+  "instructions": [
+    "This file updates identity/classification fields for an EXACT existing material_grade only; it never renames or aliases grades.",
+    "Every row defaults apply=false.",
+    "Use MATERIAL_OEM_OFFICIAL identity through official_material_catalog.json when an exact official grade is verified.",
+    "Use PLANT_MASTER, ENGINEERING or deliberately SIMULATED source for legacy grade classification that is not established by the official catalog.",
+    "A polymer_family override is not a medical qualification and does not create APPROVED status."
+  ],
+  "source": {
+    "source_id": "SRC-SIM-WAVE2-MATERIAL-IDENTITY-EXAMPLE",
+    "source_type": "SIMULATED",
+    "organization": "BlownFilmSchedule",
+    "title": "Wave 2 exact-grade material identity override example - NOT FOR PRODUCTION",
+    "revision": "example-1",
+    "confidence": "LOW",
+    "metadata": {
+      "example_only": true,
+      "production_authority": false
+    }
+  },
+  "materials": [
+    {
+      "apply": false,
+      "material_grade": "REPLACE_WITH_EXACT_EXISTING_GRADE",
+      "polymer_family": "LDPE",
+      "manufacturer": null,
+      "commercial_grade": null,
+      "melt_index_test_condition": null,
+      "reason": "Explicit benchmark/engineering classification after exact-grade review. This does not rename the grade or grant medical approval."
+    },
+    {
+      "apply": false,
+      "material_grade": "Borealis_LE6601-PH",
+      "polymer_family": "LDPE",
+      "manufacturer": "Borealis",
+      "commercial_grade": "LE6601-PH",
+      "melt_index_test_condition": null,
+      "reason": "Example only. Historical grade identity must be reviewed independently; do not alias to LE6600-PH."
+    }
+  ]
+}

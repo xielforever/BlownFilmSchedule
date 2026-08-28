@@ -1,0 +1,179 @@
+{
+  "catalog_version": "2026-08-28",
+  "policy": {
+    "identity_match": "EXACT_ALIAS_ONLY",
+    "manufacturer_evidence_is_plant_approval": false,
+    "unknown_fields_must_remain_unknown": true,
+    "notes": "Official manufacturer evidence may populate identity, typical properties and application evidence. It must never create plant APPROVED qualification except an explicit manufacturer medical-exclusion may create EXCLUDED_MEDICAL as a fail-safe negative qualification."
+  },
+  "sources": [
+    {
+      "source_id": "SRC-MAT-BORMED-LE6600PH",
+      "source_type": "MATERIAL_OEM_OFFICIAL",
+      "organization": "Borealis",
+      "title": "Bormed LE6600-PH - Statement on Compliance to Regulations on Medical Use, Ed. 22",
+      "url_or_reference": "https://www.borealisgroup.com/storage/Datasheets/bormed/le6600-ph/LE6600-PH-PL_STAT-REG_WORLD-EN-V22-PLS_PHARM-48798-10006051.pdf",
+      "revision": "Ed. 22",
+      "document_date": "2025-11-18",
+      "confidence": "HIGH",
+      "regulatory_claim": false,
+      "metadata": {
+        "manufacturer_statement": true,
+        "medical_material_compliance": true,
+        "references": ["European Pharmacopoeia 3.1.3", "European Pharmacopoeia 3.1.4", "USP <87>", "USP <88> Class VI 70C", "USP <661.1>", "DMF 027587"],
+        "plant_approval": false
+      }
+    }
+  ],
+  "materials": [
+    {
+      "canonical_grade": "Purell PE 2420 F",
+      "exact_aliases": ["Purell PE 2420 F", "Purell_PE_2420_F"],
+      "manufacturer": "LyondellBasell",
+      "commercial_grade": "Purell PE 2420 F",
+      "polymer_family": "LDPE",
+      "melt_index": 0.75,
+      "melt_index_test_condition": "190 C / 2.16 kg",
+      "density": 0.923,
+      "evidence_status": "HEALTHCARE_INTENDED",
+      "application_scope": "Films for healthcare applications including pharmaceutical packaging; film extrusion/blown-film portfolio reference.",
+      "source_id": "SRC-MAT-PURELL-2420F",
+      "medical_qualification_action": "NO_AUTO_APPROVAL"
+    },
+    {
+      "canonical_grade": "Purell PE 3020K",
+      "exact_aliases": ["Purell PE 3020K", "Purell_PE_3020K"],
+      "manufacturer": "LyondellBasell",
+      "commercial_grade": "Purell PE 3020K",
+      "polymer_family": "LDPE",
+      "melt_index": 4.0,
+      "melt_index_test_condition": "190 C / 2.16 kg",
+      "density": 0.928,
+      "evidence_status": "HEALTHCARE_INTENDED",
+      "application_scope": "Films for healthcare applications including packaging of pharmaceuticals.",
+      "source_id": "SRC-MAT-PURELL-3020K",
+      "medical_qualification_action": "NO_AUTO_APPROVAL"
+    },
+    {
+      "canonical_grade": "Purell SP170G",
+      "exact_aliases": ["Purell SP170G", "Purell_SP170G"],
+      "manufacturer": "LyondellBasell",
+      "commercial_grade": "Purell SP170G",
+      "polymer_family": "PP",
+      "melt_index": 1.5,
+      "melt_index_test_condition": "230 C / 2.16 kg",
+      "density": 0.9,
+      "evidence_status": "HEALTHCARE_INTENDED",
+      "application_scope": "Healthcare polypropylene copolymer used in blow molding/BFS and blown film; film layers for IV-bag applications are cited by the manufacturer.",
+      "source_id": "SRC-MAT-PURELL-SP170G",
+      "medical_qualification_action": "NO_AUTO_APPROVAL",
+      "manufacturer_limitation": "Potential pharmaceutical/medical-device/laboratory/diagnostics activities must be discussed with the manufacturer technical/business contacts."
+    },
+    {
+      "canonical_grade": "Bormed DM55pharm",
+      "exact_aliases": ["Bormed DM55pharm", "Borealis_DM55pharm", "Bormed_DM55pharm"],
+      "manufacturer": "Borealis",
+      "commercial_grade": "Bormed DM55pharm",
+      "polymer_family": "PP",
+      "melt_index": 2.8,
+      "melt_index_test_condition": "230 C / 2.16 kg",
+      "density": 0.9,
+      "evidence_status": "HEALTHCARE_EVALUATION",
+      "application_scope": "Healthcare PP homopolymer; manufacturer documentation references cast film and tubular water-quench blown-film processing.",
+      "source_id": "SRC-MAT-BORMED-DM55PHARM",
+      "medical_qualification_action": "NO_AUTO_APPROVAL"
+    },
+    {
+      "canonical_grade": "Bormed LE6600-PH",
+      "exact_aliases": ["Bormed LE6600-PH", "Borealis_LE6600-PH", "Bormed_LE6600-PH"],
+      "manufacturer": "Borealis",
+      "commercial_grade": "Bormed LE6600-PH",
+      "polymer_family": "LDPE",
+      "melt_index": 1.5,
+      "melt_index_test_condition": "190 C / 2.16 kg",
+      "density": 0.919,
+      "evidence_status": "HEALTHCARE_INTENDED",
+      "application_scope": "Medical-use polyethylene with Borealis Ed.22 compliance statement; manufacturer references European Pharmacopoeia, USP tests and DMF 027587.",
+      "source_id": "SRC-MAT-BORMED-LE6600PH",
+      "medical_qualification_action": "NO_AUTO_APPROVAL"
+    },
+    {
+      "canonical_grade": "SABIC HDPE PCGF0863",
+      "exact_aliases": ["SABIC HDPE PCGF0863", "SABIC_PCGF0863", "PCGF0863"],
+      "manufacturer": "SABIC",
+      "commercial_grade": "SABIC HDPE PCGF0863",
+      "polymer_family": "HDPE",
+      "melt_index": 8.0,
+      "melt_index_test_condition": "190 C / 2.16 kg",
+      "density": 0.964,
+      "evidence_status": "HEALTHCARE_INTENDED",
+      "application_scope": "Healthcare HDPE reference for flexible packaging/pharmaceutical/device applications.",
+      "source_id": "SRC-MAT-SABIC-PCGF0863",
+      "medical_qualification_action": "NO_AUTO_APPROVAL"
+    },
+    {
+      "canonical_grade": "EVAL F171B",
+      "exact_aliases": ["EVAL F171B", "EVAL_F171B", "Kuraray_EVAL_F171B"],
+      "manufacturer": "Kuraray",
+      "commercial_grade": "EVAL F171B",
+      "polymer_family": "EVOH",
+      "melt_index": 1.6,
+      "melt_index_test_condition": "190 C / 2.16 kg",
+      "density": 1.19,
+      "evidence_status": "TECHNICAL_FILM_ONLY",
+      "application_scope": "EVOH barrier-film technical reference; manufacturer TDS reports melting temperature 183 C and OTR 0.3 cm3.20um/m2.day.atm at 20 C/65%RH.",
+      "source_id": "SRC-MAT-EVAL-F171B",
+      "medical_qualification_action": "NO_AUTO_APPROVAL"
+    },
+    {
+      "canonical_grade": "Plexar PX3236",
+      "exact_aliases": ["Plexar PX3236", "Plexar_PX3236", "LYB_Plexar_PX3236"],
+      "manufacturer": "LyondellBasell",
+      "commercial_grade": "Plexar PX3236",
+      "polymer_family": "TIE",
+      "melt_index": 2.0,
+      "melt_index_test_condition": "190 C / 2.16 kg",
+      "density": 0.922,
+      "evidence_status": "TECHNICAL_FILM_ONLY",
+      "application_scope": "Tie-layer resin for bonding dissimilar materials including PA and EVOH; blown/cast film and coextrusion applications.",
+      "source_id": "SRC-MAT-PLEXAR-PX3236",
+      "medical_qualification_action": "NO_AUTO_APPROVAL"
+    },
+    {
+      "canonical_grade": "Ultramid B36 L",
+      "exact_aliases": ["Ultramid B36 L", "Ultramid_B36_L", "BASF_Ultramid_B36_L"],
+      "manufacturer": "BASF",
+      "commercial_grade": "Ultramid B36 L",
+      "polymer_family": "PA6",
+      "melt_index": null,
+      "melt_index_test_condition": null,
+      "density": null,
+      "evidence_status": "TECHNICAL_FILM_ONLY",
+      "application_scope": "PA6 extrusion grade; BASF lists blown film, casing and water-cooled film applications and a 220 C melting point. No healthcare approval is inferred.",
+      "source_id": "SRC-MAT-BASF-B36L",
+      "medical_qualification_action": "NO_AUTO_APPROVAL"
+    },
+    {
+      "canonical_grade": "Exact 5101",
+      "exact_aliases": ["Exact 5101", "Exact_5101", "ExxonMobil_Exact_5101"],
+      "manufacturer": "ExxonMobil",
+      "commercial_grade": "Exact 5101",
+      "polymer_family": "ETHYLENE_PLASTOMER",
+      "melt_index": 1.1,
+      "melt_index_test_condition": "190 C / 2.16 kg",
+      "density": 0.9,
+      "evidence_status": "EXPLICITLY_EXCLUDED_MEDICAL",
+      "application_scope": "Blown-film technical grade used as a negative-control example because the manufacturer TDS explicitly excludes medical applications.",
+      "source_id": "SRC-MAT-EXACT5101-EXCLUDE",
+      "medical_qualification_action": "AUTO_EXCLUDE_MEDICAL"
+    }
+  ],
+  "legacy_identity_watchlist": [
+    {
+      "exact_aliases": ["Borealis_LE6601-PH", "Bormed LE6601-PH", "Bormed_LE6601-PH"],
+      "action": "KEEP_UNVERIFIED_NOT_ALIASED_TO_LE6600",
+      "reason": "LE6601-PH is a historical Bormed grade, but no current Borealis official product page was confirmed in the 2026-08-28 source review. Third-party databases identify it as historical/discontinued. It must not be silently renamed to LE6600-PH.",
+      "replacement": null
+    }
+  ]
+}
