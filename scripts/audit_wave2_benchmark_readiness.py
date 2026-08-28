@@ -2,8 +2,8 @@
 
 This builds on audit_wave2_domain_coverage and checks the data paths Wave 3 will
 actually consume: recipe material requirements, explicit CORONA capability, machine
-material capability, and at least one qualified Machine x Recipe rate for each released
-recipe used by an active order.
+material capability, known material identity, and at least one qualified Machine x
+Recipe rate for each released recipe used by an active order.
 """
 
 from __future__ import annotations
@@ -19,6 +19,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import DATABASE_CONFIG
 from scripts.audit_wave2_domain_coverage import collect_coverage
 from scripts.rebuild_wave2_order_material_requirements import CALCULATION_VERSION
+
+
+UNKNOWN_POLYMER_FAMILIES = ("", "UNKNOWN", "OTHER", "UNCLASSIFIED", "N/A", "NA")
 
 
 def _connect():
@@ -142,6 +145,18 @@ def collect_extended(conn) -> dict:
               AND q.valid_to IS NULL
             """,
         )
+        released_recipe_unknown_polymer_materials = _scalar(
+            cur,
+            """
+            SELECT COUNT(DISTINCT rl.material_grade) AS n
+            FROM recipe_layers rl
+            JOIN recipe_versions rv ON rv.recipe_version_id=rl.recipe_version_id
+            JOIN raw_materials r ON r.material_grade=rl.material_grade
+            WHERE rv.status='RELEASED'
+              AND UPPER(COALESCE(NULLIF(TRIM(r.polymer_family), ''), 'UNKNOWN')) = ANY(%s)
+            """,
+            (list(UNKNOWN_POLYMER_FAMILIES),),
+        )
 
     blockers = []
     if not base["readiness"]["safe_for_benchmark_hard"]:
@@ -158,6 +173,8 @@ def collect_extended(conn) -> dict:
         blockers.append("released_recipe_material_missing_benchmark_qualification")
     if released_recipe_excluded_materials:
         blockers.append("released_recipe_contains_explicitly_excluded_medical_material")
+    if released_recipe_unknown_polymer_materials:
+        blockers.append("released_recipe_contains_unknown_polymer_family")
 
     base["benchmark_extended"] = {
         "calculation_version": CALCULATION_VERSION,
@@ -173,9 +190,13 @@ def collect_extended(conn) -> dict:
         "released_recipe_material_grades": released_recipe_materials,
         "released_recipe_material_grades_approved": released_recipe_materials_qualified,
         "released_recipe_explicit_excluded_material_grades": released_recipe_excluded_materials,
+        "released_recipe_unknown_polymer_material_grades": released_recipe_unknown_polymer_materials,
         "safe_for_wave3_shadow_benchmark": len(blockers) == 0,
         "blockers": sorted(set(blockers)),
-        "note": "Material shortage rows are valid scenario state and are reported, but shortage alone is not a data-completeness blocker."
+        "note": (
+            "Material shortage rows are valid scenario state and are reported, but shortage alone is not a data-completeness blocker. "
+            "UNKNOWN/OTHER polymer family is a master-data blocker, not a PE default."
+        )
     }
     return base
 
