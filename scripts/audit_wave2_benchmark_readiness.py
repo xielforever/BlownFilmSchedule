@@ -2,8 +2,8 @@
 
 This builds on audit_wave2_domain_coverage and checks the data paths Wave 3 will
 actually consume: recipe material requirements, explicit CORONA capability, machine
-extruder positions, machine material capability, known material identity, and at least
-one qualified Machine x Recipe rate for each released recipe used by an active order.
+extruder positions, machine material capability, known material identity, reservation
+integrity, and at least one qualified Machine x Recipe rate for each released recipe.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ import psycopg2.extras
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import DATABASE_CONFIG
 from scripts.audit_wave2_domain_coverage import collect_coverage
+from scripts.audit_wave2_material_reservations import collect_reservation_audit
 from scripts.rebuild_wave2_order_material_requirements import CALCULATION_VERSION
 
 
@@ -42,6 +43,7 @@ def _scalar(cur, sql: str, params=None) -> int:
 
 def collect_extended(conn) -> dict:
     base = collect_coverage(conn)
+    reservation_audit = collect_reservation_audit(conn)
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         active_orders = _scalar(
             cur,
@@ -200,6 +202,8 @@ def collect_extended(conn) -> dict:
         blockers.append("released_recipe_contains_explicitly_excluded_medical_material")
     if released_recipe_unknown_polymer_materials:
         blockers.append("released_recipe_contains_unknown_polymer_family")
+    if not reservation_audit["safe"]:
+        blockers.extend(f"reservation:{code}" for code in reservation_audit["blockers"])
 
     base["benchmark_extended"] = {
         "calculation_version": CALCULATION_VERSION,
@@ -218,11 +222,21 @@ def collect_extended(conn) -> dict:
         "released_recipe_material_grades_approved": released_recipe_materials_qualified,
         "released_recipe_explicit_excluded_material_grades": released_recipe_excluded_materials,
         "released_recipe_unknown_polymer_material_grades": released_recipe_unknown_polymer_materials,
+        "reservation_audit": {
+            "active_reservation_count": reservation_audit["active_reservation_count"],
+            "material_grade_mismatch_count": reservation_audit["material_grade_mismatch_count"],
+            "unusable_lot_reservation_count": reservation_audit["unusable_lot_reservation_count"],
+            "over_reserved_lot_count": reservation_audit["over_reserved_lot_count"],
+            "over_reserved_requirement_count": reservation_audit["over_reserved_requirement_count"],
+            "under_reserved_requirement_count": reservation_audit["under_reserved_requirement_count"],
+            "safe": reservation_audit["safe"],
+            "blockers": reservation_audit["blockers"],
+        },
         "safe_for_wave3_shadow_benchmark": len(blockers) == 0,
         "blockers": sorted(set(blockers)),
         "note": (
-            "Material shortage rows are valid scenario state and are reported, but shortage alone is not a data-completeness blocker. "
-            "UNKNOWN/OTHER polymer family and incomplete extruder positions are master-data blockers."
+            "Material shortage and under-reservation are valid scenario/execution states and are reported, but are not data-completeness blockers. "
+            "Over-reservation, unusable-lot reservation, UNKNOWN/OTHER polymer family and incomplete extruder positions are blockers."
         )
     }
     return base
