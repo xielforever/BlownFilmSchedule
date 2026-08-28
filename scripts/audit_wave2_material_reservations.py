@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from datetime import datetime, timezone
 
 import psycopg2
 import psycopg2.extras
@@ -36,6 +37,15 @@ def _connect():
 def _rows(cur, sql: str, params=None):
     cur.execute(sql, params or ())
     return [dict(row) for row in cur.fetchall()]
+
+
+def _is_expired(value) -> bool:
+    if value is None:
+        return False
+    current = datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value <= current
 
 
 def collect_reservation_audit(conn) -> dict:
@@ -95,15 +105,12 @@ def collect_reservation_audit(conn) -> dict:
             (CALCULATION_VERSION, list(ACTIVE_RESERVATION_STATUSES)),
         )
 
-    material_mismatches = [
-        row for row in active
-        if row["material_grade"] != row["lot_material_grade"]
-    ]
+    material_mismatches = [row for row in active if row["material_grade"] != row["lot_material_grade"]]
     unusable_lot_reservations = [
         row for row in active
         if row["lot_status"] != "IN_STOCK"
         or row["release_status"] != "RELEASED"
-        or (row.get("use_before_date") is not None and row["use_before_date"].isoformat() <= __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat())
+        or _is_expired(row.get("use_before_date"))
     ]
     over_reserved_requirements = [row for row in reservation_coverage if row["delta_kg"] > 0]
     under_reserved_requirements = [row for row in reservation_coverage if row["delta_kg"] < 0]
