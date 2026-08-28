@@ -8,7 +8,7 @@
 
 ## 1. 当前结论
 
-Wave 2 的 Domain Model、additive schema、官方来源 seed、显式 plant override contract 和 coverage gate 均已实现到分支，但尚未在项目实际 PostgreSQL 实例完成迁移/填充验证，因此当前不能标记 `verified`。
+Wave 2 的 Domain Model、additive schema、官方来源 seed、显式 plant override contract、industrial benchmark profile、material requirement derivation 和 coverage gate 均已实现到分支，但尚未在项目实际 PostgreSQL 实例完成迁移/填充验证，因此当前不能标记 `verified`。
 
 当前明确保持：
 
@@ -28,10 +28,13 @@ domain_v2_enforcement_mode = LEGACY
 - `docs/medical-blownfilm-wave2-schema-compatibility-design.md`
 - `docs/medical-blownfilm-wave2-data-contract-crosswalk.md`
 - `docs/medical-blownfilm-wave2-master-data-population.md`
+- `docs/medical-blownfilm-wave2-industrial-benchmark-profile.md`
 
-### Official / Master Data
+### Official / Benchmark / Master Data
 
 - `data/wave2/official_material_catalog.json`
+- `data/wave2/industrial_benchmark_policy.json`
+- `data/wave2/benchmark_scenarios.json`
 - `config/wave2_plant_master_overrides.example.json`
 
 ### Database
@@ -44,12 +47,18 @@ domain_v2_enforcement_mode = LEGACY
 - `scripts/apply_wave2_domain_schema.py`
 - `scripts/seed_wave2_master_data.py`
 - `scripts/apply_wave2_plant_overrides.py`
+- `scripts/generate_wave2_override_candidates.py`
+- `scripts/build_wave2_industrial_benchmark_profile.py`
+- `scripts/rebuild_wave2_order_material_requirements.py`
 - `scripts/audit_wave2_domain_coverage.py`
+- `scripts/audit_wave2_benchmark_readiness.py`
 
 ### Tests
 
 - `tests/test_wave2_domain_schema_contract.py`
 - `tests/test_wave2_master_data_population_contract.py`
+- `tests/test_wave2_override_candidate_generator_contract.py`
+- `tests/test_wave2_benchmark_profile_contract.py`
 
 ---
 
@@ -294,36 +303,119 @@ python scripts/apply_wave2_plant_overrides.py <config.json>
 
 避免误把示例值写入数据库。
 
+### Runtime Candidate Generator
+
+```bash
+python scripts/generate_wave2_override_candidates.py
+```
+
+从当前 DB 提取机器、recipe、lot 和 legacy physical feasibility，只生成：
+
+```text
+apply=false
+UNKNOWN rate qualification
+SIMULATED low-confidence candidate
+```
+
+不自动批准任何 plant master。
+
 ---
 
-## 9. Coverage Gate 已分层
+## 9. Industrial Benchmark Plant Profile
+
+已实现：
+
+```text
+data/wave2/industrial_benchmark_policy.json
+scripts/build_wave2_industrial_benchmark_profile.py
+docs/medical-blownfilm-wave2-industrial-benchmark-profile.md
+```
+
+Profile 分类固定：
+
+```text
+SIMULATED_WITH_OFFICIAL_ENVELOPE
+production_authority = false
+```
+
+其原则是：
+
+```text
+保留当前 DB 的 machine identity / physical envelope / recipe ratio / inventory ID
+只模拟 V2 缺失语义
+```
+
+首批模拟语义包括：
+
+```text
+process route
+machine medical benchmark release
+machine feature capability
+machine material capability
+recipe benchmark release
+material benchmark qualification
+Machine x Recipe rate
+cleaning taxonomy
+lot release status
+```
+
+Benchmark recipe rate：
+
+```text
+legacy machine hourly_output_kg × recipe family factor
+```
+
+而不是继续把 machine constant rate 当作所有 recipe 的实际 rate。
+
+如果 recipe ratio/layer validation 不完整：
+
+```text
+BLOCK_PROFILE_GENERATION_FOR_RECIPE
+```
+
+不会自动均分 ratio。
+
+---
+
+## 10. Order Material Requirement Derivation
+
+已实现：
+
+`scripts/rebuild_wave2_order_material_requirements.py`
+
+计算链：
+
+```text
+order.total_quantity_kg
+× SUM(recipe_layers.ratio_pct by material)
+= material net requirement
+```
+
+写入：
+
+```text
+order_material_requirements
+```
+
+并读取 `v_material_lot_available` 记录 released availability 与 shortage。
+
+当前默认 setup buffer 为 0，因为真正 sequence-dependent startup scrap 尚未进入 V2 Solver；如做保守 benchmark 可显式传入模拟 buffer。
+
+---
+
+## 11. Coverage Gate 已分层
 
 `python scripts/audit_wave2_domain_coverage.py`
 
-现在区分：
+区分：
 
 ### safe_for_shadow
 
-V2 数据足以开始：
-
-```text
-Legacy vs Domain V2
-```
-
-双轨诊断，但不改变正式求解结果。
+V2 数据足以开始 Legacy vs V2 双轨诊断，但不改变正式求解结果。
 
 ### safe_for_benchmark_hard
 
 允许 `SIMULATED` provenance 满足完整工业 benchmark 数据。
-
-用于：
-
-```text
-算法研发
-确定性冲突测试
-约束回归
-性能测试
-```
 
 ### safe_for_production_hard
 
@@ -336,47 +428,88 @@ ENGINEERING
 LEARNED
 ```
 
-`SIMULATED` 不计入生产 hard readiness。
+`SIMULATED` 永远不计入生产 hard readiness。
+
+### Extended Benchmark Gate
+
+新增：
+
+```bash
+python scripts/audit_wave2_benchmark_readiness.py
+```
+
+额外检查：
+
+```text
+active order material requirement coverage
+explicit CORONA capability for every active machine
+qualified machine material capability
+active released recipe -> >= 1 qualified Machine x Recipe rate
+released recipe material qualification completeness
+released recipe cannot contain EXCLUDED_MEDICAL material
+```
+
+Material shortage 是合法业务状态，不作为数据完整性失败；它会作为场景输入报告。
 
 ---
 
-## 10. Verification 层级
+## 12. Benchmark Scenario Pack
+
+已实现：
+
+`data/wave2/benchmark_scenarios.json`
+
+固定 14 个场景：
+
+```text
+S01 baseline feasible
+S02 Machine x Recipe rate differentiation
+S03 CORONA scarcity
+S04 explicit medical exclusion
+S05 unreleased/missing recipe
+S06 QC Hold lot
+S07 competing lot reservations
+S08 process route mismatch
+S09 3 -> 5 layer transition
+S10 5 -> 3 layer transition
+S11 maintenance + breakdown
+S12 urgent insert replan
+S13 plan stability
+S14 recipe revision
+```
+
+Expected outcome 定义为领域不变量，而不是固定甘特图结果。
+
+---
+
+## 13. Verification 层级
 
 ### 已实现静态 Contract
 
-`tests/test_wave2_domain_schema_contract.py`
+- `tests/test_wave2_domain_schema_contract.py`
+- `tests/test_wave2_master_data_population_contract.py`
+- `tests/test_wave2_override_candidate_generator_contract.py`
+- `tests/test_wave2_benchmark_profile_contract.py`
 
-保护：
+保护包括：
 
-- additive-only migration；
-- 不自动 RELEASE recipe；
-- 不自动 APPROVED material；
-- 不猜 process route；
-- material lot availability guardrail。
-
-`tests/test_wave2_master_data_population_contract.py`
-
-保护：
-
-- Python population script 可解析；
-- exact alias 唯一；
-- Healthcare evidence 不自动 APPROVED；
-- 只有明确负向证据可自动 EXCLUDED；
-- LE6601 不 alias LE6600；
-- official missing grade 默认不自动插入；
-- legacy rate bootstrap 只能 UNKNOWN shadow；
-- RELEASED recipe 必须有 approval + ratio validation；
-- override example 全部 apply=false。
+```text
+additive-only migration
+no auto real APPROVED
+no supplier fuzzy classification
+no LE6601 -> LE6600 alias
+no missing ratio fabrication
+benchmark source must remain SIMULATED
+benchmark cannot import/modify scheduler
+Exact negative evidence wins
+CORONA must be explicit/scarce
+cleaning transition matrix is complete
+material requirement derives from ratio
+```
 
 ### 尚未完成
 
-当前环境没有项目实际 PostgreSQL 连接，因此尚未真实执行：
-
-```bash
-python scripts/apply_wave2_domain_schema.py
-python scripts/seed_wave2_master_data.py
-python scripts/audit_wave2_domain_coverage.py
-```
+当前环境没有项目实际 PostgreSQL 连接，也无法从当前执行环境访问 GitHub 网络运行仓库测试，因此尚未真实执行 migration/population/coverage。
 
 数据库状态仍为：
 
@@ -387,7 +520,7 @@ NOT_DB_VERIFIED
 
 ---
 
-## 11. Wave 2 工作项状态
+## 14. Wave 2 工作项状态
 
 ### W2-A Schema Additive
 
@@ -405,60 +538,94 @@ NOT_DB_VERIFIED
 
 `IMPLEMENTED_IN_BRANCH / DB_POPULATION_PENDING`
 
+### W2-E Industrial Benchmark Plant Profile
+
+`IMPLEMENTED_IN_BRANCH / DB_GENERATION_AND_APPLY_PENDING`
+
 已实现：
 
 ```text
-official material catalog
-exact identity matching
-manufacturer evidence seed
-LE6601 identity watchlist
-explicit plant override contract
-machine/material/feature/rate/cleaning/lot override loader
-benchmark vs production provenance gate
+benchmark policy
+runtime benchmark profile generator
+Machine x Recipe differentiated simulated rates
+benchmark machine/material/feature qualification
+benchmark recipe release gate
+benchmark cleaning taxonomy
+benchmark lot release
+order material requirement derivation
+extended benchmark readiness audit
+14-scenario deterministic domain pack
 ```
 
-未完成：
+仍未完成：
 
 ```text
-real DB seed output
-explicit simulated/plant machine route values
-explicit released recipe values
-explicit machine x recipe qualified rates
-explicit lot release state
-real coverage output
+real DB migration output
+real DB official seed output
+real DB benchmark profile generation
+real DB benchmark override dry-run/apply
+real DB order material requirement rebuild
+real DB coverage/readiness report
 ```
 
 ---
 
-## 12. 进入 Wave 3 的 Gate
+## 15. Wave 2 完整 DB 执行顺序
 
-Wave 3 Solver Correctness 可以开始写 SHADOW 读取链，但不得直接开启 `HARD`。
+在项目 PostgreSQL 可访问环境执行：
 
-最低 SHADOW 条件：
+```bash
+python scripts/apply_wave2_domain_schema.py
+python -m unittest tests.test_wave2_domain_schema_contract
+python -m unittest tests.test_wave2_master_data_population_contract
+python -m unittest tests.test_wave2_override_candidate_generator_contract
+python -m unittest tests.test_wave2_benchmark_profile_contract
 
-```text
-active order -> recipe_version traceability complete
-active machine -> capability profile exists
-Domain V2 source/provenance schema available
-current enforcement remains LEGACY
+python scripts/seed_wave2_master_data.py --dry-run
+python scripts/seed_wave2_master_data.py
+
+python scripts/build_wave2_industrial_benchmark_profile.py
+python scripts/apply_wave2_plant_overrides.py output/wave2_industrial_benchmark_profile.json --dry-run
+python scripts/apply_wave2_plant_overrides.py output/wave2_industrial_benchmark_profile.json
+
+python scripts/rebuild_wave2_order_material_requirements.py --dry-run
+python scripts/rebuild_wave2_order_material_requirements.py
+
+python scripts/audit_wave2_domain_coverage.py
+python scripts/audit_wave2_benchmark_readiness.py
 ```
 
-工业 Benchmark HARD 条件还要求：
+全流程结束后仍要求：
 
 ```text
-released recipe complete ratio + route
-known machine route
-explicit benchmark material qualification
-explicit qualified machine x recipe rate
-explicit lot release
-canonical cleaning taxonomy
+domain_v2_enforcement_mode = LEGACY
 ```
-
-真实 Production HARD 还必须将上述 hard-driving 数据来源替换/覆盖为 operational provenance。
 
 ---
 
-## 13. 当前状态
+## 16. 进入 Wave 3 的 Gate
+
+Wave 3 只允许先进入 SHADOW 读取/比较链，不能直接开启生产 `HARD`。
+
+最低 Benchmark SHADOW 条件：
+
+```text
+safe_for_benchmark_hard = true
+safe_for_wave3_shadow_benchmark = true
+current enforcement = LEGACY
+```
+
+并保留：
+
+```text
+safe_for_production_hard = false
+```
+
+直到 hard-driving 数据来源被真实 operational provenance 替换并通过 production benchmark。
+
+---
+
+## 17. 当前状态
 
 ```text
 Wave 1: COMPLETE
@@ -466,7 +633,11 @@ Wave 2 Design: COMPLETE
 Wave 2 Schema Code: IMPLEMENTED_IN_BRANCH
 Wave 2 Official Master Seed: IMPLEMENTED_IN_BRANCH
 Wave 2 Plant Override Contract: IMPLEMENTED_IN_BRANCH
+Wave 2 Industrial Benchmark Profile: IMPLEMENTED_IN_BRANCH
+Wave 2 Material Requirement Derivation: IMPLEMENTED_IN_BRANCH
+Wave 2 Benchmark Scenario Pack: IMPLEMENTED_IN_BRANCH
 Wave 2 Real DB Migration: PENDING
 Wave 2 Real DB Population: PENDING
+Wave 2 Real DB Benchmark Readiness: PENDING
 Wave 3 Solver: NOT STARTED
 ```
