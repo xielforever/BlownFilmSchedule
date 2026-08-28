@@ -311,6 +311,8 @@ def _apply(cur, config: dict[str, Any]) -> dict[str, int]:
     for item in config.get("material_qualifications", []):
         if not item.get("apply"):
             continue
+        source_id = _source_id(item, default_source)
+        scope_type = item.get("qualification_scope_type", "GLOBAL")
         cur.execute(
             """
             INSERT INTO material_qualifications
@@ -318,14 +320,30 @@ def _apply(cur, config: dict[str, Any]) -> dict[str, int]:
                  recipe_version_id, process_route, qualification_status,
                  condition_expression, source_id, approved_by, approved_at,
                  valid_from, valid_to, reason)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            SELECT %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM material_qualifications q
+                WHERE q.material_grade=%s
+                  AND q.qualification_scope_type=%s
+                  AND q.product_type IS NOT DISTINCT FROM %s
+                  AND q.recipe_version_id IS NOT DISTINCT FROM %s
+                  AND q.process_route IS NOT DISTINCT FROM %s
+                  AND q.qualification_status=%s
+                  AND q.source_id IS NOT DISTINCT FROM %s
+                  AND q.valid_from IS NOT DISTINCT FROM %s
+                  AND q.valid_to IS NOT DISTINCT FROM %s
+            )
             """,
             (
-                item["material_grade"], item.get("qualification_scope_type", "GLOBAL"), item.get("product_type"),
+                item["material_grade"], scope_type, item.get("product_type"),
                 item.get("recipe_version_id"), item.get("process_route"), item["qualification_status"],
                 psycopg2.extras.Json(item.get("condition_expression")) if item.get("condition_expression") is not None else None,
-                _source_id(item, default_source), item.get("approved_by"), item.get("approved_at"),
+                source_id, item.get("approved_by"), item.get("approved_at"),
                 item.get("valid_from"), item.get("valid_to"), item.get("reason"),
+                item["material_grade"], scope_type, item.get("product_type"),
+                item.get("recipe_version_id"), item.get("process_route"), item["qualification_status"],
+                source_id, item.get("valid_from"), item.get("valid_to"),
             ),
         )
         summary["material_qualifications"] += cur.rowcount
