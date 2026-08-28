@@ -43,6 +43,7 @@ The register is intentionally separate from each plan. Individual plans can keep
 | docs/medical-blownfilm-wave2-schema-compatibility-design.md | active | additive V2 schema, LEGACY/SHADOW/HARD migration and backfill design on `wave2-domain-schema` |
 | docs/medical-blownfilm-wave2-data-contract-crosswalk.md | active | legacy-to-V2 authority mapping, solver input and snapshot contracts on `wave2-domain-schema` |
 | docs/medical-blownfilm-wave2-master-data-population.md | active | Wave 2-D official evidence seed, exact identity policy, plant override contract and benchmark-vs-production coverage gate |
+| docs/medical-blownfilm-wave2-industrial-benchmark-profile.md | active | deterministic SIMULATED_WITH_OFFICIAL_ENVELOPE plant profile, material requirement derivation and Wave 3 scenario gate |
 | docs/medical-blownfilm-wave2-execution-status.md | active | Wave 2 schema/master-data implementation status, DB verification boundary and Wave 3 gate recorded on `wave2-domain-schema` |
 | docs/order-flow-closed-loop-goal-plan.md | verified | document lists P0/P1 acceptance cases completed and verification commands |
 | docs/real_data_scheduling.md | active | operational guide for current database scheduling checks |
@@ -75,8 +76,9 @@ The register is intentionally separate from each plan. Individual plans can keep
 - `docs/medical-blownfilm-wave2-schema-compatibility-design.md` defines an additive migration so current API/DB/solver paths remain compatible.
 - `docs/medical-blownfilm-wave2-data-contract-crosswalk.md` defines the exact authority switch from legacy fields to V2 fields.
 - `docs/medical-blownfilm-wave2-master-data-population.md` defines official evidence seeding separately from plant/engineering/simulated overrides; manufacturer Healthcare evidence never becomes automatic plant approval.
+- `docs/medical-blownfilm-wave2-industrial-benchmark-profile.md` defines the deterministic benchmark plant profile, recipe-family rate model, simulated qualification boundary, material-requirement derivation and scenario pack.
 - `docs/medical-blownfilm-wave2-execution-status.md` records implementation versus real-database verification status.
-- Additive schema and W2-D master-data tooling exist on branch, but remain `active` rather than `verified` until executed against the project PostgreSQL database and validated.
+- Additive schema, W2-D master-data tooling and benchmark-profile tooling exist on branch, but remain `active` rather than `verified` until executed against the project PostgreSQL database and validated.
 
 ## Validation
 
