@@ -1,0 +1,141 @@
+{
+  "contract_version": "2026-08-28",
+  "instructions": [
+    "This file is a contract example, not approved plant master data.",
+    "Every row defaults apply=false. Change to true only when the value has an explicit PLANT_MASTER, PLANT_SOP, ENGINEERING, LEARNED or deliberately SIMULATED source.",
+    "Do not copy generic W&H/Rajoo/TekniPlex capability envelopes into LINE-01..LINE-10 as if they were plant nameplate values.",
+    "Manufacturer healthcare evidence is not a valid source for plant APPROVED material qualification."
+  ],
+  "source": {
+    "source_id": "SRC-SIM-WAVE2-PLANT-OVERRIDE-EXAMPLE",
+    "source_type": "SIMULATED",
+    "organization": "BlownFilmSchedule",
+    "title": "Wave 2 plant master override example - NOT FOR PRODUCTION",
+    "url_or_reference": null,
+    "revision": "example-1",
+    "confidence": "LOW",
+    "metadata": {
+      "example_only": true,
+      "production_authority": false
+    }
+  },
+  "machines": [
+    {
+      "apply": false,
+      "machine_id": "LINE-01",
+      "process_route": "UNKNOWN",
+      "medical_release_status": "UNKNOWN",
+      "cleanroom_standard": null,
+      "cleanroom_iso_class": null,
+      "qualification_status": "UNKNOWN",
+      "qualification_valid_until": null
+    },
+    {
+      "apply": false,
+      "machine_id": "LINE-10",
+      "process_route": "UNKNOWN",
+      "medical_release_status": "UNKNOWN",
+      "cleanroom_standard": null,
+      "cleanroom_iso_class": null,
+      "qualification_status": "UNKNOWN",
+      "qualification_valid_until": null
+    }
+  ],
+  "machine_material_capabilities": [
+    {
+      "apply": false,
+      "machine_id": "LINE-01",
+      "extruder_position": null,
+      "polymer_family": "LDPE",
+      "capability_status": "UNKNOWN"
+    }
+  ],
+  "machine_feature_capabilities": [
+    {
+      "apply": false,
+      "machine_id": "LINE-01",
+      "feature_code": "CORONA",
+      "enabled": false,
+      "value_number": null,
+      "value_text": null
+    }
+  ],
+  "cleaning_validation_groups": [
+    {
+      "apply": false,
+      "group_id": "GENERAL_MEDICAL_PE",
+      "group_name": "General medical PE",
+      "description": "Example taxonomy only. Replace with plant-approved cleaning/validation group definition."
+    },
+    {
+      "apply": false,
+      "group_id": "TECHNICAL_TRIAL",
+      "group_name": "Technical trial",
+      "description": "Example taxonomy only."
+    }
+  ],
+  "cleaning_transition_rules": [
+    {
+      "apply": false,
+      "from_group_id": "GENERAL_MEDICAL_PE",
+      "to_group_id": "TECHNICAL_TRIAL",
+      "change_time_mins": null,
+      "scrap_weight_kg": null,
+      "enforcement_mode": "SHADOW"
+    }
+  ],
+  "recipe_versions": [
+    {
+      "apply": false,
+      "recipe_version_id": "REPLACE_WITH_EXISTING_RECIPE_VERSION_ID",
+      "process_route": "UNKNOWN",
+      "status": "MIGRATED_UNVERIFIED",
+      "cleaning_validation_group_id": null,
+      "approved_by": null,
+      "approved_at": null,
+      "change_reason": "Replace only after process master review."
+    }
+  ],
+  "material_qualifications": [
+    {
+      "apply": false,
+      "material_grade": "REPLACE_WITH_EXACT_EXISTING_GRADE",
+      "qualification_scope_type": "GLOBAL",
+      "product_type": null,
+      "recipe_version_id": null,
+      "process_route": null,
+      "qualification_status": "UNKNOWN",
+      "condition_expression": null,
+      "approved_by": null,
+      "approved_at": null,
+      "valid_from": null,
+      "valid_to": null,
+      "reason": "Manufacturer healthcare evidence alone is insufficient."
+    }
+  ],
+  "machine_recipe_capabilities": [
+    {
+      "apply": false,
+      "machine_id": "LINE-01",
+      "recipe_version_id": "REPLACE_WITH_EXISTING_RECIPE_VERSION_ID",
+      "eligibility_status": "UNKNOWN",
+      "standard_rate_kg_h": null,
+      "min_rate_kg_h": null,
+      "max_rate_kg_h": null,
+      "startup_rate_factor": null,
+      "quality_status": "UNKNOWN",
+      "validation_protocol_id": null,
+      "confidence": null,
+      "valid_from": null,
+      "valid_to": null
+    }
+  ],
+  "inventory_release": [
+    {
+      "apply": false,
+      "inventory_id": -1,
+      "release_status": "UNKNOWN",
+      "use_before_date": null
+    }
+  ]
+}
