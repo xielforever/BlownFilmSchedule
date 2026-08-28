@@ -37,6 +37,8 @@ The register is intentionally separate from each plan. Individual plans can keep
 | docs/config-policy-setup-rules-closed-loop-goal-plan.md | verified | commit `ee320cc`; policy tests and config e2e noted in document |
 | docs/deployment_guide.md | active | operational deployment and runbook guide; not an implementation backlog |
 | docs/git-status-cleanup-goal-plan.md | archived | historical cleanup plan; execution results list commits `6371180`, `ee320cc`, `2b88ab0`, `118dab5` |
+| docs/medical-blownfilm-domain-gap-audit.md | active | Wave 1 repository/domain crosswalk; P0/P1/P2 gaps and implementation waves recorded on 2026-08-28 |
+| docs/medical-blownfilm-official-source-registry.md | active | official ISO/FDA/OEM/material source baseline and provenance rules recorded on 2026-08-28 |
 | docs/order-flow-closed-loop-goal-plan.md | verified | document lists P0/P1 acceptance cases completed and verification commands |
 | docs/real_data_scheduling.md | active | operational guide for current database scheduling checks |
 | docs/root-cause-guidance-plan.md | superseded | root-cause implementation tracked by `docs/root-cause-guidance-todo.md` |
@@ -54,6 +56,12 @@ The register is intentionally separate from each plan. Individual plans can keep
 - `docs/solver-optimization-business-plan.md` is verified for the current goal scope through Sprint 6. Further solver research should start as a new goal with a new benchmark target.
 - `docs/workbench-worker-qa-hardening-goal-plan.md` is verified because its Definition of Done and completion evidence are already recorded.
 - `docs/real_data_scheduling.md` remains active as an operational guide, not an unfinished implementation plan.
+
+## Domain Audit 2026-08-28
+
+- `docs/medical-blownfilm-official-source-registry.md` is the evidence baseline for future medical blown-film master-data and simulation changes.
+- `docs/medical-blownfilm-domain-gap-audit.md` opens a new domain-correctness goal without reopening the previously verified solver/workbench goal scope.
+- New implementation work should preserve the verified CP-SAT/workbench architecture while resolving the audit P0 items before expanding optimization scope.
 
 ## Validation
 
