@@ -230,6 +230,7 @@ def collect_profile(conn, policy: dict[str, Any]) -> dict[str, Any]:
     exclusions = {row["material_grade"] for row in explicit_exclusions}
 
     machine_rows = []
+    machine_extruder_rows = []
     for index, machine in enumerate(machines, start=1):
         route = (
             policy["route_policy"]["pp_only_recipe_route"]
@@ -253,6 +254,19 @@ def collect_profile(conn, policy: dict[str, Any]) -> dict[str, Any]:
                 "simulation_class": "SIMULATED_WITH_OFFICIAL_ENVELOPE"
             }
         })
+        for position in range(1, int(machine["layer_structure"]) + 1):
+            machine_extruder_rows.append({
+                "apply": True,
+                "machine_id": machine["machine_id"],
+                "extruder_position": position,
+                "extruder_code": f"E{position}",
+                "screw_diameter_mm": None,
+                "status": "AVAILABLE",
+                "benchmark_context": {
+                    "derivation": "position count derived from legacy machine.layer_structure",
+                    "screw_diameter_unknown": True
+                }
+            })
 
     recipe_rows = []
     for meta in recipe_meta.values():
@@ -443,11 +457,12 @@ def collect_profile(conn, policy: dict[str, Any]) -> dict[str, Any]:
     corona_required_orders = sum(1 for row in active_orders if row.get("corona_req"))
 
     return {
-        "contract_version": "2026-08-28-benchmark-profile-2",
+        "contract_version": "2026-08-28-benchmark-profile-3",
         "profile_class": "SIMULATED_WITH_OFFICIAL_ENVELOPE",
         "production_authority": False,
         "source": source,
         "machines": machine_rows,
+        "machine_extruders": machine_extruder_rows,
         "machine_material_capabilities": machine_material_rows,
         "machine_feature_capabilities": feature_rows,
         "cleaning_validation_groups": cleaning_groups,
@@ -465,6 +480,7 @@ def collect_profile(conn, policy: dict[str, Any]) -> dict[str, Any]:
             "notes": [
                 "No missing recipe ratio is fabricated.",
                 "UNKNOWN/OTHER polymer family blocks benchmark recipe release until exact-grade identity is reviewed.",
+                "Extruder positions are derived only from existing machine.layer_structure; screw diameters remain unknown.",
                 "Exact manufacturer medical exclusion always wins over simulated benchmark approval.",
                 "Machine x Recipe rate is recipe-differentiated but remains simulated.",
                 "Apply with apply_wave2_plant_overrides.py; Wave 2 enforcement mode remains LEGACY."
@@ -472,6 +488,7 @@ def collect_profile(conn, policy: dict[str, Any]) -> dict[str, Any]:
         },
         "summary": {
             "active_machines": len(machines),
+            "machine_extruder_positions": len(machine_extruder_rows),
             "recipe_versions": len(recipes),
             "benchmark_released_recipes": sum(1 for row in recipe_rows if row["apply"] and row["status"] == "RELEASED"),
             "blocked_recipe_count": len(blocked_recipes),
