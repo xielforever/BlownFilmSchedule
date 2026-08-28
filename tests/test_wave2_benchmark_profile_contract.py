@@ -1,7 +1,8 @@
 """Static contract tests for the Wave 2 industrial benchmark plant profile.
 
 No database is required. These tests ensure the benchmark remains explicitly simulated,
-does not fabricate missing recipe ratios, and cannot silently become production authority.
+does not fabricate missing recipe ratios/material identity, has explicit extruder positions,
+and cannot silently become production authority.
 """
 
 from __future__ import annotations
@@ -44,9 +45,17 @@ class TestWave2BenchmarkProfileContract(unittest.TestCase):
             "BLOCK_PROFILE_GENERATION_FOR_RECIPE",
         )
         source = self.sources[GENERATOR]
-        self.assertIn("refuses to fabricate missing recipe ratios", source)
+        self.assertIn("No missing recipe ratio is fabricated", source)
         self.assertNotIn("100 / len(", source)
         self.assertNotIn("100/len(", source)
+
+    def test_unknown_material_identity_blocks_release(self):
+        source = self.sources[GENERATOR]
+        self.assertIn("UNKNOWN_POLYMER_FAMILIES", source)
+        self.assertIn("identity_ok = not unknown_layers", source)
+        self.assertIn("releasable = structure_ok and identity_ok", source)
+        self.assertIn("unknown_material_families", source)
+        self.assertIn("released_recipe_contains_unknown_polymer_family", self.sources[AUDIT])
 
     def test_exact_medical_exclusion_wins(self):
         source = self.sources[GENERATOR]
@@ -66,6 +75,14 @@ class TestWave2BenchmarkProfileContract(unittest.TestCase):
         self.assertLess(ratio, 1)
         self.assertIn('"CORONA"', self.sources[GENERATOR])
         self.assertIn("machines_with_explicit_corona_capability", self.sources[AUDIT])
+
+    def test_extruder_positions_are_explicit(self):
+        source = self.sources[GENERATOR]
+        self.assertIn("machine_extruder_rows", source)
+        self.assertIn("range(1, int(machine[\"layer_structure\"]) + 1)", source)
+        self.assertIn('"extruder_position": position', source)
+        self.assertIn("machines_with_incomplete_extruder_model", self.sources[AUDIT])
+        self.assertIn("active_machine_extruder_position_model_incomplete", self.sources[AUDIT])
 
     def test_material_requirement_uses_recipe_ratio(self):
         source = self.sources[REQUIREMENTS]
