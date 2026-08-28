@@ -20,12 +20,20 @@ from src.config import DATABASE_CONFIG
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MIGRATION_PATH = os.path.join(
-    ROOT,
-    "db",
-    "migrations",
-    "20260828_wave2_domain_schema.sql",
-)
+MIGRATION_PATHS = [
+    os.path.join(
+        ROOT,
+        "db",
+        "migrations",
+        "20260828_wave2_domain_schema.sql",
+    ),
+    os.path.join(
+        ROOT,
+        "db",
+        "migrations",
+        "20260828_wave2_domain_schema_guardrails.sql",
+    ),
+]
 
 REQUIRED_TABLES = {
     "provenance_sources",
@@ -59,17 +67,19 @@ def _connect():
         user=DATABASE_CONFIG["username"],
         password=DATABASE_CONFIG["password"],
     )
-    # The SQL file contains its own BEGIN/COMMIT so it is also safe to run in psql.
-    # Autocommit here prevents a nested implicit psycopg transaction around that file.
+    # Migration files own their BEGIN/COMMIT so they are also safe to run in psql.
+    # Autocommit prevents a nested implicit psycopg transaction around each file.
     conn.autocommit = True
     return conn
 
 
-def apply_migration(conn) -> None:
-    with open(MIGRATION_PATH, "r", encoding="utf-8") as handle:
-        sql = handle.read()
-    with conn.cursor() as cur:
-        cur.execute(sql)
+def apply_migrations(conn) -> None:
+    for migration_path in MIGRATION_PATHS:
+        with open(migration_path, "r", encoding="utf-8") as handle:
+            sql = handle.read()
+        with conn.cursor() as cur:
+            cur.execute(sql)
+        print(f"Applied: {migration_path}")
 
 
 def verify_schema(conn) -> dict:
@@ -84,6 +94,7 @@ def verify_schema(conn) -> dict:
         "machine_recipe_capabilities": 0,
         "material_qualifications": 0,
         "provenance_sources": 0,
+        "material_availability_view_columns": [],
     }
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
@@ -133,6 +144,19 @@ def verify_schema(conn) -> dict:
             cur.execute(query)
             result[key] = int(cur.fetchone()["n"])
 
+        cur.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema='public'
+              AND table_name='v_material_lot_available'
+            ORDER BY ordinal_position
+            """
+        )
+        result["material_availability_view_columns"] = [
+            row["column_name"] for row in cur.fetchall()
+        ]
+
     return result
 
 
@@ -148,8 +172,7 @@ def main() -> int:
     conn = _connect()
     try:
         if not args.verify_only:
-            apply_migration(conn)
-            print(f"Applied: {MIGRATION_PATH}")
+            apply_migrations(conn)
 
         result = verify_schema(conn)
         print("Wave 2 schema verification:")
@@ -164,6 +187,9 @@ def main() -> int:
                 "until Wave 3 shadow validation is explicitly enabled."
             )
             return 3
+        if "materially_usable" not in result["material_availability_view_columns"]:
+            print("ERROR: material availability guardrail view is not installed.")
+            return 4
         return 0
     finally:
         conn.close()
