@@ -30,6 +30,7 @@ ALLOWED_RECIPE_STATUS = {"DRAFT", "MIGRATED_UNVERIFIED", "VALIDATED", "RELEASED"
 ALLOWED_MATERIAL_QUALIFICATION = {"APPROVED", "CONDITIONAL", "TECHNICAL_TRIAL_ONLY", "EXCLUDED_MEDICAL", "UNKNOWN"}
 ALLOWED_MACHINE_RECIPE_STATUS = {"QUALIFIED", "CONDITIONAL", "TECHNICAL_TRIAL_ONLY", "NOT_QUALIFIED", "UNKNOWN"}
 ALLOWED_MACHINE_MATERIAL_STATUS = {"QUALIFIED", "CONDITIONAL", "TECHNICAL_ONLY", "NOT_SUPPORTED", "UNKNOWN"}
+ALLOWED_EXTRUDER_STATUS = {"ACTIVE", "AVAILABLE", "DISABLED", "MAINTENANCE"}
 ALLOWED_RELEASE_STATUS = {"RELEASED", "QC_HOLD", "QUARANTINE", "REJECTED", "TECHNICAL_TRIAL_ONLY", "EXPIRED", "UNKNOWN"}
 ALLOWED_CLEANING_ENFORCEMENT = {"HARD", "PUBLISH_BLOCKER", "SHADOW"}
 
@@ -62,6 +63,14 @@ def _validate(config: dict[str, Any]) -> None:
     for item in config.get("machines", []):
         if item.get("apply") and item.get("process_route") not in ALLOWED_PROCESS_ROUTES:
             raise ValueError(f"Invalid process route: {item.get('process_route')}")
+
+    for item in config.get("machine_extruders", []):
+        if not item.get("apply"):
+            continue
+        if int(item.get("extruder_position") or 0) <= 0:
+            raise ValueError("Applied machine extruder requires extruder_position > 0")
+        if item.get("status", "AVAILABLE") not in ALLOWED_EXTRUDER_STATUS:
+            raise ValueError(f"Invalid machine extruder status: {item.get('status')}")
 
     for item in config.get("recipe_versions", []):
         if not item.get("apply"):
@@ -136,6 +145,7 @@ def _apply(cur, config: dict[str, Any]) -> dict[str, int]:
     summary = {
         "sources": 0,
         "machine_profiles": 0,
+        "machine_extruders": 0,
         "machine_material_capabilities": 0,
         "machine_feature_capabilities": 0,
         "cleaning_groups": 0,
@@ -195,6 +205,28 @@ def _apply(cur, config: dict[str, Any]) -> dict[str, int]:
             ),
         )
         summary["machine_profiles"] += 1
+
+    for item in config.get("machine_extruders", []):
+        if not item.get("apply"):
+            continue
+        cur.execute(
+            """
+            INSERT INTO machine_extruders
+                (machine_id, extruder_position, extruder_code, screw_diameter_mm, status, source_id)
+            VALUES (%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (machine_id, extruder_position) DO UPDATE SET
+                extruder_code=EXCLUDED.extruder_code,
+                screw_diameter_mm=EXCLUDED.screw_diameter_mm,
+                status=EXCLUDED.status,
+                source_id=EXCLUDED.source_id,
+                updated_at=NOW()
+            """,
+            (
+                item["machine_id"], int(item["extruder_position"]), item.get("extruder_code"),
+                item.get("screw_diameter_mm"), item.get("status", "AVAILABLE"), _source_id(item, default_source),
+            ),
+        )
+        summary["machine_extruders"] += 1
 
     for item in config.get("machine_material_capabilities", []):
         if not item.get("apply"):
