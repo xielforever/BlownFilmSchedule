@@ -52,13 +52,17 @@ REQUIRED_VIEWS = {
 
 
 def _connect():
-    return psycopg2.connect(
+    conn = psycopg2.connect(
         host=DATABASE_CONFIG["host"],
         port=DATABASE_CONFIG["port"],
         dbname=DATABASE_CONFIG["database"],
         user=DATABASE_CONFIG["username"],
         password=DATABASE_CONFIG["password"],
     )
+    # The SQL file contains its own BEGIN/COMMIT so it is also safe to run in psql.
+    # Autocommit here prevents a nested implicit psycopg transaction around that file.
+    conn.autocommit = True
+    return conn
 
 
 def apply_migration(conn) -> None:
@@ -66,7 +70,6 @@ def apply_migration(conn) -> None:
         sql = handle.read()
     with conn.cursor() as cur:
         cur.execute(sql)
-    conn.commit()
 
 
 def verify_schema(conn) -> dict:
