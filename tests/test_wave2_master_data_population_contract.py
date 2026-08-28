@@ -104,9 +104,24 @@ class TestWave2MasterDataPopulationContract(unittest.TestCase):
         self.assertIn("0.10, 'SRC-SIM-LEGACY'", self.seed_script)
 
     def test_override_source_rejects_generic_oem_authority(self):
-        self.assertIn("ALLOWED_SOURCE_TYPES", self.override_script)
-        self.assertNotIn("OEM_OFFICIAL\"", self.override_script.split("ALLOWED_SOURCE_TYPES", 1)[1].split("}", 1)[0])
-        self.assertNotIn("MATERIAL_OEM_OFFICIAL\"", self.override_script.split("ALLOWED_SOURCE_TYPES", 1)[1].split("}", 1)[0])
+        ast_tree = ast.parse(self.override_script)
+        allowed_values = None
+        for node in ast_tree.body:
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == "ALLOWED_SOURCE_TYPES":
+                        allowed_values = ast.literal_eval(node.value)
+        self.assertIsNotNone(allowed_values)
+        self.assertNotIn("OEM_OFFICIAL", allowed_values)
+        self.assertNotIn("MATERIAL_OEM_OFFICIAL", allowed_values)
+        self.assertIn("PLANT_MASTER", allowed_values)
+        self.assertIn("SIMULATED", allowed_values)
+
+    def test_machine_material_upsert_targets_expression_index(self):
+        self.assertIn(
+            "ON CONFLICT (machine_id, (COALESCE(extruder_position, 0)), polymer_family)",
+            self.override_script,
+        )
 
     def test_qualified_rate_requires_positive_value(self):
         self.assertIn("QUALIFIED machine-recipe capability requires positive standard_rate_kg_h", self.override_script)
