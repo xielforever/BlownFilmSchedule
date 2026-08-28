@@ -42,6 +42,7 @@ The register is intentionally separate from each plan. Individual plans can keep
 | docs/medical-blownfilm-wave2-target-domain-model.md | active | Wave 2 target aggregates, invariants, eligibility model and source-of-truth rules on `wave2-domain-schema` |
 | docs/medical-blownfilm-wave2-schema-compatibility-design.md | active | additive V2 schema, LEGACY/SHADOW/HARD migration and backfill design on `wave2-domain-schema` |
 | docs/medical-blownfilm-wave2-data-contract-crosswalk.md | active | legacy-to-V2 authority mapping, solver input and snapshot contracts on `wave2-domain-schema` |
+| docs/medical-blownfilm-wave2-execution-status.md | active | Wave 2 schema code/tooling status, DB verification boundary and Wave 3 gate recorded on `wave2-domain-schema` |
 | docs/order-flow-closed-loop-goal-plan.md | verified | document lists P0/P1 acceptance cases completed and verification commands |
 | docs/real_data_scheduling.md | active | operational guide for current database scheduling checks |
 | docs/root-cause-guidance-plan.md | superseded | root-cause implementation tracked by `docs/root-cause-guidance-todo.md` |
@@ -72,7 +73,8 @@ The register is intentionally separate from each plan. Individual plans can keep
 - `docs/medical-blownfilm-wave2-target-domain-model.md` defines the target medical blown-film aggregates and hard domain invariants.
 - `docs/medical-blownfilm-wave2-schema-compatibility-design.md` defines an additive migration so current API/DB/solver paths remain compatible.
 - `docs/medical-blownfilm-wave2-data-contract-crosswalk.md` defines the exact authority switch from legacy fields to V2 fields.
-- Wave 2 documents remain `active` until additive schema/backfill implementation and consistency validation are completed; design completion alone is not marked `verified`.
+- `docs/medical-blownfilm-wave2-execution-status.md` records implementation versus real-database verification status.
+- Additive schema code now exists under `db/migrations/` with apply/verify and coverage-audit tooling, but it remains `active` rather than `verified` until executed against the project PostgreSQL database and validated.
 
 ## Validation
 
